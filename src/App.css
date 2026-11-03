@@ -1,0 +1,346 @@
+/* Estilos específicos de layout do VTT */
+.vtt-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Topbar Clássica + EPF */
+.vtt-topbar {
+  grid-column: 1 / -1;
+  background: linear-gradient(180deg, #035fb5 0%, #01376b 100%);
+  border-bottom: 3px solid var(--cp-blue-border);
+  box-shadow: var(--cp-bevel-highlight), 0 4px 12px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 30;
+}
+
+.vtt-topbar-left,
+.vtt-topbar-center,
+.vtt-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Área Central do Tabuleiro (Viewport) */
+.vtt-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at center, rgba(48, 144, 240, 0.14) 0%, transparent 70%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.04) 0px,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 64px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 0px,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 64px
+    ),
+    #061d38;
+}
+
+/* Dock Inferior Estilo Barra Azul Clássica do Club Penguin */
+.vtt-dock {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #2d8cf0 0%, #02529c 30%, #013567 100%);
+  border: 3px solid var(--cp-blue-border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: var(--cp-bevel-highlight), var(--cp-card-shadow);
+  z-index: 25;
+}
+
+/* Sidebar Direita Estilo Roll20 + Player Card */
+.vtt-sidebar {
+  width: 350px;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  background: linear-gradient(180deg, #02498b 0%, #012b54 100%);
+  border-left: 3px solid var(--cp-blue-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 25;
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+
+.vtt-sidebar.collapsed {
+  width: 0;
+  border-left: none;
+  overflow: hidden;
+}
+
+.vtt-sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+  background: rgba(0, 27, 58, 0.35);
+  border-bottom: 2.5px solid var(--cp-blue-border);
+  flex-shrink: 0;
+}
+
+.vtt-tab-btn {
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 13px;
+  padding: 8px 6px;
+  border-radius: 10px 10px 0 0;
+  border: 2px solid var(--cp-blue-border);
+  border-bottom: none;
+  background: #013567;
+  color: #a9d4ff;
+  cursor: pointer;
+}
+
+.vtt-tab-btn.active {
+  background: var(--cp-ice-bg);
+  color: var(--cp-blue-border);
+  font-weight: 700;
+}
+
+.vtt-sidebar-content {
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  margin: 8px;
+  background: var(--cp-ice-bg);
+  border: 2.5px solid var(--cp-blue-border);
+  border-radius: 14px;
+  padding: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Pinguins Online (Pills de Presença) */
+.presence-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.presence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 27, 58, 0.55);
+  border: 2px solid var(--cp-blue-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--cp-snow-white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--epf-green-radar);
+  box-shadow: 0 0 6px var(--epf-green-radar);
+}
+
+/* Modal Backdrop */
+.cp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 15, 32, 0.72);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+/* Barra Vertical Esquerda de Ferramentas (Estilo Roll20 + Club Penguin) */
+.vtt-left-toolbar {
+  position: absolute;
+  left: 12px;
+  top: 14px;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(180deg, #02529c 0%, #012b54 100%);
+  border: 3px solid var(--cp-blue-border);
+  border-radius: 18px;
+  padding: 10px 8px;
+  box-shadow: var(--cp-bevel-highlight), var(--cp-card-shadow);
+}
+
+.vtt-tool-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.vtt-tool-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 2.5px solid var(--cp-blue-border);
+  background: linear-gradient(180deg, #3898ff 0%, #02529c 100%);
+  color: #ffffff;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  box-shadow: var(--cp-btn-shadow);
+  transition: transform 0.1s ease, filter 0.15s ease;
+  padding: 2px;
+}
+
+.vtt-tool-btn:hover {
+  filter: brightness(1.12);
+  transform: scale(1.04);
+}
+
+.vtt-tool-btn.active {
+  background: linear-gradient(180deg, #ffe066 0%, #f59f00 100%);
+  border-color: var(--cp-yellow-border);
+  color: #2b1900;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.75), 0 3px 0 var(--cp-yellow-border);
+}
+
+.vtt-tool-label {
+  font-size: 8.5px;
+  font-family: var(--font-body);
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.vtt-tool-flyout {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 0;
+  background: linear-gradient(180deg, #02529c 0%, #012b54 100%);
+  border: 2.5px solid var(--cp-blue-border);
+  border-radius: 14px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 175px;
+  max-height: min(520px, calc(100vh - 160px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: var(--cp-bevel-highlight), var(--cp-card-shadow);
+  z-index: 30;
+  scrollbar-width: thin;
+  scrollbar-color: #3898ff rgba(0, 27, 58, 0.4);
+}
+
+.vtt-tool-flyout::-webkit-scrollbar {
+  width: 6px;
+}
+
+.vtt-tool-flyout::-webkit-scrollbar-track {
+  background: rgba(0, 27, 58, 0.4);
+  border-radius: 6px;
+}
+
+.vtt-tool-flyout::-webkit-scrollbar-thumb {
+  background: #3898ff;
+  border-radius: 6px;
+  border: 1px solid #001b3a;
+}
+
+.vtt-tool-flyout::-webkit-scrollbar-thumb:hover {
+  background: #ffe066;
+}
+
+/* Efeito de Ping Onda de Água (Water Drop Ripple) */
+@keyframes cpWaterRipple {
+  0% {
+    transform: translate(-50%, -50%) scale(0.15);
+    opacity: 0.95;
+  }
+  70% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.8);
+    opacity: 0;
+  }
+}
+
+.cp-ping-container {
+  position: absolute;
+  pointer-events: none;
+  z-index: 22;
+}
+
+.cp-ping-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 3.5px solid var(--ping-color, #00f0ff);
+  box-shadow:
+    0 0 12px var(--ping-color, #00f0ff),
+    inset 0 0 10px var(--ping-color, #00f0ff);
+  animation: cpWaterRipple 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.cp-ping-ring.delay-1 {
+  animation-delay: 0.35s;
+}
+
+.cp-ping-ring.delay-2 {
+  animation-delay: 0.7s;
+}
+
+.cp-ping-center-drop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2.5px solid var(--ping-color, #00f0ff);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 10px var(--ping-color, #00f0ff);
+}
+

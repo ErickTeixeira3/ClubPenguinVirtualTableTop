@@ -1,0 +1,273 @@
+:root {
+  /* 1. Classic Club Penguin Ice & Ocean Blue (HUD, Modais Padrão, Chat) */
+  --cp-blue-light: #3090f0;
+  --cp-blue-primary: #02529c;
+  --cp-blue-dark: #013567;
+  --cp-blue-border: #001b3a;
+  --cp-ice-bg: #e6f4ff;
+  --cp-ice-surface: #cde8ff;
+  --cp-snow-white: #ffffff;
+  --cp-cream-panel: #fffdf5;
+  --cp-text-dark: #06213e;
+  --cp-text-muted: #3b5b7c;
+
+  /* 2. Destaques, Moedas, Selos e Botões de Ação */
+  --cp-yellow-gold: #ffcc00;
+  --cp-yellow-dark: #d99b00;
+  --cp-yellow-border: #6b4400;
+  --cp-orange-alert: #ff6b2b;
+  --cp-orange-dark: #c94107;
+  --cp-green-action: #38c172;
+  --cp-green-dark: #1f8a4c;
+
+  /* 3. Estética Tática EPF (Mestre, Visão de Teia, Rolagens Ocultas, Fog) */
+  --epf-metal-outer: #2a3441;
+  --epf-metal-inner: #1a202c;
+  --epf-screen-bg: #07131e;
+  --epf-cyan-glow: #00f0ff;
+  --epf-green-radar: #00ff66;
+  --epf-amber-warn: #ffb300;
+  --epf-red-classified: #ff2a55;
+
+  /* 4. Elementos Card-Jitsu (Categorias de Habilidades e Tipos de Nota na Teia) */
+  --cj-fire: #e53935;
+  --cj-water: #1e88e5;
+  --cj-snow: #00bcd4;
+  --cj-gold: #fdd835;
+  --cj-shadow: #6a1b9a;
+
+  /* 5. Sombras e Brilhos Assinatura (Glossy Cartoon Bevel) */
+  --cp-bevel-highlight: inset 0 2px 0 rgba(255, 255, 255, 0.45);
+  --cp-card-shadow: 0 6px 0 #001b3a, 0 12px 24px rgba(0, 0, 0, 0.4);
+  --cp-btn-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.55), 0 3px 0 #001b3a;
+  --epf-neon-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+
+  /* 6. Tipografia */
+  --font-display: 'Burbank Big Condensed', 'Fredoka', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, -apple-system, sans-serif;
+  --font-epf: 'Share Tech Mono', ui-monospace, Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Scrollbars Estilo Club Penguin */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 27, 58, 0.12);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3090f0;
+  border-radius: 8px;
+  border: 1.5px solid #001b3a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #ffcc00;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-body);
+  color: var(--cp-text-dark);
+  background: radial-gradient(circle at 50% 25%, #1769ba 0%, #052c59 65%, #021631 100%);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Títulos Estilo Burbank / Club Penguin */
+.cp-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--cp-snow-white);
+  text-shadow:
+    0 2px 0 var(--cp-blue-border),
+    -1px -1px 0 var(--cp-blue-border),
+    1px -1px 0 var(--cp-blue-border),
+    -1px 1px 0 var(--cp-blue-border),
+    1px 1px 0 var(--cp-blue-border);
+  margin: 0;
+}
+
+/* Janela Clássica Azul (Player Card / Modal CP) */
+.cp-window {
+  background: linear-gradient(180deg, var(--cp-blue-light) 0%, var(--cp-blue-primary) 18%, var(--cp-blue-dark) 100%);
+  border: 3px solid var(--cp-blue-border);
+  border-radius: 20px;
+  box-shadow: var(--cp-bevel-highlight), var(--cp-card-shadow);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cp-window-inner {
+  background: var(--cp-ice-bg);
+  border: 2.5px solid var(--cp-blue-border);
+  border-radius: 14px;
+  padding: 16px;
+  color: var(--cp-text-dark);
+  box-shadow: inset 0 2px 6px rgba(0, 27, 58, 0.12);
+}
+
+/* Visor Tático EPF (Spy Phone / Sala de Comando / Mestre) */
+.epf-visor {
+  background: linear-gradient(180deg, var(--epf-metal-outer) 0%, var(--epf-metal-inner) 100%);
+  border: 3px solid #0d131a;
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 6px 0 #090d12,
+    0 12px 28px rgba(0, 0, 0, 0.55);
+  padding: 12px;
+  color: #e2f1ff;
+}
+
+.epf-screen {
+  background-color: var(--epf-screen-bg);
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 240, 255, 0.04) 0px,
+    rgba(0, 240, 255, 0.04) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  border: 2px solid rgba(0, 240, 255, 0.45);
+  border-radius: 10px;
+  box-shadow: inset 0 0 18px rgba(0, 240, 255, 0.12);
+  padding: 14px;
+  font-family: var(--font-epf);
+  color: var(--epf-cyan-glow);
+}
+
+/* Botões 3D Glossy do Club Penguin */
+.cp-btn {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  color: var(--cp-snow-white);
+  text-shadow: 0 1.5px 0 var(--cp-blue-border);
+  background: linear-gradient(180deg, #42a5f5 0%, #02529c 100%);
+  border: 2.5px solid var(--cp-blue-border);
+  border-radius: 999px;
+  padding: 9px 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: var(--cp-btn-shadow);
+  transition: transform 0.1s ease, filter 0.15s ease, box-shadow 0.1s ease;
+}
+
+.cp-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: scale(1.02);
+}
+
+.cp-btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.4), 0 1px 0 var(--cp-blue-border);
+}
+
+.cp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cp-btn-gold {
+  background: linear-gradient(180deg, #ffe066 0%, #f59f00 100%);
+  border-color: var(--cp-yellow-border);
+  color: #2b1900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.7), 0 3px 0 var(--cp-yellow-border);
+}
+
+.cp-btn-orange {
+  background: linear-gradient(180deg, #ff8a50 0%, #e64a19 100%);
+  border-color: #4e1600;
+}
+
+.cp-btn-green {
+  background: linear-gradient(180deg, #51cf66 0%, #2b8a3e 100%);
+  border-color: #0b3d16;
+}
+
+.cp-btn-epf {
+  font-family: var(--font-epf);
+  background: linear-gradient(180deg, #1b2838 0%, #0d1520 100%);
+  border: 2px solid var(--epf-cyan-glow);
+  color: var(--epf-cyan-glow);
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2), 0 3px 0 #05080c;
+  border-radius: 10px;
+}
+
+.cp-btn-epf.active {
+  background: linear-gradient(180deg, #004d61 0%, #002633 100%);
+  border-color: var(--epf-green-radar);
+  color: var(--epf-green-radar);
+}
+
+/* Inputs Estilo Club Penguin */
+.cp-input {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cp-text-dark);
+  background: var(--cp-snow-white);
+  border: 2.5px solid var(--cp-blue-border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 27, 58, 0.1);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cp-input:focus {
+  border-color: var(--cp-blue-light);
+  box-shadow: 0 0 0 3px rgba(48, 144, 240, 0.35), inset 0 2px 4px rgba(0, 27, 58, 0.08);
+}
+
+/* Badges de Papel (Mestre EPF vs Player) */
+.cp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  border: 2px solid var(--cp-blue-border);
+}
+
+.cp-badge-gm {
+  background: linear-gradient(180deg, #ff5252 0%, #b71c1c 100%);
+  color: #ffffff;
+  border-color: #3e0000;
+  box-shadow: 0 0 8px rgba(255, 42, 85, 0.45);
+}
+
+.cp-badge-player {
+  background: linear-gradient(180deg, #4fc3f7 0%, #0277bd 100%);
+  color: #ffffff;
+}

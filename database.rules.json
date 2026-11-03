@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "vtt_realtime": {
+      "$campaignId": {
+        ".read": "auth != null",
+        "tokens": {
+          "$sceneId": {
+            ".write": "auth != null"
+          }
+        },
+        "fog": {
+          "$sceneId": {
+            ".write": "auth != null"
+          }
+        },
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        }
+      }
+    }
+  }
+}

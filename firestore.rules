@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isGM(campaignId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/campaigns/$(campaignId)) &&
+        get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid;
+    }
+
+    function canSeeResource(campaignId, resourceData) {
+      return isGM(campaignId) ||
+        resourceData.visibleToPlayers == true ||
+        ('visibleTo' in resourceData && (
+          'ALL' in resourceData.visibleTo ||
+          request.auth.uid in resourceData.visibleTo
+        ));
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isGM(campaignId) || isSignedIn();
+      allow delete: if isGM(campaignId);
+
+      // Mapas / Cenas
+      match /scenes/{sceneId} {
+        allow read: if isSignedIn();
+        allow write: if isGM(campaignId);
+      }
+
+      // Fichas de Personagem
+      match /characters/{characterId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update: if isGM(campaignId) ||
+          (isSignedIn() && (
+            resource.data.ownerId == request.auth.uid ||
+            request.auth.uid in resource.data.editableBy
+          ));
+        allow delete: if isGM(campaignId) ||
+          (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      }
+
+      // Compêndio (Habilidades, Magias, Itens)
+      match /compendium/{itemId} {
+        allow read: if isSignedIn();
+        allow write: if isGM(campaignId);
+      }
+
+      // Chat e Rolagens (Imutáveis para players após enviadas)
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isGM(campaignId);
+      }
+
+      // Diários e Cards de Investigação (Mestre, Players e Grupo)
+      match /notes/{noteId} {
+        allow read: if isSignedIn();
+        allow create: if isGM(campaignId) ||
+          (isSignedIn() &&
+            request.resource.data.ownerId == request.auth.uid &&
+            request.resource.data.scope in ['player', 'party']);
+        allow update: if isGM(campaignId) ||
+          (isSignedIn() && (
+            resource.data.scope == 'party' ||
+            resource.data.ownerId == request.auth.uid ||
+            request.auth.uid in resource.data.editableBy
+          ));
+        allow delete: if isGM(campaignId) ||
+          (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      }
+
+      // Repositório Imutável de Mídia WebP (Mapas, Tokens, Avatares, Notas)
+      match /media/{mediaId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.sizeBytes < 800000;
+        allow update, delete: if isGM(campaignId) ||
+          (isSignedIn() && resource.data.uploadedBy == request.auth.uid);
+      }
+    }
+  }
+}
