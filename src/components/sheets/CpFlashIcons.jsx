@@ -386,16 +386,25 @@ export const CP_FLASH_ICONS = [
     category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M31 5L24 15L19 13L15 17L13 15L17 11L15 6L25 11L31 5Z"
-          fill="#cbd5e1"
-          stroke="#1e293b"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M14 16L7 23" stroke="#475569" strokeWidth="3.5" strokeLinecap="round" />
-        <circle cx="5" cy="25" r="3" fill="none" stroke="#1e293b" strokeWidth="2" />
-        <path d="M29 7L18 14" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+        <g transform="rotate(45 18 18)">
+          {/* Argola do cabo */}
+          <circle cx="18" cy="30.5" r="3" fill="none" stroke="#1e293b" strokeWidth="2.4" />
+          {/* Cabo envolto em tecido vermelho */}
+          <rect x="16.2" y="21" width="3.6" height="7" rx="1" fill="#dc2626" stroke="#1e293b" strokeWidth="2" />
+          <line x1="16.2" y1="24.5" x2="19.8" y2="24.5" stroke="#7f1d1d" strokeWidth="1.5" />
+          {/* Lâmina losangular simétrica da Kunai */}
+          <polygon
+            points="18,3 25,16 19.8,21 16.2,21 11,16"
+            fill="#94a3b8"
+            stroke="#1e293b"
+            strokeWidth="2.4"
+            strokeLinejoin="round"
+          />
+          {/* Face iluminada esquerda da lâmina */}
+          <polygon points="18,4.8 18,20.2 16.5,20.2 12.2,15.8" fill="#e2e8f0" />
+          {/* Vincos centrais */}
+          <line x1="18" y1="4.5" x2="18" y2="20.5" stroke="#1e293b" strokeWidth="1.5" />
+        </g>
       </svg>
     )
   },
@@ -433,24 +442,31 @@ export const CP_FLASH_ICONS = [
     category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <line x1="8" y1="32" x2="26" y2="10" stroke="#78350f" strokeWidth="4.5" strokeLinecap="round" />
-        <line x1="8" y1="32" x2="26" y2="10" stroke="#3b1500" strokeWidth="1.8" strokeLinecap="round" />
-        {/* Lâminas de aço com contorno escuro */}
-        <path
-          d="M20 7C24 4 30 6 32 11C28 13 25 15 22 17C21 14 20 10 20 7Z"
-          fill="#cbd5e1"
-          stroke="#1e293b"
-          strokeWidth="2.2"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M17 10C13 7 7 9 5 14C9 16 12 18 15 20C16 17 17 13 17 10Z"
-          fill="#94a3b8"
-          stroke="#1e293b"
-          strokeWidth="2.2"
-          strokeLinejoin="round"
-        />
-        <circle cx="19" cy="13" r="2.5" fill="#facc15" stroke="#713f12" strokeWidth="1.5" />
+        <g transform="rotate(45 18 18)">
+          {/* Cabo de madeira centralizado */}
+          <rect x="16" y="4" width="4" height="29" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
+          {/* Lâmina esquerda */}
+          <path
+            d="M16 10 L6 6 C3 10.5 3 16.5 6 21 L16 17 Z"
+            fill="#cbd5e1"
+            stroke="#1e293b"
+            strokeWidth="2.3"
+            strokeLinejoin="round"
+          />
+          <path d="M7 7.5 C4.8 11 4.8 16 7 19.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+          {/* Lâmina direita */}
+          <path
+            d="M20 10 L30 6 C33 10.5 33 16.5 30 21 L20 17 Z"
+            fill="#94a3b8"
+            stroke="#1e293b"
+            strokeWidth="2.3"
+            strokeLinejoin="round"
+          />
+          <path d="M29 7.5 C31.2 11 31.2 16 29 19.5" stroke="#e2e8f0" strokeWidth="1.5" strokeLinecap="round" />
+          {/* Encaixe central de ferro e rebite dourado */}
+          <rect x="15" y="9.5" width="6" height="8" rx="1.5" fill="#475569" stroke="#1e293b" strokeWidth="2" />
+          <circle cx="18" cy="13.5" r="2.2" fill="#facc15" stroke="#713f12" strokeWidth="1.3" />
+        </g>
       </svg>
     )
   },
@@ -635,22 +651,40 @@ export const CP_FLASH_ICONS = [
     category: "food",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Borda da massa do Club Penguin */}
+        {/* Triângulo de queijo amarelo com borda assada */}
         <path
-          d="M7 27L28 8C30 11 32 16 31 20L7 27Z"
-          fill="#f59e0b"
-          stroke="#78350f"
-          strokeWidth="2.5"
+          d="M6 28 L14 8 C20.5 9.8 25.8 13.5 29.8 18.8 L6 28 Z"
+          fill="#fef08a"
+          stroke="#92400e"
+          strokeWidth="2.3"
           strokeLinejoin="round"
         />
-        {/* Queijo amarelo derretido */}
-        <path d="M8 25L26 9C27 13 28 17 27 19L8 25Z" fill="#fde047" />
-        {/* Rodelas de Pepperoni do Club Penguin */}
-        <circle cx="22" cy="13" r="2.5" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" />
-        <circle cx="16" cy="19" r="2.2" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" />
-        <circle cx="12" cy="23" r="1.8" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" />
-        {/* Pimentão verde picadinho */}
-        <rect x="18" y="17" width="2" height="3" rx="0.5" fill="#16a34a" transform="rotate(30 18 17)" />
+        {/* Sombra interna dourada do queijo */}
+        <path
+          d="M7.8 26.2 L14.5 9.8 C19.8 11.4 24.5 14.5 28 18.6 L7.8 26.2 Z"
+          fill="#fde047"
+        />
+        {/* Borda recheada dourada no topo-direito (fiel ao emoticon original do CP) */}
+        <path
+          d="M13.2 6.2 C20.5 7.8 27.2 12.2 31.5 18 C32.3 19.2 30.6 20.8 29.2 19.6 C25.2 14.6 19.2 10.6 12.6 9 C11.2 8.6 11.6 5.8 13.2 6.2 Z"
+          fill="#f59e0b"
+          stroke="#78350f"
+          strokeWidth="2.2"
+          strokeLinejoin="round"
+        />
+        {/* Brilho na borda da massa */}
+        <path
+          d="M14.5 7.5 C20.5 9 25.8 12.6 29.5 17.2"
+          stroke="#fcd34d"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+        {/* Pepperonis ovais em perspectiva dentro do queijo */}
+        <ellipse cx="17" cy="14.8" rx="2.7" ry="1.4" transform="rotate(15 17 14.8)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
+        <ellipse cx="21.5" cy="18.2" rx="2.5" ry="1.3" transform="rotate(15 21.5 18.2)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
+        <ellipse cx="12.5" cy="21.8" rx="2.2" ry="1.2" transform="rotate(15 12.5 21.8)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
+        {/* Pimentão verde */}
+        <path d="M14.5 17.5 L17.2 18.4" stroke="#15803d" strokeWidth="2.2" strokeLinecap="round" />
       </svg>
     )
   },
@@ -887,16 +921,27 @@ export const CP_FLASH_ICONS = [
     category: "tools",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <line x1="8" y1="30" x2="25" y2="12" stroke="#78350f" strokeWidth="4.5" strokeLinecap="round" />
-        <line x1="8" y1="30" x2="25" y2="12" stroke="#3b1500" strokeWidth="1.8" strokeLinecap="round" />
-        <path
-          d="M17 6C23 10 27 15 31 23C27 21 21 17 17 11C13 17 7 21 3 23C7 15 11 10 17 6Z"
-          fill="#64748b"
-          stroke="#0f172a"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <circle cx="17" cy="11" r="2.5" fill="#94a3b8" />
+        <g transform="rotate(45 18 18)">
+          {/* Cabo de madeira alinhado com o centro da cabeça da picareta */}
+          <rect x="16" y="5" width="4" height="28" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
+          {/* Cabeça curvada de ferro simétrica */}
+          <path
+            d="M4 16.5 C7.5 8.5 13 6.5 18 6.5 C23 6.5 28.5 8.5 32 16.5 C28 12.5 23 11 18 11 C13 11 8 12.5 4 16.5 Z"
+            fill="#64748b"
+            stroke="#0f172a"
+            strokeWidth="2.3"
+            strokeLinejoin="round"
+          />
+          {/* Brilho metálico superior na cabeça da picareta */}
+          <path
+            d="M7.5 12 C11 8.5 14.5 7.8 18 7.8 C21.5 7.8 25 8.5 28.5 12"
+            stroke="#cbd5e1"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+          {/* Encaixe central de aço */}
+          <rect x="15" y="5.8" width="6" height="6.2" rx="1.5" fill="#94a3b8" stroke="#0f172a" strokeWidth="2" />
+        </g>
       </svg>
     )
   },
