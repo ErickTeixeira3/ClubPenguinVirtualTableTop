@@ -8,11 +8,15 @@ import {
   signOut
 } from "firebase/auth";
 import { auth, googleProvider } from "../services/firebase";
+import { checkIsEmailAuthorized } from "../constants/authorizedUsers";
 
 const AuthContext = createContext(null);
 
 function formatAuthError(error) {
   const code = error?.code || "";
+  if (error?.message && error.message.includes("Acesso restrito")) {
+    return error.message;
+  }
   switch (code) {
     case "auth/invalid-credential":
     case "auth/user-not-found":
@@ -37,7 +41,17 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState("");
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser?.email) {
+        const isAuth = await checkIsEmailAuthorized(currentUser.email);
+        if (!isAuth) {
+          await signOut(auth);
+          setUser(null);
+          setAuthError("Acesso restrito: este e-mail não está autorizado nesta mesa.");
+          setLoading(false);
+          return;
+        }
+      }
       setUser(currentUser);
       setLoading(false);
     });
@@ -48,6 +62,13 @@ export function AuthProvider({ children }) {
     setAuthError("");
     try {
       const result = await signInWithPopup(auth, googleProvider);
+      const isAuth = await checkIsEmailAuthorized(result.user.email);
+      if (!isAuth) {
+        await signOut(auth);
+        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
+        setAuthError(err.message);
+        throw err;
+      }
       return result.user;
     } catch (err) {
       const msg = formatAuthError(err);
@@ -59,7 +80,15 @@ export function AuthProvider({ children }) {
   const loginWithEmail = async (email, password) => {
     setAuthError("");
     try {
-      const result = await signInWithEmailAndPassword(auth, email, password);
+      const cleanEmail = email.trim().toLowerCase();
+      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      const isAuth = await checkIsEmailAuthorized(result.user.email);
+      if (!isAuth) {
+        await signOut(auth);
+        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
+        setAuthError(err.message);
+        throw err;
+      }
       return result.user;
     } catch (err) {
       const msg = formatAuthError(err);
@@ -71,7 +100,19 @@ export function AuthProvider({ children }) {
   const registerWithEmail = async (email, password, displayName) => {
     setAuthError("");
     try {
-      const result = await createUserWithEmailAndPassword(auth, email, password);
+      const cleanEmail = email.trim().toLowerCase();
+      const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      const isAuth = await checkIsEmailAuthorized(result.user.email);
+      if (!isAuth) {
+        try {
+          await result.user.delete();
+        } catch {
+          await signOut(auth);
+        }
+        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
+        setAuthError(err.message);
+        throw err;
+      }
       if (displayName?.trim()) {
         await updateProfile(result.user, {
           displayName: displayName.trim()
@@ -116,4 +157,3 @@ export function useAuth() {
   }
   return context;
 }
-

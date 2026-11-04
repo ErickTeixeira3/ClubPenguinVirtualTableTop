@@ -17,6 +17,7 @@ import CharactersSidebarList from "../sheets/CharactersSidebarList";
 import CompendiumModal from "../compendium/CompendiumModal";
 import ChatSidebarPanel from "../chat/ChatSidebarPanel";
 import JournalWorkspace from "../journal/JournalWorkspace";
+import PlayerProfileModal from "./PlayerProfileModal";
 
 export default function VTTLayout() {
   const { user, logout } = useAuth();
@@ -28,6 +29,7 @@ export default function VTTLayout() {
     isGM,
     viewAsPlayer,
     setViewAsPlayer,
+    myPlayerProfile,
     firestoreError
   } = useCampaign();
 
@@ -85,6 +87,7 @@ export default function VTTLayout() {
   const [activeSidebarTab, setActiveSidebarTab] = useState("sheets"); // 'chat' | 'sheets' | 'journal'
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [gmModalOpen, setGmModalOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [scenesModalOpen, setScenesModalOpen] = useState(false);
   const [compendiumModalOpen, setCompendiumModalOpen] = useState(false);
   const [openCharacterId, setOpenCharacterId] = useState(null);
@@ -92,7 +95,10 @@ export default function VTTLayout() {
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   const currentDisplayName =
-    user?.displayName || user?.email?.split("@")[0] || "Pinguim";
+    myPlayerProfile?.displayName ||
+    user?.displayName ||
+    user?.email?.split("@")[0] ||
+    "Pinguim";
 
   const activeCharacter = useMemo(() => {
     if (openCharacterId) {
@@ -243,6 +249,18 @@ export default function VTTLayout() {
             {onlineList.map((u) => (
               <div key={u.uid} className="presence-pill">
                 <span className="presence-dot" />
+                {u.photoURL && (
+                  <img
+                    src={u.photoURL}
+                    alt=""
+                    style={{
+                      width: "18px",
+                      height: "18px",
+                      borderRadius: "50%",
+                      objectFit: "cover"
+                    }}
+                  />
+                )}
                 <span>{u.displayName}</span>
               </div>
             ))}
@@ -250,6 +268,37 @@ export default function VTTLayout() {
         </div>
 
         <div className="vtt-topbar-right">
+          <button
+            type="button"
+            className="cp-btn cp-btn-gold"
+            style={{
+              padding: "5px 12px",
+              fontSize: "12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}
+            onClick={() => setProfileModalOpen(true)}
+            title="Editar Perfil do Jogador"
+          >
+            {myPlayerProfile?.photoURL ? (
+              <img
+                src={myPlayerProfile.photoURL}
+                alt=""
+                style={{
+                  width: "20px",
+                  height: "20px",
+                  borderRadius: "50%",
+                  objectFit: "cover",
+                  border: "1.5px solid #001b3a"
+                }}
+              />
+            ) : (
+              <span style={{ fontSize: "14px" }}>🐧</span>
+            )}
+            <span>{currentDisplayName}</span>
+          </button>
+
           <button
             type="button"
             className="cp-btn cp-btn-epf"
@@ -265,7 +314,7 @@ export default function VTTLayout() {
             style={{ padding: "6px 12px", fontSize: "13px" }}
             onClick={logout}
           >
-            Sair ({currentDisplayName})
+            Sair
           </button>
         </div>
       </header>
@@ -572,6 +621,10 @@ export default function VTTLayout() {
       </aside>
 
       {/* Modais Flutuantes */}
+      {profileModalOpen && (
+        <PlayerProfileModal onClose={() => setProfileModalOpen(false)} />
+      )}
+
       {gmModalOpen && <GMPanelModal onClose={() => setGmModalOpen(false)} />}
 
       {isGM && scenesModalOpen && (

@@ -642,7 +642,7 @@ export default function BoardViewport({
             isGM ? "#00f0ff" : drawColor
           );
         }
-      }, 320);
+      }, 750);
     }
   };
 
@@ -876,23 +876,6 @@ export default function BoardViewport({
         }
         await addFogArea(rectToCommit);
       }
-    }
-
-    // 9. Clique rápido no modo Mover dispara Ping Onda de Água
-    if (
-      panningCamera &&
-      toolMode === "move" &&
-      !panStartRef.current.moved &&
-      !panStartRef.current.pingFired &&
-      e?.type === "mouseup" &&
-      e?.button === 0
-    ) {
-      panStartRef.current.pingFired = true;
-      triggerPing(
-        panStartRef.current.boardX,
-        panStartRef.current.boardY,
-        isGM ? "#00f0ff" : drawColor
-      );
     }
 
     setPanningCamera(false);

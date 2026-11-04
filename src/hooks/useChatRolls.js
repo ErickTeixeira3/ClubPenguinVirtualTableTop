@@ -68,15 +68,18 @@ export function useChatRolls() {
 
     const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const msgRef = doc(db, "campaigns", campaignId, "messages", msgId);
+    const playerProfile = campaign?.players?.[user.uid];
 
     await setDoc(msgRef, {
       id: msgId,
       senderId: user.uid,
       senderName:
         senderName ||
+        playerProfile?.displayName ||
         user.displayName ||
         user.email?.split("@")[0] ||
         "Pinguim",
+      senderPhotoURL: playerProfile?.photoURL || user.photoURL || null,
       characterId,
       type: "text",
       visibility,
@@ -140,15 +143,18 @@ export function useChatRolls() {
 
     const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const msgRef = doc(db, "campaigns", campaignId, "messages", msgId);
+    const playerProfile = campaign?.players?.[user.uid];
 
     const rollMessage = {
       id: msgId,
       senderId: user.uid,
       senderName:
         character?.name ||
+        playerProfile?.displayName ||
         user.displayName ||
         user.email?.split("@")[0] ||
         "Pinguim",
+      senderPhotoURL: character?.tokenImage || playerProfile?.photoURL || user.photoURL || null,
       characterId: character?.id || null,
       type: "ability_roll",
       visibility,

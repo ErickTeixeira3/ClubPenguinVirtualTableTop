@@ -171,7 +171,23 @@ export default function ChatSidebarPanel({
                     marginBottom: "4px"
                   }}
                 >
-                  <span>{msg.senderName}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    {msg.senderPhotoURL ? (
+                      <img
+                        src={msg.senderPhotoURL}
+                        alt=""
+                        style={{
+                          width: "18px",
+                          height: "18px",
+                          borderRadius: "50%",
+                          objectFit: "cover"
+                        }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: "12px" }}>🐧</span>
+                    )}
+                    <span>{msg.senderName}</span>
+                  </div>
                   <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
                     {isSecret && (
                       <span
@@ -329,13 +345,30 @@ export default function ChatSidebarPanel({
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
+                  alignItems: "center",
                   fontSize: "11px",
                   fontWeight: 800,
                   color: isSecret ? "var(--epf-cyan-glow)" : "#02529c",
-                  marginBottom: "2px"
+                  marginBottom: "4px"
                 }}
               >
-                <span>{msg.senderName}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  {msg.senderPhotoURL ? (
+                    <img
+                      src={msg.senderPhotoURL}
+                      alt=""
+                      style={{
+                        width: "18px",
+                        height: "18px",
+                        borderRadius: "50%",
+                        objectFit: "cover"
+                      }}
+                    />
+                  ) : (
+                    <span style={{ fontSize: "12px" }}>🐧</span>
+                  )}
+                  <span>{msg.senderName}</span>
+                </div>
                 {isSecret && <span>SECRETO</span>}
               </div>
               <div style={{ fontSize: "13px", fontWeight: 700 }}>
