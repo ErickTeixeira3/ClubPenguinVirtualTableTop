@@ -159,8 +159,6 @@ export default function BoardViewport({
     updateTextItem,
     addShape,
     deleteStrokes,
-    erasePortionAt,
-    flushPendingUpdates,
     moveDrawingItems,
     rotateDrawingItems
   } = useBoardInteractive(sceneId);
@@ -170,7 +168,7 @@ export default function BoardViewport({
   const [leftToolbarCollapsed, setLeftToolbarCollapsed] = useState(false);
 
   // Ferramenta ativa:
-  // 'move' | 'measure' | 'draw_pencil' | 'draw_eraser' | 'draw_select' | 'draw_text' | 'draw_circle' | 'draw_rect' | 'fog_reveal' | 'fog_hide'
+  // 'move' | 'measure' | 'draw_pencil' | 'draw_select' | 'draw_text' | 'draw_circle' | 'draw_rect' | 'fog_reveal' | 'fog_hide'
   const [toolMode, setToolMode] = useState("move");
   const [openFlyout, setOpenFlyout] = useState(null); // 'draw' | 'layer' | 'gm_map' | null
 
@@ -189,9 +187,8 @@ export default function BoardViewport({
   const [inlineTextEditor, setInlineTextEditor] = useState(null); // { x, y, text, fontSize, color, editingId }
   const [draftStrokePoints, setDraftStrokePoints] = useState([]);
   const isDrawingRef = useRef(false);
-  const isErasingRef = useRef(false);
 
-  // Seleção e Rotação de riscos e textos
+  // Seleção e Rotação de riscos, formas e textos
   const [selectionBox, setSelectionBox] = useState(null); // { x, y, w, h }
   const selectionStartRef = useRef(null);
   const [selectedStrokeIds, setSelectedStrokeIds] = useState([]);
@@ -218,8 +215,10 @@ export default function BoardViewport({
   });
   const pingHoldTimerRef = useRef(null);
 
-  const [selectedTokenId, setSelectedTokenId] = useState(null);
+  // Seleção e arraste de Tokens (Suporte a seleção múltipla com Shift)
+  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
   const [draggingToken, setDraggingToken] = useState(null);
+  const [draggingTokensDelta, setDraggingTokensDelta] = useState(null);
 
   const [draftFogRect, setDraftFogRect] = useState(null);
   const fogStartRef = useRef(null);
@@ -237,18 +236,67 @@ export default function BoardViewport({
   };
   const cellSizePx = Math.max(16, Number(grid.cellSizePx) || 64);
 
-  // Atalho Delete / Backspace para apagar riscos selecionados
+  // Atalho Delete / Backspace para apagar riscos, formas, textos e tokens selecionados
   useEffect(() => {
-    if (selectedStrokeIds.length === 0) return;
+    if (selectedStrokeIds.length === 0 && selectedTokenIds.length === 0) return;
     const handleKeyDown = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === "Delete" || e.key === "Backspace") {
-        deleteStrokes(selectedStrokeIds);
-        setSelectedStrokeIds([]);
+        if (selectedStrokeIds.length > 0) {
+          deleteStrokes(selectedStrokeIds);
+          setSelectedStrokeIds([]);
+        }
+        if (selectedTokenIds.length > 0) {
+          selectedTokenIds.forEach((tokId) => {
+            const tok = tokens.find((t) => t.id === tokId);
+            if (tok && (isGM || canControlToken(tok))) {
+              removeToken(tokId);
+            }
+          });
+          setSelectedTokenIds([]);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedStrokeIds, deleteStrokes]);
+  }, [
+    selectedStrokeIds,
+    selectedTokenIds,
+    deleteStrokes,
+    tokens,
+    isGM,
+    canControlToken,
+    removeToken
+  ]);
+
+  // Manipulador de clique em itens (desenhos, textos, formas, tokens) com suporte a Shift
+  const handleItemClick = (e, itemId, itemType = "drawing") => {
+    const isShift = Boolean(e?.shiftKey);
+
+    if (itemType === "drawing") {
+      if (isShift) {
+        setSelectedStrokeIds((prev) =>
+          prev.includes(itemId)
+            ? prev.filter((id) => id !== itemId)
+            : [...prev, itemId]
+        );
+      } else {
+        setSelectedStrokeIds([itemId]);
+        setSelectedTokenIds([]);
+      }
+    } else if (itemType === "token") {
+      if (isShift) {
+        setSelectedTokenIds((prev) =>
+          prev.includes(itemId)
+            ? prev.filter((id) => id !== itemId)
+            : [...prev, itemId]
+        );
+      } else {
+        setSelectedTokenIds([itemId]);
+        setSelectedStrokeIds([]);
+      }
+    }
+  };
 
   const clientToBoardCoords = (clientX, clientY) => {
     const surface = boardSurfaceRef.current;
@@ -361,14 +409,29 @@ export default function BoardViewport({
     if (tokenLayer !== effectiveLayer) return;
 
     const pt = clientToBoardCoords(e.clientX, e.clientY);
-    setDraggingToken({
-      id: token.id,
-      x: token.x,
-      y: token.y,
-      offsetX: pt.x - token.x,
-      offsetY: pt.y - token.y,
-      sizeInCells: token.sizeInCells || 1
+    const activeIds = selectedTokenIds.includes(token.id)
+      ? selectedTokenIds
+      : [token.id];
+
+    const initialPositions = {};
+    activeIds.forEach((id) => {
+      const tok = tokens.find((t) => t.id === id);
+      if (tok && (isGM || canControlToken(tok))) {
+        initialPositions[id] = {
+          x: tok.x,
+          y: tok.y,
+          sizeInCells: tok.sizeInCells || 1
+        };
+      }
     });
+
+    setDraggingToken({
+      leadId: token.id,
+      startX: pt.x,
+      startY: pt.y,
+      initialPositions
+    });
+    setDraggingTokensDelta({ dx: 0, dy: 0 });
   };
 
   const handleSaveInlineText = async () => {
@@ -441,14 +504,7 @@ export default function BoardViewport({
       return;
     }
 
-    // 3. Modo Desenhar: Borracha (Apagamento Parcial)
-    if (toolMode === "draw_eraser" && e.button === 0) {
-      isErasingRef.current = true;
-      erasePortionAt(pt.x, pt.y, 18, effectiveLayer);
-      return;
-    }
-
-    // 4. Modo Desenhar: Caixa de Texto Comic Sans
+    // 3. Modo Desenhar: Caixa de Texto Comic Sans
     if (toolMode === "draw_text" && e.button === 0) {
       setInlineTextEditor({
         x: Math.round(pt.x),
@@ -461,7 +517,7 @@ export default function BoardViewport({
       return;
     }
 
-    // 5. Modo Desenhar: Selecionar e Rotacionar Riscos / Textos
+    // 4. Modo Desenhar: Selecionar e Rotacionar Riscos / Textos
     if (toolMode === "draw_select" && e.button === 0) {
       if (selectedStrokesBounds) {
         const cx = selectedStrokesBounds.x + selectedStrokesBounds.w / 2;
@@ -498,13 +554,16 @@ export default function BoardViewport({
         }
       }
 
-      setSelectedStrokeIds([]);
+      if (!e.shiftKey) {
+        setSelectedStrokeIds([]);
+        setSelectedTokenIds([]);
+      }
       selectionStartRef.current = { x: pt.x, y: pt.y };
       setSelectionBox({ x: pt.x, y: pt.y, w: 0, h: 0 });
       return;
     }
 
-    // 6. Névoa de Guerra (Mestre)
+    // 5. Névoa de Guerra (Mestre)
     if (
       isGM &&
       e.button === 0 &&
@@ -516,8 +575,50 @@ export default function BoardViewport({
       return;
     }
 
-    // 7. Modo Mover (Pan do Mapa + Ping Onda de Água ao pressionar/clicar)
-    setSelectedTokenId(null);
+    // 6. Modo Mover (Pan do Mapa + Ping Onda de Água + Rotação/Arraste de Itens Selecionados)
+    if (toolMode === "move" && e.button === 0) {
+      if (selectedStrokesBounds) {
+        const cx = selectedStrokesBounds.x + selectedStrokesBounds.w / 2;
+        const cy = selectedStrokesBounds.y + selectedStrokesBounds.h / 2;
+        const handleX = cx;
+        const handleY = selectedStrokesBounds.y - 28;
+
+        // Clique na alça de rotação (círculo ↻ acima da caixa)
+        if (Math.hypot(pt.x - handleX, pt.y - handleY) <= 16) {
+          isRotatingRef.current = true;
+          rotationStartRef.current = {
+            cx,
+            cy,
+            startAngle: Math.atan2(pt.y - cy, pt.x - cx)
+          };
+          setRotatingAngle(0);
+          return;
+        }
+
+        // Clique dentro da caixa delimitadora para mover todos os riscos juntos
+        if (
+          pt.x >= selectedStrokesBounds.x &&
+          pt.x <= selectedStrokesBounds.x + selectedStrokesBounds.w &&
+          pt.y >= selectedStrokesBounds.y &&
+          pt.y <= selectedStrokesBounds.y + selectedStrokesBounds.h
+        ) {
+          setDraggingStrokesDelta({
+            startX: pt.x,
+            startY: pt.y,
+            dx: 0,
+            dy: 0
+          });
+          return;
+        }
+      }
+
+      // Se clicou no fundo sem Shift, limpa as seleções
+      if (!e.shiftKey) {
+        setSelectedTokenIds([]);
+        setSelectedStrokeIds([]);
+      }
+    }
+
     setPanningCamera(true);
     panStartRef.current = {
       x: e.clientX,
@@ -557,20 +658,11 @@ export default function BoardViewport({
       return;
     }
 
-    // 2. Arrastando Token
+    // 2. Arrastando Token(s)
     if (draggingToken) {
-      const tokenSizePx = (draggingToken.sizeInCells || 1) * cellSizePx;
-      const rawX = Math.max(
-        0,
-        Math.min(widthPx - tokenSizePx, pt.x - draggingToken.offsetX)
-      );
-      const rawY = Math.max(
-        0,
-        Math.min(heightPx - tokenSizePx, pt.y - draggingToken.offsetY)
-      );
-
-      setDraggingToken((prev) => (prev ? { ...prev, x: rawX, y: rawY } : null));
-      moveTokenRealtime(draggingToken.id, rawX, rawY, false);
+      const dx = pt.x - draggingToken.startX;
+      const dy = pt.y - draggingToken.startY;
+      setDraggingTokensDelta({ dx, dy });
       return;
     }
 
@@ -612,13 +704,7 @@ export default function BoardViewport({
       return;
     }
 
-    // 5. Apagando com Borracha (Apaga apenas o trecho por onde o mouse passa)
-    if (isErasingRef.current) {
-      erasePortionAt(pt.x, pt.y, 18, effectiveLayer);
-      return;
-    }
-
-    // 6. Movendo riscos e textos selecionados
+    // 5. Movendo riscos e textos selecionados
     if (draggingStrokesDelta) {
       setDraggingStrokesDelta((prev) =>
         prev
@@ -689,27 +775,31 @@ export default function BoardViewport({
       }
     }
 
-    // 2. Finaliza arraste de Token
+    // 2. Finaliza arraste de Token(s)
     if (draggingToken) {
       const ignoreSnap = Boolean(e?.altKey);
-      const tokenSizePx = (draggingToken.sizeInCells || 1) * cellSizePx;
-      const finalX = Math.max(
-        0,
-        Math.min(
-          widthPx - tokenSizePx,
-          snapCoordinate(draggingToken.x, grid.offsetX, ignoreSnap)
-        )
-      );
-      const finalY = Math.max(
-        0,
-        Math.min(
-          heightPx - tokenSizePx,
-          snapCoordinate(draggingToken.y, grid.offsetY, ignoreSnap)
-        )
+      const dx = draggingTokensDelta ? draggingTokensDelta.dx : 0;
+      const dy = draggingTokensDelta ? draggingTokensDelta.dy : 0;
+
+      Object.entries(draggingToken.initialPositions || {}).forEach(
+        ([tokId, pos]) => {
+          const tokenSizePx = (pos.sizeInCells || 1) * cellSizePx;
+          const targetX = Math.max(
+            0,
+            Math.min(widthPx - tokenSizePx, pos.x + dx)
+          );
+          const targetY = Math.max(
+            0,
+            Math.min(heightPx - tokenSizePx, pos.y + dy)
+          );
+          const finalX = snapCoordinate(targetX, grid.offsetX, ignoreSnap);
+          const finalY = snapCoordinate(targetY, grid.offsetY, ignoreSnap);
+          moveTokenRealtime(tokId, finalX, finalY, true);
+        }
       );
 
-      moveTokenRealtime(draggingToken.id, finalX, finalY, true);
       setDraggingToken(null);
+      setDraggingTokensDelta(null);
     }
 
     // 3. Finaliza Medição
@@ -751,12 +841,6 @@ export default function BoardViewport({
           h: Math.round(shapeToSave.h)
         });
       }
-    }
-
-    // 5. Finaliza Borracha
-    if (isErasingRef.current) {
-      isErasingRef.current = false;
-      flushPendingUpdates();
     }
 
     // 6. Finaliza movimento de riscos e textos selecionados
@@ -926,11 +1010,20 @@ export default function BoardViewport({
 
   // Filtra tokens visíveis e aplica posição de arraste
   const renderedTokens = tokens
-    .map((t) =>
-      draggingToken && draggingToken.id === t.id
-        ? { ...t, x: draggingToken.x, y: draggingToken.y }
-        : t
-    )
+    .map((t) => {
+      if (draggingToken && draggingToken.initialPositions?.[t.id]) {
+        const dx = draggingTokensDelta ? draggingTokensDelta.dx : 0;
+        const dy = draggingTokensDelta ? draggingTokensDelta.dy : 0;
+        const pos = draggingToken.initialPositions[t.id];
+        const tokenSizePx = (pos.sizeInCells || 1) * cellSizePx;
+        return {
+          ...t,
+          x: Math.max(0, Math.min(widthPx - tokenSizePx, pos.x + dx)),
+          y: Math.max(0, Math.min(heightPx - tokenSizePx, pos.y + dy))
+        };
+      }
+      return t;
+    })
     .filter((t) => {
       if (isGM || !fogEnabled) return true;
       const sizePx = (t.sizeInCells || 1) * cellSizePx;
@@ -984,6 +1077,8 @@ export default function BoardViewport({
       ? selectedStrokesBounds.y + selectedStrokesBounds.h / 2
       : 0;
 
+    const isInteractiveMode = toolMode === "move" || toolMode === "draw_select";
+
     return (
       <svg
         width={widthPx}
@@ -1029,7 +1124,44 @@ export default function BoardViewport({
             s.shapeType === "circle";
 
           return (
-            <g key={s.id} transform={transform}>
+            <g
+              key={s.id}
+              transform={transform}
+              style={{
+                cursor: isInteractiveMode ? "pointer" : "default"
+              }}
+              onMouseDown={(e) => {
+                if (isInteractiveMode && e.button === 0) {
+                  e.stopPropagation();
+                  handleItemClick(e, s.id, "drawing");
+                }
+              }}
+            >
+              {/* Área invisível ampla de hit-test para captura imediata de cliques com a mão */}
+              {isCircle ? (
+                <ellipse
+                  cx={shapeCenterX}
+                  cy={shapeCenterY}
+                  rx={(s.w || 20) / 2}
+                  ry={(s.h || 20) / 2}
+                  fill="rgba(0,0,0,0.001)"
+                  stroke="transparent"
+                  strokeWidth={strokeW + 14}
+                  style={{ pointerEvents: isInteractiveMode ? "all" : "none" }}
+                />
+              ) : (
+                <rect
+                  x={drawX}
+                  y={drawY}
+                  width={s.w || 20}
+                  height={s.h || 20}
+                  fill="rgba(0,0,0,0.001)"
+                  stroke="transparent"
+                  strokeWidth={strokeW + 14}
+                  style={{ pointerEvents: isInteractiveMode ? "all" : "none" }}
+                />
+              )}
+
               {isSelected && (
                 isCircle ? (
                   <ellipse
@@ -1041,6 +1173,7 @@ export default function BoardViewport({
                     stroke="#00f0ff"
                     strokeWidth={strokeW + 6}
                     strokeOpacity={0.55}
+                    style={{ pointerEvents: "none" }}
                   />
                 ) : (
                   <rect
@@ -1052,6 +1185,7 @@ export default function BoardViewport({
                     stroke="#00f0ff"
                     strokeWidth={strokeW + 6}
                     strokeOpacity={0.55}
+                    style={{ pointerEvents: "none" }}
                   />
                 )
               )}
@@ -1064,6 +1198,7 @@ export default function BoardViewport({
                   fill={fillCol}
                   stroke={strokeCol}
                   strokeWidth={strokeW}
+                  style={{ pointerEvents: isInteractiveMode ? "all" : "none" }}
                 />
               ) : (
                 <rect
@@ -1074,6 +1209,7 @@ export default function BoardViewport({
                   fill={fillCol}
                   stroke={strokeCol}
                   strokeWidth={strokeW}
+                  style={{ pointerEvents: isInteractiveMode ? "all" : "none" }}
                 />
               )}
             </g>
@@ -1116,6 +1252,8 @@ export default function BoardViewport({
       ? selectedStrokesBounds.y + selectedStrokesBounds.h / 2
       : 0;
 
+    const isInteractiveMode = toolMode === "move" || toolMode === "draw_select";
+
     return (
       <svg
         width={widthPx}
@@ -1137,7 +1275,37 @@ export default function BoardViewport({
           const rotAngle = isSelected ? rotatingAngle : 0;
 
           return (
-            <g key={s.id}>
+            <g
+              key={s.id}
+              style={{
+                cursor: isInteractiveMode ? "pointer" : "default"
+              }}
+              onMouseDown={(e) => {
+                if (isInteractiveMode && e.button === 0) {
+                  e.stopPropagation();
+                  handleItemClick(e, s.id, "drawing");
+                }
+              }}
+            >
+              {/* Hit-test transparente amplo (16px) para facilitar clique em riscos com o mouse */}
+              <path
+                d={pointsToSvgPath(
+                  s.points,
+                  offsetX,
+                  offsetY,
+                  cx,
+                  cy,
+                  rotAngle
+                )}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={Math.max(16, (Number(s.width) || 4) + 14)}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  pointerEvents: isInteractiveMode ? "stroke" : "none"
+                }}
+              />
               {isSelected && (
                 <path
                   d={pointsToSvgPath(
@@ -1154,6 +1322,7 @@ export default function BoardViewport({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeOpacity={0.55}
+                  style={{ pointerEvents: "none" }}
                 />
               )}
               <path
@@ -1170,6 +1339,9 @@ export default function BoardViewport({
                 strokeWidth={Number(s.width) || 4}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                style={{
+                  pointerEvents: isInteractiveMode ? "stroke" : "none"
+                }}
               />
             </g>
           );
@@ -1196,6 +1368,8 @@ export default function BoardViewport({
     const cy = selectedStrokesBounds
       ? selectedStrokesBounds.y + selectedStrokesBounds.h / 2
       : 0;
+
+    const isInteractiveMode = toolMode === "move" || toolMode === "draw_select";
 
     return (
       <div
@@ -1229,9 +1403,9 @@ export default function BoardViewport({
             <div
               key={item.id}
               onMouseDown={(e) => {
-                if (toolMode === "draw_select") {
+                if (isInteractiveMode && e.button === 0) {
                   e.stopPropagation();
-                  setSelectedStrokeIds([item.id]);
+                  handleItemClick(e, item.id, "drawing");
                 }
               }}
               onDoubleClick={(e) => {
@@ -1259,10 +1433,10 @@ export default function BoardViewport({
                 transformOrigin: "left top",
                 whiteSpace: "pre-wrap",
                 pointerEvents:
-                  toolMode === "draw_select" || toolMode === "draw_text"
+                  isInteractiveMode || toolMode === "draw_text"
                     ? "auto"
                     : "none",
-                cursor: toolMode === "draw_select" ? "pointer" : "default",
+                cursor: isInteractiveMode ? "pointer" : "default",
                 outline: isSelected ? "2px dashed #00f0ff" : "none",
                 outlineOffset: "4px",
                 padding: "2px",
@@ -1296,7 +1470,6 @@ export default function BoardViewport({
 
   const isDrawToolActive =
     toolMode === "draw_pencil" ||
-    toolMode === "draw_eraser" ||
     toolMode === "draw_select" ||
     toolMode === "draw_text" ||
     toolMode === "draw_circle" ||
@@ -1319,7 +1492,6 @@ export default function BoardViewport({
         cursor:
           toolMode === "measure" ||
           toolMode === "draw_pencil" ||
-          toolMode === "draw_eraser" ||
           toolMode === "draw_select" ||
           toolMode === "fog_reveal" ||
           toolMode === "fog_hide"
@@ -1390,7 +1562,7 @@ export default function BoardViewport({
               </button>
             </div>
 
-            {/* 3. Ferramenta Desenhar (Lápis, Borracha, Selecionar, Texto) */}
+            {/* 3. Ferramenta Desenhar (Lápis, Círculo, Quadrado, Selecionar, Texto) */}
             <div className="vtt-tool-group">
               <button
                 type="button"
@@ -1403,24 +1575,22 @@ export default function BoardViewport({
                 }}
               >
                 <span>
-                  {toolMode === "draw_eraser"
-                    ? "🧽"
-                    : toolMode === "draw_select"
-                      ? "⬚"
-                      : toolMode === "draw_text"
-                        ? "🔤"
-                        : toolMode === "draw_circle"
-                          ? "⭕"
-                          : toolMode === "draw_rect"
-                            ? "⬛"
-                            : "✏️"}
+                  {toolMode === "draw_select"
+                    ? "⬚"
+                    : toolMode === "draw_text"
+                      ? "🔤"
+                      : toolMode === "draw_circle"
+                        ? "⭕"
+                        : toolMode === "draw_rect"
+                          ? "⬛"
+                          : "✏️"}
                 </span>
                 <span className="vtt-tool-label">Desenhar</span>
               </button>
 
               {openFlyout === "draw" && (
                 <div
-                  className="vtt-tool-flyout"
+                  className="vtt-tool-flyout vtt-tool-flyout-draw"
                   onWheel={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
@@ -1470,22 +1640,6 @@ export default function BoardViewport({
                     onClick={() => setToolMode("draw_rect")}
                   >
                     ⬛ Quadrado
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`cp-btn ${
-                      toolMode === "draw_eraser" ? "cp-btn-gold" : ""
-                    }`}
-                    style={{
-                      width: "100%",
-                      justifyContent: "flex-start",
-                      padding: "6px 10px",
-                      fontSize: "12px"
-                    }}
-                    onClick={() => setToolMode("draw_eraser")}
-                  >
-                    🧽 Borracha
                   </button>
 
                   <button
@@ -1622,7 +1776,7 @@ export default function BoardViewport({
                   )}
 
                   {/* Paleta de Cor da Borda / Traço / Texto */}
-                  {toolMode !== "draw_eraser" && toolMode !== "draw_select" && (
+                  {toolMode !== "draw_select" && (
                     <div
                       style={{
                         display: "grid",
@@ -1722,7 +1876,7 @@ export default function BoardViewport({
                         }}
                         onClick={() => {
                           setGmLayer(layerItem.key);
-                          setSelectedTokenId(null);
+                          setSelectedTokenIds([]);
                           setSelectedStrokeIds([]);
                           setOpenFlyout(null);
                         }}
@@ -1990,8 +2144,8 @@ export default function BoardViewport({
         )}
       </aside>
 
-      {/* Barra Flutuante de Ação para Riscos Selecionados */}
-      {selectedStrokeIds.length > 0 && (
+      {/* Barra Flutuante de Ação para Itens Selecionados (Riscos, Formas, Textos, Tokens) */}
+      {(selectedStrokeIds.length > 0 || selectedTokenIds.length > 0) && (
         <div
           onMouseDown={(e) => e.stopPropagation()}
           style={{
@@ -2014,15 +2168,26 @@ export default function BoardViewport({
             className="cp-title"
             style={{ fontSize: "13px", marginRight: "4px" }}
           >
-            {selectedStrokeIds.length} risco(s) selecionado(s)
+            {selectedStrokeIds.length + selectedTokenIds.length} item(ns) selecionado(s)
           </span>
           <button
             type="button"
             className="cp-btn cp-btn-orange"
             style={{ padding: "4px 10px", fontSize: "12px" }}
             onClick={async () => {
-              await deleteStrokes(selectedStrokeIds);
-              setSelectedStrokeIds([]);
+              if (selectedStrokeIds.length > 0) {
+                await deleteStrokes(selectedStrokeIds);
+                setSelectedStrokeIds([]);
+              }
+              if (selectedTokenIds.length > 0) {
+                for (const tokId of selectedTokenIds) {
+                  const tok = tokens.find((t) => t.id === tokId);
+                  if (tok && (isGM || canControlToken(tok))) {
+                    await removeToken(tokId);
+                  }
+                }
+                setSelectedTokenIds([]);
+              }
             }}
           >
             Deletar Selecionados
@@ -2031,7 +2196,10 @@ export default function BoardViewport({
             type="button"
             className="cp-btn"
             style={{ padding: "4px 10px", fontSize: "12px" }}
-            onClick={() => setSelectedStrokeIds([])}
+            onClick={() => {
+              setSelectedStrokeIds([]);
+              setSelectedTokenIds([]);
+            }}
           >
             Limpar Seleção
           </button>
@@ -2097,9 +2265,9 @@ export default function BoardViewport({
             isInteractive={
               toolMode === "move" && effectiveLayer === "map" && isGM
             }
-            isSelected={selectedTokenId === token.id}
+            isSelected={selectedTokenIds.includes(token.id)}
             onStartDrag={handleStartTokenDrag}
-            onSelect={setSelectedTokenId}
+            onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>
@@ -2158,9 +2326,9 @@ export default function BoardViewport({
             isInteractive={
               toolMode === "move" && effectiveLayer === "objects" && isGM
             }
-            isSelected={selectedTokenId === token.id}
+            isSelected={selectedTokenIds.includes(token.id)}
             onStartDrag={handleStartTokenDrag}
-            onSelect={setSelectedTokenId}
+            onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>
@@ -2187,9 +2355,9 @@ export default function BoardViewport({
             isInteractive={
               toolMode === "move" && effectiveLayer === "tokens"
             }
-            isSelected={selectedTokenId === token.id}
+            isSelected={selectedTokenIds.includes(token.id)}
             onStartDrag={handleStartTokenDrag}
-            onSelect={setSelectedTokenId}
+            onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>

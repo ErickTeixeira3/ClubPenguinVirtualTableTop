@@ -52,7 +52,7 @@ export default function TokenSprite({
       onMouseDown={(e) => {
         if (!isInteractive) return;
         e.stopPropagation();
-        onSelect(token.id);
+        onSelect(token.id, e);
         if (canControl && e.button === 0) {
           onStartDrag(e, token);
         }

@@ -267,6 +267,13 @@
   z-index: 30;
   scrollbar-width: thin;
   scrollbar-color: #3898ff rgba(0, 27, 58, 0.4);
+  box-sizing: border-box;
+}
+
+.vtt-tool-flyout-draw {
+  top: -120px;
+  max-height: calc(100vh - 140px);
+  padding-bottom: 28px;
 }
 
 .vtt-tool-flyout::-webkit-scrollbar {
