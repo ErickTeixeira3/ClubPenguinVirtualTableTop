@@ -244,18 +244,115 @@ export default function NoteEditorModal({
   note = null,
   defaultScope = "party",
   defaultOwnerId = null,
+  isGM = false,
+  currentUserId = null,
+  playersList = [],
   accessibleNotes = [],
+  accessibleFolders = [],
   characters = [],
   onSave,
   onDelete,
   onOpenNote,
   onUpdateTargetNote,
+  onCloneToTarget,
+  onShareNoteWithTarget,
+  onRevokeNoteAccess,
+  onOpenCharacterSheet,
   onClose
 }) {
   const isEditing = Boolean(note?.id);
+  const [cloneTarget, setCloneTarget] = useState("");
+  const [justCloned, setJustCloned] = useState(false);
+  const [showSharePanel, setShowSharePanel] = useState(false);
+
+  // Verificação de permissões e acessos concedidos
+  const isSharedWithParty =
+    note?.scope === "party" ||
+    (Array.isArray(note?.visibleTo) && note.visibleTo.includes("ALL"));
+
+  const visibleUids = useMemo(() => {
+    const list = note?.visibleTo;
+    return (Array.isArray(list) ? list : []).filter(
+      (id) => id !== "ALL"
+    );
+  }, [note]);
+
+  const sharedPlayers = useMemo(() => {
+    return (playersList || []).filter(
+      (p) => visibleUids.includes(p.uid) && p.uid !== note?.ownerId
+    );
+  }, [playersList, visibleUids, note?.ownerId]);
+
+  const availablePlayersToShare = useMemo(() => {
+    return (playersList || []).filter(
+      (p) => !visibleUids.includes(p.uid) && p.uid !== note?.ownerId
+    );
+  }, [playersList, visibleUids, note?.ownerId]);
+
+  const sharedCount = (isSharedWithParty ? 1 : 0) + sharedPlayers.length;
+
+  const handleCloneAction = async (targetValue) => {
+    if (!targetValue || !onCloneToTarget || !note?.id) return;
+
+    if (targetValue === "party") {
+      await onCloneToTarget(note, {
+        targetScope: "party",
+        targetOwnerId: currentUserId
+      });
+    } else if (targetValue === "gm") {
+      await onCloneToTarget(note, {
+        targetScope: "gm",
+        targetOwnerId: currentUserId
+      });
+    } else if (targetValue === "my_diary") {
+      await onCloneToTarget(note, {
+        targetScope: "player",
+        targetOwnerId: currentUserId
+      });
+    } else if (targetValue.startsWith("player:")) {
+      const targetUid = targetValue.replace("player:", "");
+      await onCloneToTarget(note, {
+        targetScope: "player",
+        targetOwnerId: targetUid
+      });
+    }
+
+    setCloneTarget("");
+    setJustCloned(true);
+    setTimeout(() => setJustCloned(false), 1400);
+  };
 
   const [title, setTitle] = useState(note?.title || "");
   const [noteType, setNoteType] = useState(note?.noteType || "lore");
+  const [folder, setFolder] = useState(note?.folder || "");
+
+  // Lista de pastas (e subpastas) existentes para a categoria selecionada
+  const availableFoldersForType = useMemo(() => {
+    const set = new Set();
+    const registerPathAndPrefixes = (rawPath) => {
+      const clean = String(rawPath || "")
+        .split("/")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      let accum = "";
+      clean.forEach((seg) => {
+        accum = accum ? `${accum}/${seg}` : seg;
+        set.add(accum);
+      });
+    };
+
+    (accessibleFolders || []).forEach((f) => {
+      if (f.noteType === noteType && f.name?.trim()) {
+        registerPathAndPrefixes(f.name);
+      }
+    });
+    (accessibleNotes || []).forEach((n) => {
+      if (n.noteType === noteType && n.folder?.trim()) {
+        registerPathAndPrefixes(n.folder);
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [accessibleFolders, accessibleNotes, noteType]);
   const [linkedCharacterSheetId, setLinkedCharacterSheetId] = useState(
     note?.linkedCharacterSheetId || ""
   );
@@ -416,6 +513,7 @@ export default function NoteEditorModal({
         ownerId: note?.ownerId || defaultOwnerId,
         title: title.trim(),
         noteType,
+        folder: folder.trim(),
         linkedCharacterSheetId:
           noteType === "character" && linkedCharacterSheetId
             ? linkedCharacterSheetId
@@ -524,11 +622,11 @@ export default function NoteEditorModal({
             overflowY: "auto"
           }}
         >
-          {/* Linha 1: Nome e Tipo */}
+          {/* Linha 1: Nome, Tipo e Pasta */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 200px",
+              gridTemplateColumns: "1fr 140px 160px",
               gap: "8px"
             }}
           >
@@ -579,6 +677,34 @@ export default function NoteEditorModal({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 900,
+                  color: "#001b3a",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px"
+                }}
+              >
+                Pasta
+              </span>
+              <input
+                type="text"
+                list="cp-note-folders-datalist"
+                className="cp-input"
+                placeholder="Ex: Geral, Ato 1..."
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
+              />
+              <datalist id="cp-note-folders-datalist">
+                {availableFoldersForType.map((fName) => (
+                  <option key={fName} value={fName} />
+                ))}
+              </datalist>
             </div>
           </div>
 
@@ -681,10 +807,11 @@ export default function NoteEditorModal({
             </div>
           </div>
 
-          {/* Barra de Ações do Documento (Vincular Card e Modo de Exibição) */}
+          {/* Barra de Ações do Documento (Vincular Card, Acesso, Clonar e Modo de Exibição) */}
           <div
             style={{
               display: "flex",
+              flexWrap: "wrap",
               justifyContent: "space-between",
               alignItems: "center",
               gap: "6px",
@@ -694,7 +821,7 @@ export default function NoteEditorModal({
               marginTop: "2px"
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
               {Boolean(selectedText && selectedText.trim().length >= 2) && (
                 <button
                   type="button"
@@ -711,6 +838,79 @@ export default function NoteEditorModal({
                 >
                   📎 Vincular card ("{selectedText.slice(0, 16)}...")
                 </button>
+              )}
+
+              {isEditing && note?.linkedCharacterSheetId && onOpenCharacterSheet && (
+                <button
+                  type="button"
+                  className="cp-btn cp-btn-gold"
+                  style={{
+                    padding: "3px 8px",
+                    fontSize: "11px",
+                    height: "26px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    fontWeight: 800
+                  }}
+                  onClick={() => onOpenCharacterSheet(note.linkedCharacterSheetId)}
+                >
+                  🐧 Abrir Ficha
+                </button>
+              )}
+
+              {isEditing && (
+                <>
+                  <button
+                    type="button"
+                    className={`cp-btn ${showSharePanel ? "cp-btn-gold" : "cp-btn-epf"}`}
+                    style={{
+                      padding: "3px 8px",
+                      fontSize: "11px",
+                      height: "26px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0
+                    }}
+                    onClick={() => setShowSharePanel((prev) => !prev)}
+                  >
+                    👁️ Acesso{sharedCount > 0 ? ` (${sharedCount})` : ""}
+                  </button>
+
+                  {onCloneToTarget && (
+                    <select
+                      className="cp-input"
+                      style={{
+                        width: "auto",
+                        height: "26px",
+                        padding: "2px 8px",
+                        fontSize: "11px",
+                        fontWeight: 800
+                      }}
+                      value={cloneTarget}
+                      onChange={(e) => handleCloneAction(e.target.value)}
+                    >
+                      <option value="">
+                        {justCloned ? "✓ Clonado!" : "📑 Clonar Card..."}
+                      </option>
+                      {note?.scope !== "player" && (
+                        <option value="my_diary">→ Para Meu Diário</option>
+                      )}
+                      {note?.scope !== "party" && (
+                        <option value="party">→ Para Diário do Grupo</option>
+                      )}
+                      {isGM && note?.scope !== "gm" && (
+                        <option value="gm">→ Para Diário do Mestre</option>
+                      )}
+                      {isGM &&
+                        (playersList || []).map((p) => (
+                          <option key={p.uid} value={`player:${p.uid}`}>
+                            → Para Diário: {p.displayName}
+                          </option>
+                        ))}
+                    </select>
+                  )}
+                </>
               )}
             </div>
 
@@ -745,6 +945,155 @@ export default function NoteEditorModal({
               </button>
             </div>
           </div>
+
+          {/* Painel Expansível de Gestão de Acessos (Disponibilizar) dentro do Card */}
+          {isEditing && showSharePanel && (
+            <div
+              style={{
+                background: "rgba(0, 27, 58, 0.06)",
+                border: "1.5px solid var(--cp-blue-border)",
+                borderRadius: "8px",
+                padding: "6px 10px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px"
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  color: "#001b3a"
+                }}
+              >
+                <span>ACESSOS CONCEDIDOS</span>
+                <button
+                  type="button"
+                  onClick={() => setShowSharePanel(false)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 900,
+                    fontSize: "11px",
+                    color: "#001b3a"
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                {isSharedWithParty && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      background: "#02529c",
+                      color: "#ffffff",
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      padding: "2px 6px",
+                      borderRadius: "6px"
+                    }}
+                  >
+                    👥 Grupo
+                    {isGM && (
+                      <button
+                        type="button"
+                        title="Remover acesso do grupo"
+                        onClick={() => onRevokeNoteAccess?.(note.id, "party")}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#ff8a80",
+                          cursor: "pointer",
+                          fontWeight: 900,
+                          fontSize: "11px",
+                          padding: "0 2px"
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                )}
+
+                {sharedPlayers.map((p) => (
+                  <span
+                    key={p.uid}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      background: "#2e7d32",
+                      color: "#ffffff",
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      padding: "2px 6px",
+                      borderRadius: "6px"
+                    }}
+                  >
+                    👤 {p.displayName}
+                    {isGM && (
+                      <button
+                        type="button"
+                        title={`Remover acesso de ${p.displayName}`}
+                        onClick={() => onRevokeNoteAccess?.(note.id, p.uid)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#ff8a80",
+                          cursor: "pointer",
+                          fontWeight: 900,
+                          fontSize: "11px",
+                          padding: "0 2px"
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                ))}
+
+                {!isSharedWithParty && sharedPlayers.length === 0 && (
+                  <span style={{ fontSize: "10px", color: "#64748b" }}>
+                    Apenas proprietário e mestre
+                  </span>
+                )}
+              </div>
+
+              <select
+                className="cp-input"
+                style={{
+                  padding: "3px 6px",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  height: "26px"
+                }}
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onShareNoteWithTarget?.(note.id, e.target.value);
+                  }
+                }}
+              >
+                <option value="">+ Disponibilizar para...</option>
+                {!isSharedWithParty && (
+                  <option value="party">👥 Grupo (Todos)</option>
+                )}
+                {availablePlayersToShare.map((p) => (
+                  <option key={p.uid} value={p.uid}>
+                    👤 {p.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Área de Conteúdo: Vários Blocos com Títulos Personalizáveis */}
           <div

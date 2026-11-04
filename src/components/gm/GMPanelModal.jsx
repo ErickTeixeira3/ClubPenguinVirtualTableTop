@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useCampaign } from "../../contexts/CampaignContext";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -25,9 +25,62 @@ export default function GMPanelModal({ onClose }) {
   const [addingUser, setAddingUser] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  if (!campaign) return null;
+  // Lista unificada de todos os agentes (jogadores cadastrados na campanha e contas autorizadas)
+  const allAgentsList = useMemo(() => {
+    if (!campaign) return [];
+    const list = [];
+    const registeredPlayers = Object.values(campaign.players || {});
+    const registeredEmails = new Set();
+    const registeredUids = new Set();
 
-  const playersList = Object.values(campaign.players || {});
+    // 1. Jogadores registrados que já entraram na mesa
+    registeredPlayers.forEach((p) => {
+      const emailLower = (p.email || "").toLowerCase();
+      if (emailLower) registeredEmails.add(emailLower);
+      if (p.uid) registeredUids.add(p.uid);
+
+      const isOnline = Boolean(onlineUsers?.[p.uid]?.online);
+      const isThisGM = campaign.gmId === p.uid || p.role === "gm";
+
+      list.push({
+        id: p.uid,
+        uid: p.uid,
+        displayName: p.displayName || "Agente",
+        photoURL: p.photoURL || null,
+        isGM: isThisGM,
+        isOnline,
+        isRegistered: true
+      });
+    });
+
+    // 2. Contas autorizadas que ainda não entraram ou não criaram perfil
+    (authorizedUsers || []).forEach((auth) => {
+      const authEmailLower = (auth.email || "").toLowerCase();
+      if (registeredEmails.has(authEmailLower)) return;
+
+      const isThisGM = auth.role === "gm";
+      list.push({
+        id: `auth_${authEmailLower}`,
+        uid: null,
+        displayName: auth.defaultDisplayName || "Agente Convocado",
+        photoURL: null,
+        isGM: isThisGM,
+        isOnline: false,
+        isRegistered: false
+      });
+    });
+
+    // Ordena: Mestre primeiro, depois online primeiro, depois por nome
+    list.sort((a, b) => {
+      if (a.isGM !== b.isGM) return a.isGM ? -1 : 1;
+      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+
+    return list;
+  }, [campaign, onlineUsers, authorizedUsers]);
+
+  if (!campaign) return null;
 
   const handleSaveName = async (e) => {
     e.preventDefault();
@@ -298,7 +351,7 @@ export default function GMPanelModal({ onClose }) {
             </div>
           )}
 
-          {/* Seção: Jogadores Conectados */}
+          {/* Seção: Agentes da Mesa */}
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             <span
               style={{
@@ -308,23 +361,26 @@ export default function GMPanelModal({ onClose }) {
                 letterSpacing: "0.5px"
               }}
             >
-              JOGADORES CONECTADOS
+              AGENTES DA MESA
             </span>
 
-            {playersList.map((p) => {
-              const isOnline = Boolean(onlineUsers?.[p.uid]?.online);
-              const isThisGM = campaign.gmId === p.uid;
+            {allAgentsList.map((agent) => {
+              const isThisGM = agent.isGM;
 
               return (
                 <div
-                  key={p.uid}
+                  key={agent.id}
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
                     padding: "10px 12px",
-                    background: "rgba(0, 240, 255, 0.06)",
-                    border: "1px solid rgba(0, 240, 255, 0.25)",
+                    background: agent.isOnline
+                      ? "rgba(0, 240, 255, 0.08)"
+                      : "rgba(0, 27, 58, 0.4)",
+                    border: agent.isOnline
+                      ? "1px solid rgba(0, 240, 255, 0.3)"
+                      : "1px solid rgba(100, 116, 139, 0.2)",
                     borderRadius: "8px"
                   }}
                 >
@@ -338,59 +394,83 @@ export default function GMPanelModal({ onClose }) {
                     <span
                       className="presence-dot"
                       style={{
-                        background: isOnline
+                        background: agent.isOnline
                           ? "var(--epf-green-radar)"
                           : "#64748b",
-                        boxShadow: isOnline
+                        boxShadow: agent.isOnline
                           ? "0 0 6px var(--epf-green-radar)"
                           : "none"
                       }}
+                      title={agent.isOnline ? "Online" : "Offline"}
                     />
 
-                    {p.photoURL ? (
+                    {agent.photoURL ? (
                       <img
-                        src={p.photoURL}
+                        src={agent.photoURL}
                         alt=""
                         style={{
-                          width: "28px",
-                          height: "28px",
+                          width: "30px",
+                          height: "30px",
                           borderRadius: "50%",
                           objectFit: "cover",
                           border: isThisGM
                             ? "2px solid #ffcc00"
-                            : "2px solid var(--cp-blue-border)"
+                            : "2px solid var(--cp-blue-border)",
+                          opacity: agent.isOnline ? 1 : 0.65
                         }}
                       />
                     ) : (
-                      <span style={{ fontSize: "16px" }}>🐧</span>
+                      <span
+                        style={{
+                          fontSize: "18px",
+                          opacity: agent.isOnline ? 1 : 0.6
+                        }}
+                      >
+                        🐧
+                      </span>
                     )}
 
                     <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ color: "#ffffff", fontWeight: 700, fontSize: "13px" }}>
-                        {p.displayName}
+                      <span
+                        style={{
+                          color: agent.isOnline ? "#ffffff" : "#94a3b8",
+                          fontWeight: 700,
+                          fontSize: "13px"
+                        }}
+                      >
+                        {agent.displayName}
                       </span>
-                      {p.email && (
-                        <span style={{ color: "#94a3b8", fontSize: "11px" }}>
-                          {p.email}
-                        </span>
-                      )}
+                      <span
+                        style={{
+                          color: agent.isOnline ? "var(--epf-green-radar)" : "#64748b",
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          letterSpacing: "0.5px"
+                        }}
+                      >
+                        {agent.isOnline ? "ONLINE" : "OFFLINE"}
+                      </span>
                     </div>
 
                     <span
                       className={`cp-badge ${
                         isThisGM ? "cp-badge-gm" : "cp-badge-player"
                       }`}
+                      style={{
+                        opacity: agent.isOnline ? 1 : 0.75,
+                        fontSize: "9px"
+                      }}
                     >
                       {isThisGM ? "MESTRE" : "PLAYER"}
                     </span>
                   </div>
 
-                  {!isThisGM && isRealGM && (
+                  {!isThisGM && isRealGM && agent.uid && (
                     <button
                       type="button"
                       className="cp-btn cp-btn-epf"
                       style={{ padding: "5px 12px", fontSize: "12px" }}
-                      onClick={() => assignGM(p.uid)}
+                      onClick={() => assignGM(agent.uid)}
                     >
                       Definir Mestre
                     </button>

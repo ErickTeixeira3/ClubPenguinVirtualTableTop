@@ -61,18 +61,163 @@
 /* Dock Inferior Estilo Barra Azul Clássica do Club Penguin */
 .vtt-dock {
   position: absolute;
-  bottom: 14px;
+  bottom: 8px;
   left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(180deg, #2d8cf0 0%, #02529c 30%, #013567 100%);
-  border: 3px solid var(--cp-blue-border);
+  background: linear-gradient(180deg, #3aa0ff 0%, #0c72d8 18%, #02529c 45%, #01376b 85%, #002247 100%);
+  border: 3.5px solid #001b3a;
   border-radius: 999px;
-  padding: 8px 16px;
+  padding: 5px 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-shadow: var(--cp-bevel-highlight), var(--cp-card-shadow);
+  gap: 8px;
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.65), inset 0 -2px 3px rgba(0, 0, 0, 0.45), 0 5px 15px rgba(0, 0, 0, 0.5);
   z-index: 25;
+  user-select: none;
+}
+
+.cp-dock-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cp-dock-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2.5px solid #001b3a;
+  background: linear-gradient(180deg, #3aa0ff 0%, #0260b5 60%, #014380 100%);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.65), inset 0 -2px 2px rgba(0, 0, 0, 0.35), 0 2px 5px rgba(0, 0, 0, 0.35);
+  transition: transform 0.1s ease, filter 0.15s ease, background 0.15s ease;
+  position: relative;
+  padding: 0;
+}
+
+.cp-dock-btn:hover {
+  filter: brightness(1.15);
+  transform: scale(1.08);
+}
+
+.cp-dock-btn:active {
+  transform: scale(0.96);
+  filter: brightness(0.95);
+}
+
+.cp-dock-btn.active {
+  background: linear-gradient(180deg, #ffe066 0%, #f59f00 65%, #cc7a00 100%);
+  border-color: #001b3a;
+  color: #2b1900;
+  box-shadow: inset 0 2px 1px rgba(255, 255, 255, 0.8), inset 0 -2px 2px rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.cp-dock-chat-form {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 2.5px solid #001b3a;
+  border-radius: 999px;
+  padding: 2px 4px 2px 12px;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.25);
+  width: 280px;
+  max-width: 38vw;
+  transition: width 0.2s ease, border-color 0.2s ease;
+}
+
+.cp-dock-chat-form:focus-within {
+  border-color: #ffe066;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.2), 0 0 6px rgba(255, 224, 102, 0.8);
+}
+
+.cp-dock-chat-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  color: #001b3a;
+  min-width: 60px;
+}
+
+.cp-dock-chat-input::placeholder {
+  color: #8faec9;
+  font-weight: 600;
+}
+
+.cp-dock-chat-send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid #001b3a;
+  background: linear-gradient(180deg, #68d391 0%, #2f855a 100%);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: inset 0 1.5px 1px rgba(255, 255, 255, 0.6), 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.1s ease, filter 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.cp-dock-chat-send:hover {
+  filter: brightness(1.15);
+  transform: scale(1.06);
+}
+
+.cp-dock-chat-send:active {
+  transform: scale(0.94);
+}
+
+/* Botão de Mapa no canto inferior esquerdo (Ícone Puro do Club Penguin, sem fundo ou bordas extras) */
+.cp-dock-map-trigger {
+  position: absolute;
+  left: 14px;
+  bottom: 8px;
+  z-index: 25;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.15s ease;
+  user-select: none;
+}
+
+.cp-dock-map-img {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+  transition: transform 0.15s ease, filter 0.15s ease;
+  pointer-events: none;
+}
+
+.cp-dock-map-trigger:hover .cp-dock-map-img {
+  transform: scale(1.12);
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.55)) brightness(1.1);
+}
+
+.cp-dock-map-trigger:active .cp-dock-map-img {
+  transform: scale(0.95);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4)) brightness(0.95);
+}
+
+.cp-dock-map-trigger.active .cp-dock-map-img {
+  filter: drop-shadow(0 0 8px #ffe066) brightness(1.15);
+  transform: scale(1.08);
 }
 
 /* Sidebar Direita Estilo Roll20 + Player Card */

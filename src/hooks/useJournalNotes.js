@@ -20,13 +20,13 @@ import { useCampaign } from "../contexts/CampaignContext";
 export function useJournalNotes() {
   const { user } = useAuth();
   const { campaignId, campaign, isRealGM, isGM } = useCampaign();
-  const [rawNotes, setRawNotes] = useState([]);
+  const [rawItems, setRawItems] = useState([]);
 
   useEffect(() => {
     if (!user || !campaignId) return;
 
     const notesCol = collection(db, "campaigns", campaignId, "notes");
-    const unsubscribe = onSnapshot(
+    const unsubscribeNotes = onSnapshot(
       notesCol,
       (snapshot) => {
         const list = snapshot.docs.map((d) => ({
@@ -34,15 +34,28 @@ export function useJournalNotes() {
           ...d.data()
         }));
         list.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
-        setRawNotes(list);
+        setRawItems(list);
       },
       (err) => {
         console.error("Erro ao carregar diários:", err);
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeNotes();
+    };
   }, [user, campaignId]);
+
+  const rawNotes = useMemo(
+    () => rawItems.filter((item) => !item.isFolder),
+    [rawItems]
+  );
+
+  const rawFolders = useMemo(() => {
+    const folders = rawItems.filter((item) => Boolean(item.isFolder));
+    folders.sort((a, b) => (a.name || a.title || "").localeCompare(b.name || b.title || ""));
+    return folders;
+  }, [rawItems]);
 
   // Filtra estritamente as notas às quais o usuário atual tem acesso (Anti-Spoiler)
   const accessibleNotes = useMemo(() => {
@@ -91,6 +104,7 @@ export function useJournalNotes() {
     scope = "party", // 'gm' | 'player' | 'party'
     ownerId = null,
     noteType = "lore", // 'character' | 'lore' | 'location' | 'event' | 'quest'
+    folder = "", // Nome da pasta dentro da categoria
     title,
     aliases = [],
     content = "",
@@ -139,6 +153,7 @@ export function useJournalNotes() {
       ...perms,
       clonedFromNoteId: null,
       noteType,
+      folder: (folder || "").trim(),
       linkedCharacterSheetId: linkedCharacterSheetId || null,
       title: title.trim(),
       aliases: cleanAliases,
@@ -160,7 +175,7 @@ export function useJournalNotes() {
     };
 
     await setDoc(noteRef, newNote);
-    setRawNotes((prev) =>
+    setRawItems((prev) =>
       prev.some((n) => n.id === noteId) ? prev : [newNote, ...prev]
     );
     return noteId;
@@ -257,7 +272,7 @@ export function useJournalNotes() {
     };
 
     await setDoc(noteRef, clonedNote);
-    setRawNotes((prev) =>
+    setRawItems((prev) =>
       prev.some((n) => n.id === noteId) ? prev : [clonedNote, ...prev]
     );
     return noteId;
@@ -329,15 +344,106 @@ export function useJournalNotes() {
     await deleteDoc(doc(db, "campaigns", campaignId, "notes", noteId));
   };
 
+  // Filtra as pastas acessíveis
+  const accessibleFolders = useMemo(() => {
+    if (!user) return [];
+    if (isGM) return rawFolders;
+    const uid = user.uid;
+    return rawFolders.filter((f) => {
+      if (f.scope === "party") return true;
+      if (f.scope === "player" && f.ownerId === uid) return true;
+      return false;
+    });
+  }, [rawFolders, isGM, user]);
+
+  const createFolder = async ({ name, noteType, scope = "party", ownerId = null }) => {
+    if (!user || !campaignId || !name?.trim() || !noteType) return null;
+    const folderId = `folder_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    // Salva na coleção 'notes' com a flag isFolder: true para usar as mesmas regras de permissão já ativas no Firestore
+    const folderRef = doc(db, "campaigns", campaignId, "notes", folderId);
+    const perms = buildPermissionsForScope(scope, ownerId || user.uid);
+    const newFolder = {
+      id: folderId,
+      isFolder: true,
+      name: name.trim(),
+      title: name.trim(),
+      noteType,
+      scope,
+      ...perms,
+      updatedAtMs: Date.now(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+    await setDoc(folderRef, newFolder);
+    setRawItems((prev) =>
+      prev.some((item) => item.id === folderId) ? prev : [newFolder, ...prev]
+    );
+    return folderId;
+  };
+
+  const deleteFolder = async (folderId, folderPath, noteType) => {
+    if (!user || !campaignId) return;
+
+    const cleanTargetPath = (folderPath || "")
+      .split("/")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("/");
+
+    // Remove a pasta principal e quaisquer subpastas filhas explícitas
+    const foldersToDelete = rawFolders.filter((f) => {
+      if (folderId && f.id === folderId) return true;
+      if (f.noteType !== noteType || !cleanTargetPath) return false;
+      const fPath = (f.name || "")
+        .split("/")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join("/");
+      return fPath === cleanTargetPath || fPath.startsWith(`${cleanTargetPath}/`);
+    });
+
+    for (const f of foldersToDelete) {
+      await deleteDoc(doc(db, "campaigns", campaignId, "notes", f.id));
+    }
+
+    // Se houver notas nessa pasta ou subpastas dela, move para a pasta pai (ou raiz)
+    if (cleanTargetPath && noteType) {
+      const parentPath = cleanTargetPath.includes("/")
+        ? cleanTargetPath.substring(0, cleanTargetPath.lastIndexOf("/"))
+        : "";
+
+      const notesInFolder = rawNotes.filter((n) => {
+        if (n.noteType !== noteType) return false;
+        const nPath = (n.folder || "")
+          .split("/")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join("/");
+        return nPath === cleanTargetPath || nPath.startsWith(`${cleanTargetPath}/`);
+      });
+
+      for (const n of notesInFolder) {
+        await updateDoc(doc(db, "campaigns", campaignId, "notes", n.id), {
+          folder: parentPath,
+          updatedAtMs: Date.now(),
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+  };
+
   return {
     accessibleNotes,
+    accessibleFolders,
     createNote,
     updateNote,
     updateNodePosition,
     cloneNoteToTarget,
     shareNoteWithTarget,
     revokeNoteAccess,
-    deleteNote
+    deleteNote,
+    createFolder,
+    deleteFolder
   };
 }
 

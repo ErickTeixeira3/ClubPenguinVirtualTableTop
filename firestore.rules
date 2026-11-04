@@ -76,6 +76,20 @@ service cloud.firestore {
           (isSignedIn() && resource.data.ownerId == request.auth.uid);
       }
 
+      // Pastas dos Diários
+      match /folders/{folderId} {
+        allow read: if isSignedIn();
+        allow create: if isGM(campaignId) ||
+          (isSignedIn() &&
+            request.resource.data.ownerId == request.auth.uid &&
+            request.resource.data.scope in ['player', 'party']);
+        allow update, delete: if isGM(campaignId) ||
+          (isSignedIn() && (
+            resource.data.scope == 'party' ||
+            resource.data.ownerId == request.auth.uid
+          ));
+      }
+
       // Repositório Imutável de Mídia WebP (Mapas, Tokens, Avatares, Notas)
       match /media/{mediaId} {
         allow read: if isSignedIn();

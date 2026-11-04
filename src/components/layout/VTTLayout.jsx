@@ -69,13 +69,16 @@ export default function VTTLayout() {
 
   const {
     accessibleNotes,
+    accessibleFolders,
     createNote,
     updateNote,
     updateNodePosition,
     cloneNoteToTarget,
     shareNoteWithTarget,
     revokeNoteAccess,
-    deleteNote
+    deleteNote,
+    createFolder,
+    deleteFolder
   } = useJournalNotes();
 
   // Verifica se foi aberto via botão "Nova Janela ↗" (?sheetId=...)
@@ -94,6 +97,7 @@ export default function VTTLayout() {
   const [compendiumModalOpen, setCompendiumModalOpen] = useState(false);
   const [openCharacterId, setOpenCharacterId] = useState(null);
   const [rollVisibility, setRollVisibility] = useState("public"); // 'public' | 'gm_only'
+  const [dockChatText, setDockChatText] = useState("");
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   const currentDisplayName =
@@ -172,6 +176,55 @@ export default function VTTLayout() {
       updatedBy: user.uid,
       updatedAt: Date.now()
     });
+  };
+
+  const handleDockChatSubmit = async (e) => {
+    e.preventDefault();
+    if (!dockChatText.trim()) return;
+    const raw = dockChatText.trim();
+    setDockChatText("");
+
+    // Determina o emissor ativo (personagem aberto ou perfil do usuário)
+    const senderName = activeCharacter?.name || currentDisplayName;
+    const senderPhotoURL =
+      activeCharacter?.avatarExternalUrl ||
+      activeCharacter?.defaultToken?.externalUrl ||
+      activeCharacter?.tokenImage ||
+      activeCharacter?.avatarImage ||
+      myPlayerProfile?.photoURL ||
+      user?.photoURL ||
+      null;
+
+    // Rolagens no chat
+    if (raw.startsWith("/r ") || raw.startsWith("/roll ")) {
+      const expr = raw.replace(/^\/r(oll)?\s+/i, "");
+      await executeRoll({
+        title: `Rolagem (${expr})`,
+        primaryFormula: expr,
+        primaryLabel: "Resultado",
+        character: activeCharacter,
+        senderName,
+        senderPhotoURL,
+        visibility: rollVisibility,
+        onDeductResource: updateCharacterResource
+      });
+      setSidebarOpen(true);
+      setActiveSidebarTab("chat");
+      return;
+    }
+
+    // Mensagem de texto comum
+    await sendTextMessage({
+      content: raw,
+      senderName,
+      senderPhotoURL,
+      characterId: activeCharacter?.id || null,
+      characterMediaId: activeCharacter
+        ? activeCharacter.avatarMediaId || activeCharacter.defaultToken?.mediaId || null
+        : null
+    });
+    setSidebarOpen(true);
+    setActiveSidebarTab("chat");
   };
 
   // Modo Janela Dedicada (Pop-out para tela cheia ou Alt+Tab)
@@ -301,14 +354,17 @@ export default function VTTLayout() {
             <span>{currentDisplayName}</span>
           </button>
 
-          <button
-            type="button"
-            className="cp-btn cp-btn-epf"
-            style={{ padding: "6px 12px", fontSize: "13px" }}
-            onClick={() => setGmModalOpen(true)}
-          >
-            Agentes
-          </button>
+          {isGM && (
+            <button
+              type="button"
+              className="cp-btn cp-btn-epf"
+              style={{ padding: "6px 12px", fontSize: "13px" }}
+              onClick={() => setGmModalOpen(true)}
+              title="Painel de Agentes (Mestre)"
+            >
+              Agentes
+            </button>
+          )}
 
           <button
             type="button"
@@ -361,6 +417,7 @@ export default function VTTLayout() {
             playersMap={campaign?.players || {}}
             characters={characters}
             accessibleNotes={accessibleNotes}
+            accessibleFolders={accessibleFolders}
             onCreateNote={createNote}
             onUpdateNote={updateNote}
             onUpdateNodePosition={updateNodePosition}
@@ -368,6 +425,8 @@ export default function VTTLayout() {
             onShareNoteWithTarget={shareNoteWithTarget}
             onRevokeNoteAccess={revokeNoteAccess}
             onDeleteNote={deleteNote}
+            onCreateFolder={createFolder}
+            onDeleteFolder={deleteFolder}
             onOpenCharacterSheet={(charId) => setOpenCharacterId(charId)}
           />
         )}
@@ -390,71 +449,225 @@ export default function VTTLayout() {
           {sidebarOpen ? "▶" : "◀"}
         </button>
 
+        {/* Botão de Mapas para o Mestre no canto esquerdo da tela */}
+        {isGM && (
+          <button
+            type="button"
+            className={`cp-dock-map-trigger ${scenesModalOpen ? "active" : ""}`}
+            onClick={() => setScenesModalOpen(true)}
+            title={`Mapas (${scenes.length})`}
+          >
+            <img
+              src="/map-icon.png"
+              alt={`Mapas (${scenes.length})`}
+              className="cp-dock-map-img"
+            />
+          </button>
+        )}
+
         {/* Dock Inferior Clássico do Club Penguin */}
         <nav className="vtt-dock">
-          <button
-            type="button"
-            className={`cp-btn ${
-              activeDockModule === "board" ? "cp-btn-gold" : ""
-            }`}
-            onClick={() => setActiveDockModule("board")}
-          >
-            Tabuleiro
-          </button>
-
-          {isGM && (
+          {/* Grupo Esquerda */}
+          <div className="cp-dock-group">
+            {/* Tabuleiro / Mapa Atual */}
             <button
               type="button"
-              className={`cp-btn ${scenesModalOpen ? "cp-btn-gold" : ""}`}
-              onClick={() => setScenesModalOpen(true)}
+              className={`cp-dock-btn ${activeDockModule === "board" ? "active" : ""}`}
+              onClick={() => setActiveDockModule("board")}
+              title="Tabuleiro (Mapa Atual)"
             >
-              Mapas ({scenes.length})
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18" />
+                <path d="M3 15h18" />
+                <path d="M9 3v18" />
+                <path d="M15 3v18" />
+              </svg>
             </button>
-          )}
 
-          <button
-            type="button"
-            className={`cp-btn ${openCharacterId ? "cp-btn-gold" : ""}`}
-            onClick={async () => {
-              if (activeCharacter) {
-                setOpenCharacterId(activeCharacter.id);
-              } else {
-                const displayName =
-                  user?.displayName || user?.email?.split("@")[0] || "Pinguim";
-                const createdId = await createCharacter({
-                  name: displayName,
-                  type: "pc",
-                  visibleToAll: true
-                });
-                if (createdId) {
-                  setOpenCharacterId(createdId);
+            {/* Meu Pinguim (Ficha) */}
+            <button
+              type="button"
+              className={`cp-dock-btn ${openCharacterId ? "active" : ""}`}
+              title="Meu Pinguim (Ficha)"
+              onClick={async () => {
+                if (activeCharacter) {
+                  setOpenCharacterId(activeCharacter.id);
                 } else {
-                  setSidebarOpen(true);
-                  setActiveSidebarTab("sheets");
+                  const displayName =
+                    user?.displayName || user?.email?.split("@")[0] || "Pinguim";
+                  const createdId = await createCharacter({
+                    name: displayName,
+                    type: "pc",
+                    visibleToAll: true
+                  });
+                  if (createdId) {
+                    setOpenCharacterId(createdId);
+                  } else {
+                    setSidebarOpen(true);
+                    setActiveSidebarTab("sheets");
+                  }
                 }
-              }
-            }}
-          >
-            Meu Pinguim
-          </button>
+              }}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                {/* Ícone Estilizado de Pinguim */}
+                <ellipse cx="12" cy="14" rx="7" ry="8" />
+                <circle cx="12" cy="7" r="4.5" />
+                <polygon points="12,7 15,9 12,11 9,9" fill="#ffe066" />
+                <circle cx="10.5" cy="6.2" r="0.9" fill="#001b3a" />
+                <circle cx="13.5" cy="6.2" r="0.9" fill="#001b3a" />
+                <path
+                  d="M5.5 13 C4 15, 4 18, 5 20"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  fill="none"
+                />
+                <path
+                  d="M18.5 13 C20 15, 20 18, 19 20"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  fill="none"
+                />
+              </svg>
+            </button>
 
-          <button
-            type="button"
-            className={`cp-btn ${compendiumModalOpen ? "cp-btn-gold" : ""}`}
-            onClick={() => setCompendiumModalOpen(true)}
-          >
-            Livro / Compêndio
-          </button>
+            {/* Botão de Ações (Bola de neve - sem ação por enquanto) */}
+            <button
+              type="button"
+              className="cp-dock-btn"
+              title="Ações (Bola de Neve)"
+              onClick={() => {}}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+              >
+                <circle cx="12" cy="12" r="8" fill="rgba(255, 255, 255, 0.4)" />
+                <circle cx="9.5" cy="9.5" r="2.5" fill="rgba(255, 255, 255, 0.9)" />
+                <circle cx="15" cy="13.5" r="1.8" fill="rgba(255, 255, 255, 0.7)" />
+              </svg>
+            </button>
+          </div>
 
-          <button
-            type="button"
-            className={`cp-btn ${
-              activeDockModule === "journal" ? "cp-btn-gold" : ""
-            }`}
-            onClick={() => setActiveDockModule("journal")}
-          >
-            Diários & Teia
-          </button>
+          {/* Barra de Chat Central */}
+          <form className="cp-dock-chat-form" onSubmit={handleDockChatSubmit}>
+            <input
+              type="text"
+              className="cp-dock-chat-input"
+              placeholder="Falar ou /r 1d20+4..."
+              value={dockChatText}
+              onChange={(e) => setDockChatText(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="cp-dock-chat-send"
+              title="Enviar mensagem / rolar"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <polygon points="5 3 19 12 5 21 8 12" />
+              </svg>
+            </button>
+          </form>
+
+          {/* Grupo Direita */}
+          <div className="cp-dock-group">
+            {/* Livro / Compêndio */}
+            <button
+              type="button"
+              className={`cp-dock-btn ${compendiumModalOpen ? "active" : ""}`}
+              onClick={() => setCompendiumModalOpen(true)}
+              title="Livro / Compêndio"
+            >
+              <svg
+                width="19"
+                height="19"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                <line x1="8" y1="7" x2="16" y2="7" />
+                <line x1="8" y1="11" x2="14" y2="11" />
+              </svg>
+            </button>
+
+            {/* Diários e Teias */}
+            <button
+              type="button"
+              className={`cp-dock-btn ${activeDockModule === "journal" ? "active" : ""}`}
+              onClick={() => setActiveDockModule("journal")}
+              title="Diários e Teias"
+            >
+              <svg
+                width="19"
+                height="19"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <line x1="10" y1="9" x2="8" y2="9" />
+              </svg>
+            </button>
+
+            {/* Lista de Amigos / Agentes */}
+            <button
+              type="button"
+              className={`cp-dock-btn ${gmModalOpen ? "active" : ""}`}
+              onClick={() => setGmModalOpen(true)}
+              title="Lista de Amigos / Agentes"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </button>
+          </div>
         </nav>
       </main>
 
