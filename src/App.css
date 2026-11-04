@@ -498,3 +498,421 @@
   box-shadow: 0 0 10px var(--ping-color, #00f0ff);
 }
 
+/* ==========================================================================
+   Ficha do Pinguim: Estilo Player Card Autêntico do Club Penguin
+   ========================================================================== */
+
+.cp-playercard-container {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  max-width: 830px;
+  height: 610px;
+  max-height: 94vh;
+  position: relative;
+  box-shadow: 0 18px 40px rgba(0, 15, 35, 0.75), 0 0 0 1px rgba(0, 0, 0, 0.3);
+  border-radius: 22px;
+}
+
+/* Lado Esquerdo: Player Card Clássico */
+.cp-playercard-left {
+  width: 340px;
+  flex-shrink: 0;
+  border-radius: 22px 0 0 22px;
+  border: 3.5px solid #002244;
+  border-right: none;
+  background: linear-gradient(180deg, #0096ea 0%, #0086dc 45%, #006eb8 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 14px 14px;
+  position: relative;
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.5), inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+  user-select: none;
+  justify-content: space-between;
+}
+
+/* Clip / Notch Superior com ranhuras verticais */
+.cp-playercard-notch {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 86px;
+  height: 14px;
+  background: linear-gradient(180deg, #3aa5f8 0%, #007bc7 100%);
+  border: 3px solid #002244;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.5);
+  z-index: 5;
+}
+
+.cp-playercard-notch-ridge {
+  width: 3.5px;
+  height: 7px;
+  background: #002244;
+  border-radius: 2px;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.25);
+}
+
+/* Topo do Player Card (Badge, Nome, Close) */
+.cp-playercard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1px;
+  margin-bottom: 6px;
+  gap: 6px;
+}
+
+.cp-playercard-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #4dc0ff 0%, #007bc7 100%);
+  border: 2px solid #002244;
+  color: #002c52;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.6), 0 2px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.1s ease, filter 0.1s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.cp-playercard-close-btn:hover {
+  transform: scale(1.08);
+  filter: brightness(1.15);
+}
+
+.cp-playercard-close-btn:active {
+  transform: scale(0.92);
+}
+
+.cp-playercard-close-inner {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid #00568c;
+  color: #00568c;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+/* Moldura do Retrato / Avatar (mais alta verticalmente) */
+.cp-playercard-photo-frame {
+  width: 100%;
+  height: 385px;
+  background: radial-gradient(circle at 50% 35%, #0066b8 0%, #00488f 60%, #00366d 100%);
+  border: 3.5px solid #002244;
+  border-radius: 14px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 4px 12px rgba(0, 20, 50, 0.45), 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Rodapé com Moedas e XP */
+.cp-playercard-footer {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 0 2px;
+}
+
+.cp-playercard-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #002447;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.cp-stat-label {
+  color: #002447;
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.cp-stat-value {
+  color: #002447;
+  font-weight: 900;
+  font-size: 15px;
+}
+
+.cp-stat-edit-btn {
+  background: rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(0, 36, 71, 0.35);
+  border-radius: 6px;
+  color: #002447;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 1px 6px;
+  margin-left: auto;
+  transition: all 0.12s ease;
+}
+
+.cp-stat-edit-btn:hover {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: #002447;
+}
+
+.cp-stat-input {
+  background: #ffffff;
+  border: 1.5px solid #002447;
+  border-radius: 6px;
+  color: #002447;
+  font-weight: 800;
+  font-size: 13px;
+  padding: 1px 6px;
+  width: 80px;
+  outline: none;
+}
+
+.cp-stat-save-btn {
+  background: #38c172;
+  border: 1px solid #1f8a4c;
+  border-radius: 5px;
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 6px;
+}
+
+.cp-stat-cancel-btn {
+  background: #ef5350;
+  border: 1px solid #b71c1c;
+  border-radius: 5px;
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 6px;
+}
+
+/* Lado Direito: Gaveta Conectada com Abas e Conteúdo */
+.cp-playercard-right {
+  flex: 1;
+  min-width: 440px;
+  border-radius: 0 22px 22px 0;
+  border: 3.5px solid #7a8c9e;
+  border-left: 3px solid #002244;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 27, 58, 0.06);
+}
+
+/* Grade de Inventário: Quadrados 3x4 no Estilo Club Penguin */
+.cp-inv-grid-wrapper {
+  flex: 1;
+  display: flex;
+  padding: 14px 14px 6px 14px;
+  gap: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.cp-inv-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 100px;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cp-inv-slot {
+  background: #ffffff;
+  border: 2px solid #b8c8d8;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 27, 58, 0.05);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  user-select: none;
+  padding: 6px;
+}
+
+.cp-inv-slot:hover {
+  border-color: #008be3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 139, 227, 0.25);
+}
+
+.cp-inv-slot.empty {
+  background: rgba(248, 250, 252, 0.6);
+  border: 2px dashed #cfdbe6;
+  cursor: default;
+  box-shadow: none;
+}
+
+.cp-inv-slot.empty:hover {
+  transform: none;
+  border-color: #cfdbe6;
+  box-shadow: none;
+}
+
+/* Scrollbar com Setas Cima / Baixo do Club Penguin */
+.cp-inv-scroll-controls {
+  width: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.cp-inv-scroll-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff 0%, #d8e2ec 100%);
+  border: 2px solid #7a8c9e;
+  color: #4a5b6d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+
+.cp-inv-scroll-btn:hover {
+  filter: brightness(1.08);
+  border-color: #008be3;
+  color: #008be3;
+}
+
+.cp-inv-scroll-btn:active {
+  transform: scale(0.92);
+}
+
+.cp-inv-scroll-track {
+  flex: 1;
+  width: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Barra Inferior de Abas (Estilo Pílula Club Penguin 'All Items') */
+.cp-inv-bottom-dock {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  border-top: 2px solid #dbe3eb;
+  padding: 4px 14px;
+  position: relative;
+  user-select: none;
+}
+
+.cp-inv-category-pill {
+  background: linear-gradient(180deg, #ffffff 0%, #edf2f7 100%);
+  border: 2px solid #7a8c9e;
+  border-radius: 999px;
+  padding: 7px 32px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a2c3e;
+  box-shadow: 0 2px 5px rgba(0, 27, 58, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.cp-inv-category-pill:hover {
+  border-color: #008be3;
+  color: #008be3;
+  box-shadow: 0 3px 8px rgba(0, 139, 227, 0.22);
+}
+
+.cp-inv-category-pill:active {
+  transform: scale(0.98);
+}
+
+/* Menu Popup de Abas (Subindo do botão no estilo Club Penguin) */
+.cp-tabs-popup-menu {
+  position: absolute;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 50;
+  filter: drop-shadow(0 4px 14px rgba(0, 27, 58, 0.22));
+}
+
+.cp-tabs-popup-item {
+  width: 220px;
+  background: #ffffff;
+  border: 2px solid #7a8c9e;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a2c3e;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 27, 58, 0.08);
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.cp-tabs-popup-item:hover {
+  background: #eef4fa;
+  border-color: #008be3;
+  color: #0060a8;
+  transform: translateY(-1px);
+}
+
+.cp-tabs-popup-item.active {
+  background: #edf5fd;
+  border-color: #008be3;
+  color: #0060a8;
+  font-weight: 800;
+}
+
+
+
