@@ -133,15 +133,25 @@ export const CP_FLASH_ICONS = [
           </radialGradient>
         </defs>
         <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_wink)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Olho esquerdo piscando com ruguinha */}
-        <path d="M9.5 15 C11 12.5 14.5 13 15.5 15.5" stroke="#451a03" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M9.5 14.5 L8 13.5" stroke="#451a03" strokeWidth="1.8" strokeLinecap="round" />
-        {/* Olho direito normal */}
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Sorrisinho de canto */}
+        {/* Olho esquerdo piscando (arco superior limpo fiel ao CP) */}
         <path
-          d="M10.5 19 C11.5 24 20.5 25 24 20"
-          stroke="#881111"
+          d="M11 12 C12.5 9.5 15.5 10 16.8 12.5"
+          stroke="#451a03"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+        />
+        {/* Olho direito redondo */}
+        <circle cx="21.8" cy="16" r="2" fill="#1e1005" />
+        {/* Sorriso de canto com covinha na bochecha esquerda (idêntico ao emoticon original do CP) */}
+        <path
+          d="M8.8 19.2 L13.5 17.4"
+          stroke="#7f1d1d"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+        />
+        <path
+          d="M11.2 18.3 C12.2 24.5 18.5 25.5 22 23.2"
+          stroke="#7f1d1d"
           strokeWidth="2.6"
           strokeLinecap="round"
         />
@@ -414,25 +424,37 @@ export const CP_FLASH_ICONS = [
     category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Arco de madeira com contorno forte */}
-        <path
-          d="M6 30C10 20 20 10 30 6"
-          stroke="#854d0e"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-        <path
-          d="M6 30C10 20 20 10 30 6"
-          stroke="#422006"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-        {/* Corda esticada */}
-        <line x1="6" y1="30" x2="30" y2="6" stroke="#ffffff" strokeWidth="1.8" />
-        {/* Flecha com ponta de metal */}
-        <line x1="12" y1="24" x2="28" y2="8" stroke="#1e293b" strokeWidth="2.5" />
-        <polygon points="28,8 32,4 24,7" fill="#cbd5e1" stroke="#1e293b" strokeWidth="1.5" />
-        <polygon points="12,24 8,28 10,24" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1.2" />
+        <g transform="rotate(45 18 18)">
+          {/* Corda do arco tensionada */}
+          <polyline
+            points="5,22 18,26.5 31,22"
+            stroke="#cbd5e1"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+            fill="none"
+          />
+          {/* Arco de madeira curvado com empunhadura central */}
+          <path
+            d="M5 22 C8 8.5 13 6.5 18 6.5 C23 6.5 28 8.5 31 22"
+            stroke="#422006"
+            strokeWidth="5"
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path
+            d="M5 22 C8 8.5 13 6.5 18 6.5 C23 6.5 28 8.5 31 22"
+            stroke="#b45309"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            fill="none"
+          />
+          {/* Penas vermelhas da flecha */}
+          <polygon points="18,24 21.5,28 21.5,31 18,28.5 14.5,31 14.5,28" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1.3" strokeLinejoin="round" />
+          {/* Haste da flecha cruzando perpendicularmente o arco */}
+          <line x1="18" y1="28.5" x2="18" y2="6" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" />
+          {/* Ponta triangular de aço da flecha */}
+          <polygon points="18,1.5 22.5,8.5 18,7 13.5,8.5" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1.8" strokeLinejoin="round" />
+        </g>
       </svg>
     )
   },
@@ -443,29 +465,31 @@ export const CP_FLASH_ICONS = [
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <g transform="rotate(45 18 18)">
-          {/* Cabo de madeira centralizado */}
-          <rect x="16" y="4" width="4" height="29" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
+          {/* Cabo de madeira alinhado exatamente à base da cabeça do machado */}
+          <rect x="16" y="9" width="4" height="24" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
+          {/* Ponta metálica superior alinhada ao cabo */}
+          <polygon points="18,3.5 20.5,9 15.5,9" fill="#cbd5e1" stroke="#1e293b" strokeWidth="2" strokeLinejoin="round" />
           {/* Lâmina esquerda */}
           <path
-            d="M16 10 L6 6 C3 10.5 3 16.5 6 21 L16 17 Z"
+            d="M16 9.5 L6 5.5 C3 10 3 16 6 20.5 L16 16.5 Z"
             fill="#cbd5e1"
             stroke="#1e293b"
             strokeWidth="2.3"
             strokeLinejoin="round"
           />
-          <path d="M7 7.5 C4.8 11 4.8 16 7 19.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M7 7 C4.8 10.5 4.8 15.5 7 19" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
           {/* Lâmina direita */}
           <path
-            d="M20 10 L30 6 C33 10.5 33 16.5 30 21 L20 17 Z"
+            d="M20 9.5 L30 5.5 C33 10 33 16 30 20.5 L20 16.5 Z"
             fill="#94a3b8"
             stroke="#1e293b"
             strokeWidth="2.3"
             strokeLinejoin="round"
           />
-          <path d="M29 7.5 C31.2 11 31.2 16 29 19.5" stroke="#e2e8f0" strokeWidth="1.5" strokeLinecap="round" />
-          {/* Encaixe central de ferro e rebite dourado */}
-          <rect x="15" y="9.5" width="6" height="8" rx="1.5" fill="#475569" stroke="#1e293b" strokeWidth="2" />
-          <circle cx="18" cy="13.5" r="2.2" fill="#facc15" stroke="#713f12" strokeWidth="1.3" />
+          <path d="M29 7 C31.2 10.5 31.2 15.5 29 19" stroke="#e2e8f0" strokeWidth="1.5" strokeLinecap="round" />
+          {/* Encaixe central de ferro e rebite dourado perfeitamente alinhados */}
+          <rect x="15" y="9" width="6" height="8" rx="1.5" fill="#475569" stroke="#1e293b" strokeWidth="2" />
+          <circle cx="18" cy="13" r="2.2" fill="#facc15" stroke="#713f12" strokeWidth="1.3" />
         </g>
       </svg>
     )
@@ -520,16 +544,19 @@ export const CP_FLASH_ICONS = [
     category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <line x1="8" y1="28" x2="22" y2="14" stroke="#1e1b4b" strokeWidth="4.5" strokeLinecap="round" />
-        <line x1="8" y1="28" x2="22" y2="14" stroke="#818cf8" strokeWidth="2.2" strokeLinecap="round" />
-        <polygon
-          points="25,4 27,10 33,11 29,15 30,21 25,18 20,21 21,15 17,11 23,10"
-          fill="#facc15"
-          stroke="#854d0e"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-        <circle cx="25" cy="13" r="2" fill="#ffffff" />
+        <g transform="rotate(45 18 18)">
+          {/* Cabo da varinha centralizado em x=18 */}
+          <rect x="16.1" y="13" width="3.8" height="20" rx="1.9" fill="#818cf8" stroke="#1e1b4b" strokeWidth="2.2" />
+          {/* Estrela de 5 pontas perfeitamente simétrica e colinear ao cabo (centro em 18,11) */}
+          <polygon
+            points="18,3 20.2,8 25.6,8.5 21.5,12.1 22.7,17.5 18,14.7 13.3,17.5 14.5,12.1 10.4,8.5 15.8,8"
+            fill="#facc15"
+            stroke="#854d0e"
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <circle cx="18" cy="11.2" r="2.2" fill="#ffffff" />
+        </g>
       </svg>
     )
   },
