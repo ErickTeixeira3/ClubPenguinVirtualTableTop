@@ -94,7 +94,7 @@ export default function GMPanelModal({ onClose }) {
               letterSpacing: "1px"
             }}
           >
-            TERMINAL EPF // CONTROLE DA MESA
+            TERMINAL EPF
           </span>
           <button
             type="button"

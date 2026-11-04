@@ -61,7 +61,9 @@ export function useChatRolls() {
   const sendTextMessage = async ({
     content,
     senderName,
+    senderPhotoURL = null,
     characterId = null,
+    characterMediaId = null,
     visibility = "public"
   }) => {
     if (!user || !campaignId || !content?.trim()) return;
@@ -79,8 +81,12 @@ export function useChatRolls() {
         user.displayName ||
         user.email?.split("@")[0] ||
         "Pinguim",
-      senderPhotoURL: playerProfile?.photoURL || user.photoURL || null,
+      senderPhotoURL:
+        senderPhotoURL !== null
+          ? senderPhotoURL
+          : (characterId ? null : (playerProfile?.photoURL || user.photoURL || null)),
       characterId,
+      characterMediaId,
       type: "text",
       visibility,
       visibleTo: buildVisibleToList(visibility),
@@ -95,6 +101,8 @@ export function useChatRolls() {
     categoryColor = "#3090f0",
     description = "",
     character = null,
+    senderName = null,
+    senderPhotoURL = null,
     primaryFormula = "1d20",
     primaryLabel = "Resultado",
     secondaryFormula = "",
@@ -145,17 +153,29 @@ export function useChatRolls() {
     const msgRef = doc(db, "campaigns", campaignId, "messages", msgId);
     const playerProfile = campaign?.players?.[user.uid];
 
+    const resolvedSenderName =
+      senderName ||
+      character?.name ||
+      playerProfile?.displayName ||
+      user.displayName ||
+      user.email?.split("@")[0] ||
+      "Pinguim";
+
+    const resolvedPhotoURL =
+      senderPhotoURL !== null
+        ? senderPhotoURL
+        : (character?.id ? null : (playerProfile?.photoURL || user.photoURL || null));
+
+    const characterMediaId =
+      character?.avatarMediaId || character?.defaultToken?.mediaId || null;
+
     const rollMessage = {
       id: msgId,
       senderId: user.uid,
-      senderName:
-        character?.name ||
-        playerProfile?.displayName ||
-        user.displayName ||
-        user.email?.split("@")[0] ||
-        "Pinguim",
-      senderPhotoURL: character?.tokenImage || playerProfile?.photoURL || user.photoURL || null,
+      senderName: resolvedSenderName,
+      senderPhotoURL: resolvedPhotoURL,
       characterId: character?.id || null,
+      characterMediaId,
       type: "ability_roll",
       visibility,
       visibleTo: buildVisibleToList(visibility),

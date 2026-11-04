@@ -73,6 +73,8 @@ export default function VTTLayout() {
     updateNote,
     updateNodePosition,
     cloneNoteToTarget,
+    shareNoteWithTarget,
+    revokeNoteAccess,
     deleteNote
   } = useJournalNotes();
 
@@ -305,7 +307,7 @@ export default function VTTLayout() {
             style={{ padding: "6px 12px", fontSize: "13px" }}
             onClick={() => setGmModalOpen(true)}
           >
-            Mesa EPF
+            Agentes
           </button>
 
           <button
@@ -363,6 +365,8 @@ export default function VTTLayout() {
             onUpdateNote={updateNote}
             onUpdateNodePosition={updateNodePosition}
             onCloneNoteToTarget={cloneNoteToTarget}
+            onShareNoteWithTarget={shareNoteWithTarget}
+            onRevokeNoteAccess={revokeNoteAccess}
             onDeleteNote={deleteNote}
             onOpenCharacterSheet={(charId) => setOpenCharacterId(charId)}
           />
@@ -490,7 +494,10 @@ export default function VTTLayout() {
           {activeSidebarTab === "chat" && (
             <ChatSidebarPanel
               messages={messages}
+              campaignId={campaignId}
               activeCharacter={activeCharacter}
+              characters={characters}
+              canEditCharacter={canEditCharacter}
               rollVisibility={rollVisibility}
               onChangeRollVisibility={setRollVisibility}
               onSendText={sendTextMessage}

@@ -2,11 +2,29 @@ import { useMemo, useState } from "react";
 import {
   NOTE_TYPES,
   detectAliasMentionsInText,
+  parseTextWithAliases,
   getNoteTypeMeta
 } from "../../engines/aliasEngine";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
 import JournalGraphWebView from "./JournalGraphWebView";
 import NoteEditorModal from "./NoteEditorModal";
+
+function getNoteTypeIcon(noteType) {
+  switch (noteType) {
+    case "lore":
+      return "📜";
+    case "character":
+      return "🐧";
+    case "location":
+      return "📍";
+    case "event":
+      return "⚡";
+    case "quest":
+      return "🎯";
+    default:
+      return "📄";
+  }
+}
 
 function JournalCardItem({
   note,
@@ -18,13 +36,42 @@ function JournalCardItem({
   playersList,
   onEdit,
   onCloneToTarget,
+  onShareNoteWithTarget,
+  onRevokeNoteAccess,
   onOpenCharacterSheet
 }) {
-  const { url: imageUrl } = useMediaUrl(note.imageMediaId, campaignId);
+  const { url: imageUrl } = useMediaUrl(note.imageMediaId, null, campaignId);
+  const [imageError, setImageError] = useState(false);
   const [cloneTarget, setCloneTarget] = useState("");
   const [justCloned, setJustCloned] = useState(false);
+  const [showSharePanel, setShowSharePanel] = useState(false);
 
   const meta = getNoteTypeMeta(note.noteType);
+
+  // Verificação de permissões e acessos concedidos
+  const isSharedWithParty =
+    note.scope === "party" ||
+    (Array.isArray(note.visibleTo) && note.visibleTo.includes("ALL"));
+
+  const visibleUids = useMemo(() => {
+    return (Array.isArray(note.visibleTo) ? note.visibleTo : []).filter(
+      (id) => id !== "ALL"
+    );
+  }, [note.visibleTo]);
+
+  const sharedPlayers = useMemo(() => {
+    return (playersList || []).filter(
+      (p) => visibleUids.includes(p.uid) && p.uid !== note.ownerId
+    );
+  }, [playersList, visibleUids, note.ownerId]);
+
+  const availablePlayersToShare = useMemo(() => {
+    return (playersList || []).filter(
+      (p) => !visibleUids.includes(p.uid) && p.uid !== note.ownerId
+    );
+  }, [playersList, visibleUids, note.ownerId]);
+
+  const sharedCount = (isSharedWithParty ? 1 : 0) + sharedPlayers.length;
 
   const allLinkedNotes = useMemo(() => {
     const explicitIds = Array.isArray(note.relatedNoteIds)
@@ -54,6 +101,15 @@ function JournalCardItem({
     accessibleNotes,
     accessibleNotesMap
   ]);
+
+  const previewTokens = useMemo(() => {
+    return parseTextWithAliases(
+      note.content,
+      accessibleNotes,
+      note.id,
+      note.ignoredAliases
+    );
+  }, [note.content, accessibleNotes, note.id, note.ignoredAliases]);
 
   const handleCloneAction = async (targetValue) => {
     if (!targetValue || !onCloneToTarget) return;
@@ -100,10 +156,12 @@ function JournalCardItem({
         boxShadow: "0 3px 0 rgba(0, 27, 58, 0.2)"
       }}
     >
-      {imageUrl && (
+      {/* Imagem do Card ou Banner Emblemático Padrão */}
+      {imageUrl && !imageError ? (
         <img
           src={imageUrl}
-          alt={note.title}
+          alt=""
+          onError={() => setImageError(true)}
           style={{
             width: "100%",
             height: "110px",
@@ -112,6 +170,51 @@ function JournalCardItem({
             border: "2px solid #001b3a"
           }}
         />
+      ) : (
+        <div
+          style={{
+            width: "100%",
+            height: "80px",
+            borderRadius: "8px",
+            border: "2px solid #001b3a",
+            background: `linear-gradient(135deg, #012b54 0%, ${meta.color}55 100%)`,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "4px",
+            boxShadow: "inset 0 0 12px rgba(0, 0, 0, 0.35)"
+          }}
+        >
+          <div
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              background: "#ffffff",
+              border: `2px solid ${meta.color}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "18px",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.25)"
+            }}
+          >
+            {getNoteTypeIcon(note.noteType)}
+          </div>
+          <span
+            style={{
+              fontSize: "9px",
+              fontWeight: 800,
+              color: "#ffffff",
+              letterSpacing: "0.5px",
+              textTransform: "uppercase",
+              textShadow: "0 1px 2px #000000"
+            }}
+          >
+            {meta.singular}
+          </span>
+        </div>
       )}
 
       <div
@@ -192,7 +295,33 @@ function JournalCardItem({
             lineHeight: 1.35
           }}
         >
-          {note.content}
+          {previewTokens.map((token, index) => {
+            if (token.type === "link") {
+              const linkMeta = getNoteTypeMeta(token.note?.noteType);
+              return (
+                <span
+                  key={`${token.note.id}_${index}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(token.note);
+                  }}
+                  title={`Abrir card: ${token.note?.title}`}
+                  style={{
+                    background: `${linkMeta.color}26`,
+                    borderBottom: `2px solid ${linkMeta.color}`,
+                    color: "#001b3a",
+                    fontWeight: 800,
+                    padding: "0 4px",
+                    borderRadius: "3px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {token.text}
+                </span>
+              );
+            }
+            return <span key={index}>{token.text}</span>;
+          })}
         </div>
       )}
 
@@ -261,13 +390,29 @@ function JournalCardItem({
               Ficha
             </button>
           )}
+
+          <button
+            type="button"
+            className={`cp-btn ${showSharePanel ? "cp-btn-gold" : "cp-btn-epf"}`}
+            style={{
+              padding: "3px 8px",
+              fontSize: "11px",
+              whiteSpace: "nowrap",
+              flexShrink: 0
+            }}
+            onClick={() => setShowSharePanel((prev) => !prev)}
+            title="Disponibilizar acesso para outros jogadores"
+          >
+            👁️ Acesso{sharedCount > 0 ? ` (${sharedCount})` : ""}
+          </button>
         </div>
 
+        {/* Seletor separado especificamente para CLONAR */}
         <select
           className="cp-input"
           style={{
             width: "auto",
-            maxWidth: "145px",
+            maxWidth: "135px",
             padding: "3px 6px",
             fontSize: "10px",
             fontWeight: 800
@@ -276,25 +421,173 @@ function JournalCardItem({
           onChange={(e) => handleCloneAction(e.target.value)}
         >
           <option value="">
-            {justCloned ? "✓ Clonado!" : "Disponibilizar / Clonar..."}
+            {justCloned ? "✓ Clonado!" : "📑 Clonar Card..."}
           </option>
-          {note.scope !== "party" && (
-            <option value="party">→ Diário do Grupo</option>
-          )}
           {note.scope !== "player" && (
-            <option value="my_diary">→ Meu Diário</option>
+            <option value="my_diary">→ Para Meu Diário</option>
+          )}
+          {note.scope !== "party" && (
+            <option value="party">→ Para Diário do Grupo</option>
           )}
           {isGM && note.scope !== "gm" && (
-            <option value="gm">→ Diário do Mestre</option>
+            <option value="gm">→ Para Diário do Mestre</option>
           )}
           {isGM &&
-            playersList.map((p) => (
+            (playersList || []).map((p) => (
               <option key={p.uid} value={`player:${p.uid}`}>
-                → Diário: {p.displayName}
+                → Para Diário: {p.displayName}
               </option>
             ))}
         </select>
       </div>
+
+      {/* Painel Expansível de Gestão de Acessos (Disponibilizar) */}
+      {showSharePanel && (
+        <div
+          style={{
+            background: "rgba(0, 27, 58, 0.05)",
+            border: "1.5px solid var(--cp-blue-border)",
+            borderRadius: "8px",
+            padding: "6px 8px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            marginTop: "2px"
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}
+          >
+            <span style={{ fontSize: "11px", fontWeight: 800, color: "#001b3a" }}>
+              Disponibilizado para:
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSharePanel(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontWeight: 800,
+                fontSize: "11px",
+                color: "#64748b"
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+            {isSharedWithParty && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  background: "#02529c",
+                  color: "#ffffff",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  padding: "2px 6px",
+                  borderRadius: "6px"
+                }}
+              >
+                👥 Grupo
+                {isGM && (
+                  <button
+                    type="button"
+                    title="Remover acesso do grupo"
+                    onClick={() => onRevokeNoteAccess?.(note.id, "party")}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#ff8a80",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                      fontSize: "11px",
+                      padding: "0 2px"
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            )}
+
+            {sharedPlayers.map((p) => (
+              <span
+                key={p.uid}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  background: "#2e7d32",
+                  color: "#ffffff",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  padding: "2px 6px",
+                  borderRadius: "6px"
+                }}
+              >
+                👤 {p.displayName}
+                {isGM && (
+                  <button
+                    type="button"
+                    title={`Remover acesso de ${p.displayName}`}
+                    onClick={() => onRevokeNoteAccess?.(note.id, p.uid)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#ff8a80",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                      fontSize: "11px",
+                      padding: "0 2px"
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            ))}
+
+            {!isSharedWithParty && sharedPlayers.length === 0 && (
+              <span style={{ fontSize: "10px", color: "#64748b" }}>
+                Apenas proprietário e mestre
+              </span>
+            )}
+          </div>
+
+          <select
+            className="cp-input"
+            style={{
+              padding: "3px 6px",
+              fontSize: "10px",
+              fontWeight: 800
+            }}
+            value=""
+            onChange={(e) => {
+              if (e.target.value) {
+                onShareNoteWithTarget?.(note.id, e.target.value);
+              }
+            }}
+          >
+            <option value="">+ Disponibilizar para...</option>
+            {!isSharedWithParty && (
+              <option value="party">👥 Grupo (Todos)</option>
+            )}
+            {availablePlayersToShare.map((p) => (
+              <option key={p.uid} value={p.uid}>
+                👤 {p.displayName}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }
@@ -310,6 +603,8 @@ export default function JournalWorkspace({
   onUpdateNote,
   onUpdateNodePosition,
   onCloneNoteToTarget,
+  onShareNoteWithTarget,
+  onRevokeNoteAccess,
   onDeleteNote,
   onOpenCharacterSheet
 }) {
@@ -379,7 +674,9 @@ export default function JournalWorkspace({
           noteType: formData.noteType,
           linkedCharacterSheetId: formData.linkedCharacterSheetId,
           aliases: formData.aliases,
+          ignoredAliases: formData.ignoredAliases,
           content: formData.content,
+          sections: formData.sections,
           relatedNoteIds: formData.relatedNoteIds
         },
         formData.file
@@ -405,13 +702,20 @@ export default function JournalWorkspace({
         noteType: formData.noteType,
         title: formData.title,
         aliases: formData.aliases,
+        ignoredAliases: formData.ignoredAliases,
         content: formData.content,
+        sections: formData.sections,
         relatedNoteIds: formData.relatedNoteIds,
         linkedCharacterSheetId: formData.linkedCharacterSheetId,
         file: formData.file
       });
     }
   };
+
+  const currentModalNote = useMemo(() => {
+    if (!editingNote?.id) return editingNote;
+    return accessibleNotes.find((n) => n.id === editingNote.id) || editingNote;
+  }, [editingNote, accessibleNotes]);
 
   return (
     <div
@@ -614,6 +918,8 @@ export default function JournalWorkspace({
                       playersList={playersList}
                       onEdit={(n) => setEditingNote(n)}
                       onCloneToTarget={onCloneNoteToTarget}
+                      onShareNoteWithTarget={onShareNoteWithTarget}
+                      onRevokeNoteAccess={onRevokeNoteAccess}
                       onOpenCharacterSheet={onOpenCharacterSheet}
                     />
                   ))}
@@ -633,7 +939,8 @@ export default function JournalWorkspace({
 
       {(creatingNote || editingNote) && (
         <NoteEditorModal
-          note={editingNote}
+          key={editingNote?.id || "new_note"}
+          note={currentModalNote}
           defaultScope={
             activeScopeTab === "unified"
               ? "party"
@@ -650,6 +957,11 @@ export default function JournalWorkspace({
           characters={characters}
           onSave={handleSaveNote}
           onDelete={onDeleteNote}
+          onOpenNote={(targetNote) => {
+            setCreatingNote(false);
+            setEditingNote(targetNote);
+          }}
+          onUpdateTargetNote={(targetId, updates) => onUpdateNote(targetId, updates)}
           onClose={() => {
             setCreatingNote(false);
             setEditingNote(null);

@@ -94,7 +94,9 @@ export function useJournalNotes() {
     title,
     aliases = [],
     content = "",
+    sections = [],
     relatedNoteIds = [],
+    ignoredAliases = [],
     linkedCharacterSheetId = null,
     file = null
   }) => {
@@ -117,12 +119,16 @@ export function useJournalNotes() {
     const cleanAliases = Array.isArray(aliases)
       ? aliases.map((a) => a.trim()).filter(Boolean)
       : [];
+    const cleanIgnoredAliases = Array.isArray(ignoredAliases)
+      ? ignoredAliases.map((a) => a.trim()).filter(Boolean)
+      : [];
     const aliasesNormalized = buildNormalizedAliases(title.trim(), cleanAliases);
 
     const { mentionedNoteIds } = detectAliasMentionsInText(
       content,
       accessibleNotes,
-      noteId
+      noteId,
+      cleanIgnoredAliases
     );
 
     const perms = buildPermissionsForScope(scope, ownerId || user.uid);
@@ -137,8 +143,10 @@ export function useJournalNotes() {
       title: title.trim(),
       aliases: cleanAliases,
       aliasesNormalized,
+      ignoredAliases: cleanIgnoredAliases,
       imageMediaId,
       content: content || "",
+      sections: Array.isArray(sections) ? sections : [],
       relatedNoteIds: Array.isArray(relatedNoteIds) ? relatedNoteIds : [],
       mentionedNoteIds,
       graphNode: {
@@ -166,6 +174,10 @@ export function useJournalNotes() {
     const nextTitle = updates.title !== undefined ? updates.title : existing.title;
     const nextAliases =
       updates.aliases !== undefined ? updates.aliases : existing.aliases || [];
+    const nextIgnoredAliases =
+      updates.ignoredAliases !== undefined
+        ? updates.ignoredAliases
+        : existing.ignoredAliases || [];
     const nextContent =
       updates.content !== undefined ? updates.content : existing.content || "";
 
@@ -173,7 +185,8 @@ export function useJournalNotes() {
     const { mentionedNoteIds } = detectAliasMentionsInText(
       nextContent,
       accessibleNotes,
-      noteId
+      noteId,
+      nextIgnoredAliases
     );
 
     const payload = {
@@ -250,6 +263,63 @@ export function useJournalNotes() {
     return noteId;
   };
 
+  // Disponibiliza o acesso de visualização do card para o Grupo ou para um jogador específico
+  const shareNoteWithTarget = async (noteId, target) => {
+    if (!user || !campaignId || !noteId || !target) return;
+    const note = rawNotes.find((n) => n.id === noteId);
+    if (!note) return;
+
+    const currentVis = Array.isArray(note.visibleTo) ? [...note.visibleTo] : [];
+    const updates = {
+      updatedAtMs: Date.now(),
+      updatedAt: serverTimestamp()
+    };
+
+    if (target === "party" || target === "ALL") {
+      if (!currentVis.includes("ALL")) {
+        currentVis.push("ALL");
+      }
+      updates.visibleTo = currentVis;
+    } else {
+      if (!currentVis.includes(target)) {
+        currentVis.push(target);
+      }
+      updates.visibleTo = currentVis;
+    }
+
+    const noteRef = doc(db, "campaigns", campaignId, "notes", noteId);
+    await updateDoc(noteRef, updates);
+  };
+
+  // Revoga o acesso de visualização de um card (permitido para o Mestre ou dono)
+  const revokeNoteAccess = async (noteId, target) => {
+    if (!user || !campaignId || !noteId || !target) return;
+    const note = rawNotes.find((n) => n.id === noteId);
+    if (!note) return;
+
+    if (!isRealGM && note.ownerId !== user.uid) return;
+
+    let currentVis = Array.isArray(note.visibleTo) ? [...note.visibleTo] : [];
+    const updates = {
+      updatedAtMs: Date.now(),
+      updatedAt: serverTimestamp()
+    };
+
+    if (target === "party" || target === "ALL") {
+      currentVis = currentVis.filter((v) => v !== "ALL");
+      updates.visibleTo = currentVis;
+      if (note.scope === "party") {
+        updates.scope = "player";
+      }
+    } else {
+      currentVis = currentVis.filter((v) => v !== target);
+      updates.visibleTo = currentVis;
+    }
+
+    const noteRef = doc(db, "campaigns", campaignId, "notes", noteId);
+    await updateDoc(noteRef, updates);
+  };
+
   const deleteNote = async (noteId) => {
     if (!user || !campaignId || !noteId) return;
     const existing = rawNotes.find((n) => n.id === noteId);
@@ -265,6 +335,8 @@ export function useJournalNotes() {
     updateNote,
     updateNodePosition,
     cloneNoteToTarget,
+    shareNoteWithTarget,
+    revokeNoteAccess,
     deleteNote
   };
 }

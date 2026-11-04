@@ -48,12 +48,17 @@ function escapeRegex(str) {
 export function detectAliasMentionsInText(
   content,
   accessibleNotes = [],
-  currentNoteId = null
+  currentNoteId = null,
+  ignoredAliases = []
 ) {
   const normalizedContent = normalizeAliasText(content);
   if (!normalizedContent) {
     return { mentionedNoteIds: [], matchedDetails: [] };
   }
+
+  const normalizedIgnored = new Set(
+    (Array.isArray(ignoredAliases) ? ignoredAliases : []).map(normalizeAliasText)
+  );
 
   const mentionedNoteIds = [];
   const matchedDetails = [];
@@ -65,8 +70,11 @@ export function detectAliasMentionsInText(
       ? note.aliasesNormalized
       : buildNormalizedAliases(note.title, note.aliases);
 
+    // Filtra aliases que foram negados/ignorados nesta nota
+    const activeTerms = terms.filter((t) => !normalizedIgnored.has(t));
+
     // Ordena termos mais longos primeiro para priorizar nomes compostos (ex: "monstro do mau")
-    const sortedTerms = [...terms].sort((a, b) => b.length - a.length);
+    const sortedTerms = [...activeTerms].sort((a, b) => b.length - a.length);
 
     let matchedTerm = null;
     for (const term of sortedTerms) {
@@ -96,6 +104,119 @@ export function detectAliasMentionsInText(
     mentionedNoteIds: Array.from(new Set(mentionedNoteIds)),
     matchedDetails
   };
+}
+
+// Analisa o texto e divide em tokens de texto comum e tokens de links de aliases/cards
+export function parseTextWithAliases(
+  content,
+  accessibleNotes = [],
+  currentNoteId = null,
+  ignoredAliases = []
+) {
+  if (!content || typeof content !== "string") {
+    return [];
+  }
+
+  const normalizedIgnored = new Set(
+    (Array.isArray(ignoredAliases) ? ignoredAliases : []).map(normalizeAliasText)
+  );
+
+  // Mapeia todos os candidatos disponíveis a partir dos cards acessíveis
+  const candidates = [];
+  for (const note of accessibleNotes) {
+    if (!note || !note.id || note.id === currentNoteId) continue;
+
+    const rawList = [
+      note.title,
+      ...(Array.isArray(note.aliases) ? note.aliases : [])
+    ];
+    const seenNorms = new Set();
+
+    for (const raw of rawList) {
+      if (!raw || typeof raw !== "string") continue;
+      const trimmed = raw.trim();
+      const norm = normalizeAliasText(trimmed);
+      if (
+        norm.length < 2 ||
+        normalizedIgnored.has(norm) ||
+        seenNorms.has(norm)
+      ) {
+        continue;
+      }
+      seenNorms.add(norm);
+      candidates.push({
+        note,
+        rawTerm: trimmed,
+        normTerm: norm,
+        len: trimmed.length
+      });
+    }
+  }
+
+  // Termos mais longos primeiro para priorizar correspondências compostas
+  candidates.sort((a, b) => b.len - a.len);
+
+  const intervals = [];
+
+  for (const cand of candidates) {
+    // Regex com limites de palavras que suportam caracteres em português
+    const patternStr = `(?:^|(?<=[^a-zA-Z0-9À-ÿ]))${escapeRegex(cand.rawTerm)}(?=[^a-zA-Z0-9À-ÿ]|$)`;
+    let regex;
+    try {
+      regex = new RegExp(patternStr, "gi");
+    } catch {
+      continue;
+    }
+
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+      const start = match.index;
+      const matchedText = match[0];
+      const end = start + matchedText.length;
+
+      // Impede sobreposição com termos maiores já capturados
+      const overlaps = intervals.some(
+        (inv) => Math.max(start, inv.start) < Math.min(end, inv.end)
+      );
+      if (!overlaps) {
+        intervals.push({
+          start,
+          end,
+          matchedText,
+          note: cand.note,
+          term: cand.rawTerm
+        });
+      }
+    }
+  }
+
+  intervals.sort((a, b) => a.start - b.start);
+
+  const tokens = [];
+  let cursor = 0;
+  for (const inv of intervals) {
+    if (inv.start > cursor) {
+      tokens.push({
+        type: "text",
+        text: content.slice(cursor, inv.start)
+      });
+    }
+    tokens.push({
+      type: "link",
+      text: inv.matchedText,
+      note: inv.note,
+      term: inv.term
+    });
+    cursor = inv.end;
+  }
+  if (cursor < content.length) {
+    tokens.push({
+      type: "text",
+      text: content.slice(cursor)
+    });
+  }
+
+  return tokens;
 }
 
 // Constrói os nós e arestas para a Visão de Teia (Grafo Interativo)

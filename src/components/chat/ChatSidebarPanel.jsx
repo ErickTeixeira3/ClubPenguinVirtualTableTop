@@ -1,10 +1,56 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "../../contexts/AuthContext";
+import { useCampaign } from "../../contexts/CampaignContext";
+import { useMediaUrl } from "../../hooks/useMediaUrl";
 
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100];
 
+function MessageAvatar({ msg, campaignId }) {
+  const { url } = useMediaUrl(msg.characterMediaId, null, campaignId);
+  const resolvedUrl = msg.senderPhotoURL || url;
+
+  if (resolvedUrl) {
+    return (
+      <img
+        src={resolvedUrl}
+        alt=""
+        style={{
+          width: "20px",
+          height: "20px",
+          borderRadius: "50%",
+          objectFit: "cover"
+        }}
+      />
+    );
+  }
+
+  const initial = (msg.senderName || "P").trim().slice(0, 1).toUpperCase();
+  return (
+    <div
+      style={{
+        width: "20px",
+        height: "20px",
+        borderRadius: "50%",
+        background: "#02529c",
+        color: "#ffffff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: "11px",
+        fontWeight: 800
+      }}
+    >
+      {initial}
+    </div>
+  );
+}
+
 export default function ChatSidebarPanel({
   messages,
+  campaignId,
   activeCharacter,
+  characters = [],
+  canEditCharacter,
   rollVisibility,
   onChangeRollVisibility,
   onSendText,
@@ -12,8 +58,73 @@ export default function ChatSidebarPanel({
   onDeleteMessage,
   isGM
 }) {
+  const { user } = useAuth();
+  const { myPlayerProfile } = useCampaign();
   const [text, setText] = useState("");
   const bottomRef = useRef(null);
+
+  // Fichas acessíveis para este jogador falar no chat
+  const accessibleCharacters = useMemo(() => {
+    if (!characters) return [];
+    if (isGM) return characters;
+    return characters.filter((c) => {
+      if (typeof canEditCharacter === "function") {
+        return canEditCharacter(c);
+      }
+      return c.ownerId === user?.uid;
+    });
+  }, [characters, isGM, canEditCharacter, user?.uid]);
+
+  // Seletor de emissor: 'player' ou characterId
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("player");
+
+  // Garante que se o personagem selecionado não existir mais, fala como player
+  const speakAs = useMemo(() => {
+    if (selectedSpeakerId === "player") return "player";
+    const exists = accessibleCharacters.some((c) => c.id === selectedSpeakerId);
+    return exists ? selectedSpeakerId : "player";
+  }, [selectedSpeakerId, accessibleCharacters]);
+
+  const currentCharacter = useMemo(() => {
+    if (speakAs === "player") return null;
+    return accessibleCharacters.find((c) => c.id === speakAs) || null;
+  }, [speakAs, accessibleCharacters]);
+
+  const { url: selectedCharAvatarUrl } = useMediaUrl(
+    currentCharacter?.avatarMediaId || currentCharacter?.defaultToken?.mediaId,
+    currentCharacter?.avatarExternalUrl || currentCharacter?.defaultToken?.externalUrl,
+    campaignId
+  );
+
+  // Resolve os dados da identidade selecionada (nome e foto)
+  const currentIdentity = useMemo(() => {
+    if (speakAs === "player" || !currentCharacter) {
+      return {
+        type: "player",
+        name:
+          myPlayerProfile?.displayName ||
+          user?.displayName ||
+          user?.email?.split("@")[0] ||
+          "Pinguim",
+        photoURL: myPlayerProfile?.photoURL || user?.photoURL || null,
+        character: null,
+        characterId: null
+      };
+    }
+    return {
+      type: "character",
+      name: currentCharacter.name,
+      photoURL:
+        selectedCharAvatarUrl ||
+        currentCharacter.avatarExternalUrl ||
+        currentCharacter.defaultToken?.externalUrl ||
+        currentCharacter.tokenImage ||
+        currentCharacter.avatarImage ||
+        null,
+      character: currentCharacter,
+      characterId: currentCharacter.id
+    };
+  }, [speakAs, currentCharacter, selectedCharAvatarUrl, myPlayerProfile, user]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,7 +143,9 @@ export default function ChatSidebarPanel({
         title: `Rolagem (${expr})`,
         primaryFormula: expr,
         primaryLabel: "Resultado",
-        character: activeCharacter,
+        character: currentIdentity.character || activeCharacter,
+        senderName: currentIdentity.name,
+        senderPhotoURL: currentIdentity.photoURL,
         visibility: rollVisibility
       });
       return;
@@ -40,8 +153,12 @@ export default function ChatSidebarPanel({
 
     await onSendText({
       content: raw,
-      senderName: activeCharacter?.name,
-      characterId: activeCharacter?.id || null,
+      senderName: currentIdentity.name,
+      senderPhotoURL: currentIdentity.photoURL,
+      characterId: currentIdentity.characterId,
+      characterMediaId: currentCharacter
+        ? currentCharacter.avatarMediaId || currentCharacter.defaultToken?.mediaId || null
+        : null,
       visibility: rollVisibility
     });
   };
@@ -52,7 +169,9 @@ export default function ChatSidebarPanel({
       categoryColor: "#02529c",
       primaryFormula: `1d${sides}`,
       primaryLabel: `d${sides}`,
-      character: activeCharacter,
+      character: currentIdentity.character || activeCharacter,
+      senderName: currentIdentity.name,
+      senderPhotoURL: currentIdentity.photoURL,
       visibility: rollVisibility
     });
   };
@@ -172,20 +291,7 @@ export default function ChatSidebarPanel({
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    {msg.senderPhotoURL ? (
-                      <img
-                        src={msg.senderPhotoURL}
-                        alt=""
-                        style={{
-                          width: "18px",
-                          height: "18px",
-                          borderRadius: "50%",
-                          objectFit: "cover"
-                        }}
-                      />
-                    ) : (
-                      <span style={{ fontSize: "12px" }}>🐧</span>
-                    )}
+                    <MessageAvatar msg={msg} campaignId={campaignId} />
                     <span>{msg.senderName}</span>
                   </div>
                   <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
@@ -353,20 +459,7 @@ export default function ChatSidebarPanel({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  {msg.senderPhotoURL ? (
-                    <img
-                      src={msg.senderPhotoURL}
-                      alt=""
-                      style={{
-                        width: "18px",
-                        height: "18px",
-                        borderRadius: "50%",
-                        objectFit: "cover"
-                      }}
-                    />
-                  ) : (
-                    <span style={{ fontSize: "12px" }}>🐧</span>
-                  )}
+                  <MessageAvatar msg={msg} campaignId={campaignId} />
                   <span>{msg.senderName}</span>
                 </div>
                 {isSecret && <span>SECRETO</span>}
@@ -380,23 +473,95 @@ export default function ChatSidebarPanel({
         <div ref={bottomRef} />
       </div>
 
-      {/* Input de Mensagem / Comando /r */}
-      <form onSubmit={handleSend} style={{ display: "flex", gap: "6px" }}>
-        <input
-          type="text"
-          className="cp-input"
-          style={{ padding: "8px 10px", fontSize: "13px" }}
-          placeholder="Mensagem ou /r 1d20+4..."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="cp-btn cp-btn-green"
-          style={{ padding: "8px 12px", fontSize: "13px" }}
+      {/* Input de Mensagem / Comando /r com seletor de identidade */}
+      <form onSubmit={handleSend} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+        {/* Seletor de Emissor: Player ou Personagens (com scroll se mais de ~5) */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            background: "#ffffff",
+            border: "2px solid var(--cp-blue-border)",
+            borderRadius: "10px",
+            padding: "4px 8px"
+          }}
         >
-          Enviar
-        </button>
+          {/* Avatar da identidade ativa selecionada */}
+          <div
+            style={{
+              width: "24px",
+              height: "24px",
+              borderRadius: "50%",
+              overflow: "hidden",
+              border: "1.5px solid #001b3a",
+              background: "#e2f1ff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0
+            }}
+          >
+            {currentIdentity.photoURL ? (
+              <img
+                src={currentIdentity.photoURL}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : currentIdentity.type === "character" ? (
+              <span style={{ fontSize: "12px", fontWeight: "bold" }}>
+                {(currentIdentity.name || "P").slice(0, 1).toUpperCase()}
+              </span>
+            ) : (
+              <span style={{ fontSize: "14px" }}>👤</span>
+            )}
+          </div>
+
+          <select
+            value={speakAs}
+            onChange={(e) => setSelectedSpeakerId(e.target.value)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              fontWeight: 800,
+              fontSize: "12px",
+              color: "#001b3a",
+              cursor: "pointer",
+              padding: "2px 0",
+              maxHeight: "160px"
+            }}
+          >
+            <option value="player">
+              {myPlayerProfile?.displayName || user?.displayName || "Você"}
+            </option>
+            {accessibleCharacters.map((char) => (
+              <option key={char.id} value={char.id}>
+                {char.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: "flex", gap: "6px" }}>
+          <input
+            type="text"
+            className="cp-input"
+            style={{ padding: "8px 10px", fontSize: "13px" }}
+            placeholder="Mensagem ou /r 1d20+4..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="cp-btn cp-btn-green"
+            style={{ padding: "8px 12px", fontSize: "13px" }}
+          >
+            Enviar
+          </button>
+        </div>
       </form>
     </div>
   );
