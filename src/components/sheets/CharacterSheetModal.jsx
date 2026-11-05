@@ -22,6 +22,30 @@ const TABS = [
   { id: "rolls", label: "Rolagens & Ações" }
 ];
 
+const resolveItemIcon = (item) => {
+  if (!item) return "fluffy_fish";
+  if (typeof item === "string") {
+    const s = item.toLowerCase();
+    if (s.includes("peixe") || s.includes("fish") || s.includes("fluffy")) return "fluffy_fish";
+    return item;
+  }
+  const name = (item.name || "").toLowerCase();
+  const id = (item.id || "").toLowerCase();
+  const icon = (item.icon || "").toLowerCase();
+  if (
+    name.includes("peixe") ||
+    name.includes("fish") ||
+    name.includes("fluffy") ||
+    id.includes("peixe") ||
+    id.includes("fish")
+  ) {
+    if (!icon || icon === "meat" || icon === "carne" || icon === "fish") {
+      return "fluffy_fish";
+    }
+  }
+  return item.icon || item.name;
+};
+
 function CpCoinIcon({ size = 20 }) {
   return (
     <svg
@@ -94,14 +118,14 @@ function CpIconPicker({ selectedIconId, onSelectIcon, onClose }) {
   const [activeCat, setActiveCat] = useState("all");
   const categories = [
     { id: "all", label: "Todos" },
-    { id: "emotes", label: "Emotes CP" },
-    { id: "combat", label: "Armas" },
-    { id: "armor", label: "Armaduras" },
+    { id: "reactions", label: "Expressões" },
+    { id: "combat", label: "Combate" },
+    { id: "magic", label: "Magia" },
     { id: "food", label: "Comidas" },
-    { id: "drink", label: "Bebidas" },
-    { id: "potions", label: "Poções" },
-    { id: "tools", label: "Ferramentas" },
-    { id: "treasure", label: "Jóias & Tesouros" }
+    { id: "creatures", label: "Criaturas" },
+    { id: "treasure", label: "Tesouros" },
+    { id: "activities", label: "Atividades" },
+    { id: "symbols", label: "Símbolos" }
   ];
 
   const filtered = activeCat === "all"
@@ -264,11 +288,16 @@ export default function CharacterSheetModal({
   const [newGroupName, setNewGroupName] = useState("");
   const [newCustomRollOpen, setNewCustomRollOpen] = useState(false);
   const [crName, setCrName] = useState("");
+  const [crIcon, setCrIcon] = useState("sword");
+  const [showRollIconPicker, setShowRollIconPicker] = useState(false);
   const [crColor, setCrColor] = useState("#3090f0");
   const [crHit, setCrHit] = useState("1d20 + @forca");
   const [crEffect, setCrEffect] = useState("");
   const [crCostRes, setCrCostRes] = useState("mp");
   const [crCostAmt, setCrCostAmt] = useState(0);
+  const [hotbarModalRoll, setHotbarModalRoll] = useState(null);
+  const [importFromSheetOpen, setImportFromSheetOpen] = useState(false);
+  const [editingRollIconTarget, setEditingRollIconTarget] = useState(null);
 
   const inventoryScrollRef = useRef(null);
 
@@ -360,6 +389,7 @@ export default function CharacterSheetModal({
       id: `r_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name: rollEntry.name || "Rolagem",
       color: rollEntry.color || "#02529c",
+      icon: rollEntry.icon || "sword",
       hitFormula: rollEntry.hitFormula || "1d20",
       effectFormula: rollEntry.effectFormula || "",
       costResource: rollEntry.costResource || "mp",
@@ -464,6 +494,11 @@ export default function CharacterSheetModal({
   const handlePullFromCompendium = (entry) => {
     if (!canEdit || !entry) return;
     if (entry.type === "item") {
+      const entryNameLower = (entry.name || "").toLowerCase();
+      const isFish =
+        entryNameLower.includes("peixe") ||
+        entryNameLower.includes("fish") ||
+        entryNameLower.includes("fluffy");
       onUpdateCharacter(character.id, {
         inventory: [
           ...inventory,
@@ -472,6 +507,7 @@ export default function CharacterSheetModal({
             name: entry.name,
             qty: 1,
             elementColor: entry.elementColor || "#38c172",
+            icon: isFish ? "fluffy_fish" : (entry.icon || "sword"),
             rollFormula: entry.effectFormula || entry.hitFormula || "",
             description: entry.description || ""
           }
@@ -518,6 +554,15 @@ export default function CharacterSheetModal({
   const handleAddItem = (e) => {
     e.preventDefault();
     if (!canEdit || !itemName.trim()) return;
+    const nameLower = itemName.trim().toLowerCase();
+    const isFish =
+      nameLower.includes("peixe") ||
+      nameLower.includes("fish") ||
+      nameLower.includes("fluffy");
+    const finalIcon =
+      isFish && (itemIcon === "sword" || itemIcon === "meat" || itemIcon === "fish")
+        ? "fluffy_fish"
+        : itemIcon;
     onUpdateCharacter(character.id, {
       inventory: [
         ...inventory,
@@ -526,7 +571,7 @@ export default function CharacterSheetModal({
           name: itemName.trim(),
           qty: Math.max(1, Number(itemQty) || 1),
           elementColor: "#38c172",
-          icon: itemIcon,
+          icon: finalIcon,
           rollFormula: itemFormula.trim(),
           description: itemDesc.trim()
         }
@@ -612,6 +657,7 @@ export default function CharacterSheetModal({
       {
         name: crName.trim(),
         color: crColor,
+        icon: crIcon,
         hitFormula: crHit.trim(),
         effectFormula: crEffect.trim(),
         costResource: crCostRes,
@@ -621,6 +667,8 @@ export default function CharacterSheetModal({
     );
     setCrName("");
     setCrEffect("");
+    setCrIcon("sword");
+    setShowRollIconPicker(false);
     setNewCustomRollOpen(false);
   };
 
@@ -631,7 +679,66 @@ export default function CharacterSheetModal({
         ? { ...g, rolls: (g.rolls || []).filter((r) => r.id !== rollId) }
         : g
     );
-    onUpdateCharacter(character.id, { rollGroups: next });
+    const rawHotbar = Array.isArray(character.hotbar) ? [...character.hotbar] : [];
+    const nextHotbar = rawHotbar.map((s) => (s?.rollId === rollId ? null : s));
+    onUpdateCharacter(character.id, { rollGroups: next, hotbar: nextHotbar });
+  };
+
+  const handleAssignRollToHotbar = (roll, slotIndex) => {
+    if (!canEdit) return;
+    const currentHotbar = Array.isArray(character.hotbar)
+      ? [...character.hotbar]
+      : Array(9).fill(null);
+    while (currentHotbar.length < 9) {
+      currentHotbar.push(null);
+    }
+    currentHotbar[slotIndex] = {
+      rollId: roll.id,
+      name: roll.name,
+      color: roll.color || "#02529c",
+      icon: roll.icon || roll.name,
+      hitFormula: roll.hitFormula || "1d20",
+      effectFormula: roll.effectFormula || "",
+      costResource: roll.costResource || "mp",
+      costAmount: roll.costAmount || 0
+    };
+    onUpdateCharacter(character.id, { hotbar: currentHotbar });
+    setHotbarModalRoll(null);
+  };
+
+  const handleRemoveRollFromHotbar = (slotIndex) => {
+    if (!canEdit) return;
+    const currentHotbar = Array.isArray(character.hotbar)
+      ? [...character.hotbar]
+      : Array(9).fill(null);
+    while (currentHotbar.length < 9) {
+      currentHotbar.push(null);
+    }
+    currentHotbar[slotIndex] = null;
+    onUpdateCharacter(character.id, { hotbar: currentHotbar });
+    setHotbarModalRoll(null);
+  };
+
+  const handleUpdateRollIcon = (groupId, rollId, newIconId) => {
+    if (!canEdit) return;
+    const nextGroups = rollGroups.map((g) => {
+      if (g.id !== groupId) return g;
+      return {
+        ...g,
+        rolls: (g.rolls || []).map((r) =>
+          r.id === rollId ? { ...r, icon: newIconId } : r
+        )
+      };
+    });
+    const rawHotbar = Array.isArray(character.hotbar) ? [...character.hotbar] : [];
+    const nextHotbar = rawHotbar.map((s) =>
+      s?.rollId === rollId ? { ...s, icon: newIconId } : s
+    );
+    onUpdateCharacter(character.id, {
+      rollGroups: nextGroups,
+      hotbar: nextHotbar
+    });
+    setEditingRollIconTarget(null);
   };
 
   const handleMoveRollOrder = (groupId, index, direction) => {
@@ -1138,7 +1245,16 @@ export default function CharacterSheetModal({
                 className="cp-input"
                 placeholder="Nome do Item..."
                 value={itemName}
-                onChange={(e) => setItemName(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setItemName(val);
+                  const lower = val.toLowerCase();
+                  if (lower.includes("peixe") || lower.includes("fish") || lower.includes("fluffy")) {
+                    if (itemIcon === "sword" || itemIcon === "meat") {
+                      setItemIcon("fluffy_fish");
+                    }
+                  }
+                }}
                 required
                 style={{ fontSize: "11px", padding: "3px 6px" }}
               />
@@ -1244,7 +1360,7 @@ export default function CharacterSheetModal({
                           filter: "drop-shadow(0 2px 3px rgba(0, 27, 58, 0.2))"
                         }}
                       >
-                        {renderCpFlashIcon(item.icon || item.name, 40)}
+                        {renderCpFlashIcon(resolveItemIcon(item), 40)}
                       </div>
 
                       {/* Nome do Item */}
@@ -1353,7 +1469,7 @@ export default function CharacterSheetModal({
                       padding: 0
                     }}
                   >
-                    {renderCpFlashIcon(inspectedItem.icon || inspectedItem.name, 36)}
+                    {renderCpFlashIcon(resolveItemIcon(inspectedItem), 36)}
                   </button>
 
                   <div style={{ minWidth: 0, flex: 1 }}>
@@ -1425,7 +1541,8 @@ export default function CharacterSheetModal({
                         categoryColor: "#38c172",
                         description: inspectedItem.description || "",
                         primaryFormula: inspectedItem.rollFormula || "1d20",
-                        primaryLabel: "Uso / Efeito"
+                        primaryLabel: "Uso / Efeito",
+                        icon: resolveItemIcon(inspectedItem)
                       })
                     }
                   >
@@ -1443,7 +1560,8 @@ export default function CharacterSheetModal({
                           pinToRollGroup({
                             name: inspectedItem.name,
                             color: "#38c172",
-                            hitFormula: inspectedItem.rollFormula || "1d20"
+                            hitFormula: inspectedItem.rollFormula || "1d20",
+                            icon: resolveItemIcon(inspectedItem)
                           })
                         }
                       >
@@ -1485,7 +1603,7 @@ export default function CharacterSheetModal({
               {/* Seletor aberto para trocar ícone do item inspecionado */}
               {inspectedIconPickerOpen && canEdit && (
                 <CpIconPicker
-                  selectedIconId={inspectedItem.icon}
+                  selectedIconId={resolveItemIcon(inspectedItem)}
                   onSelectIcon={(ic) => handleUpdateItemIcon(inspectedItem.id, ic)}
                   onClose={() => setInspectedIconPickerOpen(false)}
                 />
@@ -1776,12 +1894,45 @@ export default function CharacterSheetModal({
                       </label>
                     )}
 
+                    {canEdit && (
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          color: "#334155",
+                          cursor: "pointer"
+                        }}
+                        title="Exibir nome do token no mapa"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={character.defaultToken?.showName !== false}
+                          onChange={(e) => {
+                            onUpdateCharacter(character.id, {
+                              defaultToken: {
+                                ...(character.defaultToken || {}),
+                                showName: e.target.checked
+                              }
+                            });
+                          }}
+                        />
+                        Nome
+                      </label>
+                    )}
+
                     {onSpawnTokenOnMap && (
                       <button
                         type="button"
                         className="cp-btn cp-btn-green"
                         style={{ padding: "3px 8px", fontSize: "10px" }}
-                        onClick={() => onSpawnTokenOnMap(character)}
+                        onClick={() =>
+                          onSpawnTokenOnMap(character, {
+                            showName: character.defaultToken?.showName !== false
+                          })
+                        }
                       >
                         + No Mapa
                       </button>
@@ -1985,7 +2136,8 @@ export default function CharacterSheetModal({
                               title: `Perícia: ${sk.name}`,
                               categoryColor: "#02529c",
                               primaryFormula: sk.formula || `1d20 + @${sk.attribute} + ${sk.bonus}`,
-                              primaryLabel: sk.name
+                              primaryLabel: sk.name,
+                              icon: sk.icon || sk.name
                             })
                           }
                         >
@@ -2243,7 +2395,8 @@ export default function CharacterSheetModal({
                               primaryLabel: ab.hitFormula ? "Acerto" : "Efeito",
                               secondaryFormula: ab.hitFormula ? ab.effectFormula : "",
                               secondaryLabel: "Dano / Efeito",
-                              cost: ab.cost
+                              cost: ab.cost,
+                              icon: ab.icon || ab.name
                             })
                           }
                         >
@@ -2354,10 +2507,187 @@ export default function CharacterSheetModal({
                     type="button"
                     className="cp-btn cp-btn-green"
                     style={{ padding: "3px 8px", fontSize: "11px", height: "26px" }}
-                    onClick={() => setNewCustomRollOpen((p) => !p)}
+                    onClick={() => {
+                      setNewCustomRollOpen((p) => !p);
+                      if (importFromSheetOpen) setImportFromSheetOpen(false);
+                    }}
                   >
                     + Nova Rolagem
                   </button>
+
+                  <button
+                    type="button"
+                    className="cp-btn cp-btn-gold"
+                    style={{ padding: "3px 8px", fontSize: "11px", height: "26px" }}
+                    onClick={() => {
+                      setImportFromSheetOpen((p) => !p);
+                      if (newCustomRollOpen) setNewCustomRollOpen(false);
+                    }}
+                    title="Criar rolagem a partir de uma perícia ou habilidade da ficha"
+                  >
+                    + Da Ficha (Perícias/Magias)
+                  </button>
+                </div>
+              )}
+
+              {/* Painel para criar rolagem a partir de Perícia, Habilidade ou Magia da Ficha */}
+              {importFromSheetOpen && canEdit && (
+                <div
+                  style={{
+                    background: "#f0f6fc",
+                    border: "2px solid #eab308",
+                    borderRadius: "10px",
+                    padding: "8px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px"
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <strong style={{ fontSize: "12px", color: "#003264" }}>
+                        Criar Rolagem a partir da Ficha
+                      </strong>
+                      <span style={{ fontSize: "11px", color: "#475569" }}>no Grupo:</span>
+                      <select
+                        className="cp-input"
+                        value={selectedGroupId}
+                        onChange={(e) => setSelectedGroupId(e.target.value)}
+                        style={{ fontSize: "11px", padding: "2px 6px" }}
+                      >
+                        {rollGroups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="cp-btn cp-btn-orange"
+                      style={{ padding: "1px 6px", fontSize: "10px" }}
+                      onClick={() => setImportFromSheetOpen(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    {/* Perícias */}
+                    <div style={{ background: "#ffffff", padding: "6px", borderRadius: "8px", border: "1.5px solid #cbd5e1" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 800, color: "#02529c", marginBottom: "4px" }}>
+                        Perícias ({skills.length})
+                      </div>
+                      <div style={{ maxHeight: "150px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", paddingRight: "2px" }}>
+                        {skills.length === 0 ? (
+                          <div style={{ fontSize: "10px", color: "#64748b" }}>Nenhuma perícia na ficha</div>
+                        ) : (
+                          skills.map((sk) => (
+                            <div
+                              key={sk.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "3px 6px",
+                                background: "#f8fafc",
+                                borderRadius: "6px",
+                                border: "1px solid #e2e8f0"
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1, paddingRight: "4px" }}>
+                                <div style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {sk.name}
+                                </div>
+                                <div style={{ fontSize: "9px", color: "#64748b" }}>
+                                  {sk.formula || `1d20 + @${sk.attribute}`}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="cp-btn cp-btn-green"
+                                style={{ padding: "2px 6px", fontSize: "9px" }}
+                                onClick={() => {
+                                  pinToRollGroup(
+                                    {
+                                      name: sk.name,
+                                      color: "#3090f0",
+                                      icon: sk.name.toLowerCase().includes("arco") ? "bow" : "clover",
+                                      hitFormula: sk.formula || `1d20 + @${sk.attribute || "forca"} + ${sk.bonus || 0}`,
+                                      effectFormula: "",
+                                      costResource: "mp",
+                                      costAmount: 0
+                                    },
+                                    selectedGroupId
+                                  );
+                                }}
+                              >
+                                + Rolagem
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Habilidades & Magias */}
+                    <div style={{ background: "#ffffff", padding: "6px", borderRadius: "8px", border: "1.5px solid #cbd5e1" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 800, color: "#e53935", marginBottom: "4px" }}>
+                        Habilidades & Magias ({abilities.length})
+                      </div>
+                      <div style={{ maxHeight: "150px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", paddingRight: "2px" }}>
+                        {abilities.length === 0 ? (
+                          <div style={{ fontSize: "10px", color: "#64748b" }}>Nenhuma habilidade na ficha</div>
+                        ) : (
+                          abilities.map((ab) => (
+                            <div
+                              key={ab.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "3px 6px",
+                                background: "#f8fafc",
+                                borderRadius: "6px",
+                                border: "1px solid #e2e8f0"
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1, paddingRight: "4px" }}>
+                                <div style={{ fontSize: "11px", fontWeight: 700, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {ab.name}
+                                </div>
+                                <div style={{ fontSize: "9px", color: "#64748b" }}>
+                                  {ab.hitFormula || "1d20"} {ab.effectFormula ? `| ${ab.effectFormula}` : ""}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="cp-btn cp-btn-green"
+                                style={{ padding: "2px 6px", fontSize: "9px" }}
+                                onClick={() => {
+                                  pinToRollGroup(
+                                    {
+                                      name: ab.name,
+                                      color: ab.elementColor || "#e53935",
+                                      icon: ab.icon || ab.name,
+                                      hitFormula: ab.hitFormula || "1d20",
+                                      effectFormula: ab.effectFormula || "",
+                                      costResource: ab.cost?.resource || "mp",
+                                      costAmount: Number(ab.cost?.amount) || 0
+                                    },
+                                    selectedGroupId
+                                  );
+                                }}
+                              >
+                                + Rolagem
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -2374,15 +2704,48 @@ export default function CharacterSheetModal({
                     gap: "6px"
                   }}
                 >
-                  <input
-                    type="text"
-                    className="cp-input"
-                    placeholder="Título da Rolagem"
-                    value={crName}
-                    onChange={(e) => setCrName(e.target.value)}
-                    required
-                    style={{ fontSize: "11px", padding: "3px 6px" }}
-                  />
+                  <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    <input
+                      type="text"
+                      className="cp-input"
+                      placeholder="Título da Rolagem"
+                      value={crName}
+                      onChange={(e) => setCrName(e.target.value)}
+                      required
+                      style={{ fontSize: "11px", padding: "3px 6px", flex: 1 }}
+                    />
+                    <div style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className="cp-btn"
+                        style={{ padding: "2px", width: "26px", height: "26px", display: "flex", alignItems: "center", justifyContent: "center" }}
+                        onClick={() => setShowRollIconPicker((prev) => !prev)}
+                        title="Escolher Ícone da Rolagem"
+                      >
+                        {renderCpFlashIcon(crIcon, 18)}
+                      </button>
+                      {showRollIconPicker && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "100%",
+                            right: 0,
+                            zIndex: 150,
+                            width: "320px"
+                          }}
+                        >
+                          <CpIconPicker
+                            selectedIconId={crIcon}
+                            onSelectIcon={(ic) => {
+                              setCrIcon(ic);
+                              setShowRollIconPicker(false);
+                            }}
+                            onClose={() => setShowRollIconPicker(false)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <div style={{ display: "flex", gap: "4px" }}>
                     <select
                       className="cp-input"
@@ -2485,68 +2848,116 @@ export default function CharacterSheetModal({
                       gap: "6px"
                     }}
                   >
-                    {(grp.rolls || []).map((r, idx) => (
-                      <div
-                        key={r.id}
-                        style={{
-                          border: `2.5px solid ${r.color || "#3090f0"}`,
-                          borderRadius: "8px",
-                          padding: "6px",
-                          background: "#f8fafc",
-                          display: "flex",
-                          flexDirection: "column",
-                          justifyContent: "space-between",
-                          gap: "4px"
-                        }}
-                      >
-                        <div>
-                          <strong style={{ fontSize: "12px", color: "#1e293b" }}>{r.name}</strong>
-                          <div style={{ fontFamily: "var(--font-epf)", fontSize: "10px", color: "#475569" }}>
-                            {r.hitFormula}
+                    {(grp.rolls || []).map((r, idx) => {
+                      const hotbarList = Array.isArray(character.hotbar) ? character.hotbar : [];
+                      const slotIdx = hotbarList.findIndex((s) => s?.rollId === r.id);
+
+                      return (
+                        <div
+                          key={r.id}
+                          style={{
+                            border: `2.5px solid ${r.color || "#3090f0"}`,
+                            borderRadius: "8px",
+                            padding: "6px",
+                            background: "#f8fafc",
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "space-between",
+                            gap: "4px"
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <button
+                              type="button"
+                              className="cp-btn"
+                              style={{
+                                width: "26px",
+                                height: "26px",
+                                padding: "1px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                                background: "#ffffff",
+                                border: `1.5px solid ${r.color || "#008be3"}`,
+                                borderRadius: "8px",
+                                cursor: canEdit ? "pointer" : "default"
+                              }}
+                              onClick={() => {
+                                if (canEdit) setEditingRollIconTarget({ roll: r, groupId: grp.id });
+                              }}
+                              title={canEdit ? "Clique para alterar o ícone desta rolagem" : r.name}
+                            >
+                              {renderCpFlashIcon(r.icon || r.name, 20)}
+                            </button>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <strong style={{ fontSize: "12px", color: "#1e293b", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {r.name}
+                              </strong>
+                              <div style={{ fontFamily: "var(--font-epf)", fontSize: "10px", color: "#475569" }}>
+                                {r.hitFormula}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", gap: "2px", alignItems: "center" }}>
+                            <button
+                              type="button"
+                              className="cp-btn cp-btn-gold"
+                              style={{ flex: 1, padding: "3px", fontSize: "10px", height: "24px" }}
+                              onClick={() =>
+                                triggerRoll({
+                                  title: r.name,
+                                  categoryColor: r.color || "#3090f0",
+                                  primaryFormula: r.hitFormula || "1d20",
+                                  primaryLabel: "Rolagem",
+                                  secondaryFormula: r.effectFormula || "",
+                                  secondaryLabel: "Efeito / Dano",
+                                  costResource: r.costResource,
+                                  costAmount: r.costAmount,
+                                  icon: r.icon || r.name
+                                })
+                              }
+                            >
+                              🎲 Rolar
+                            </button>
+                            {canEdit && (
+                              <>
+                                <button
+                                  type="button"
+                                  className={`cp-btn ${slotIdx !== -1 ? "cp-btn-green" : ""}`}
+                                  style={{ padding: "3px 5px", fontSize: "10px", height: "24px" }}
+                                  onClick={() => setHotbarModalRoll(r)}
+                                  title={
+                                    slotIdx !== -1
+                                      ? `Atalho no Slot ${slotIdx + 1} da Hotbar (Bola de Neve)`
+                                      : "Configurar atalho na Hotbar (Bola de Neve)"
+                                  }
+                                >
+                                  ❄️{slotIdx !== -1 ? `${slotIdx + 1}` : ""}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cp-btn"
+                                  style={{ padding: "2px 4px", fontSize: "9px" }}
+                                  onClick={() => handleMoveRollOrder(grp.id, idx, -1)}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cp-btn cp-btn-orange"
+                                  style={{ padding: "2px 4px", fontSize: "9px" }}
+                                  onClick={() => handleRemoveRollFromGroup(grp.id, r.id)}
+                                >
+                                  ×
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
-
-                        <div style={{ display: "flex", gap: "2px" }}>
-                          <button
-                            type="button"
-                            className="cp-btn cp-btn-gold"
-                            style={{ flex: 1, padding: "3px", fontSize: "10px", height: "24px" }}
-                            onClick={() =>
-                              triggerRoll({
-                                title: r.name,
-                                categoryColor: r.color || "#3090f0",
-                                primaryFormula: r.hitFormula || "1d20",
-                                primaryLabel: "Rolagem",
-                                secondaryFormula: r.effectFormula || "",
-                                secondaryLabel: "Efeito / Dano"
-                              })
-                            }
-                          >
-                            🎲 Rolar
-                          </button>
-                          {canEdit && (
-                            <>
-                              <button
-                                type="button"
-                                className="cp-btn"
-                                style={{ padding: "2px 4px", fontSize: "9px" }}
-                                onClick={() => handleMoveRollOrder(grp.id, idx, -1)}
-                              >
-                                ↑
-                              </button>
-                              <button
-                                type="button"
-                                className="cp-btn cp-btn-orange"
-                                style={{ padding: "2px 4px", fontSize: "9px" }}
-                                onClick={() => handleRemoveRollFromGroup(grp.id, r.id)}
-                              >
-                                ×
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -2593,13 +3004,149 @@ export default function CharacterSheetModal({
     </div>
   );
 
+  const hotbarModalNode = hotbarModalRoll && (
+    <div className="cp-modal-overlay" onClick={() => setHotbarModalRoll(null)} style={{ zIndex: 1200 }}>
+      <div
+        className="cp-window"
+        style={{ width: "300px", display: "flex", flexDirection: "column", gap: "10px" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span className="cp-title" style={{ fontSize: "14px" }}>
+            Hotbar (Bola de Neve)
+          </span>
+          <button
+            type="button"
+            className="cp-btn cp-btn-orange"
+            style={{ padding: "2px 6px", fontSize: "11px" }}
+            onClick={() => setHotbarModalRoll(null)}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ fontSize: "12px", fontWeight: 800, color: "#001b3a", display: "flex", alignItems: "center", gap: "8px" }}>
+          <div style={{ width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {renderCpFlashIcon(hotbarModalRoll.icon || hotbarModalRoll.name, 22)}
+          </div>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {hotbarModalRoll.name}
+          </span>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: "6px",
+            background: "#ffffff",
+            padding: "8px",
+            borderRadius: "12px",
+            border: "2px solid #cbd5e1"
+          }}
+        >
+          {Array.from({ length: 9 }).map((_, slotIdx) => {
+            const currentSlot = (character.hotbar || [])[slotIdx];
+            const isThisRoll = currentSlot?.rollId === hotbarModalRoll.id;
+
+            return (
+              <button
+                key={slotIdx}
+                type="button"
+                className={`cp-btn ${isThisRoll ? "cp-btn-green" : currentSlot ? "cp-btn-gold" : ""}`}
+                style={{
+                  height: "56px",
+                  padding: "2px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "2px",
+                  fontSize: "10px"
+                }}
+                onClick={() => {
+                  if (isThisRoll) {
+                    handleRemoveRollFromHotbar(slotIdx);
+                  } else {
+                    handleAssignRollToHotbar(hotbarModalRoll, slotIdx);
+                  }
+                }}
+                title={
+                  isThisRoll
+                    ? "Remover deste slot"
+                    : currentSlot
+                    ? `Substituir ${currentSlot.name}`
+                    : `Fixar no Slot ${slotIdx + 1}`
+                }
+              >
+                <span style={{ fontWeight: 900, fontSize: "11px" }}>#{slotIdx + 1}</span>
+                <span style={{ fontSize: "9px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70px" }}>
+                  {isThisRoll ? "Remover" : currentSlot ? currentSlot.name : "Vazio"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  const rollIconPickerModalNode = editingRollIconTarget && (
+    <div className="cp-modal-overlay" onClick={() => setEditingRollIconTarget(null)} style={{ zIndex: 1250 }}>
+      <div
+        className="cp-window"
+        style={{ width: "380px", display: "flex", flexDirection: "column", gap: "10px" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span className="cp-title" style={{ fontSize: "14px" }}>
+            Alterar Ícone
+          </span>
+          <button
+            type="button"
+            className="cp-btn cp-btn-orange"
+            style={{ padding: "2px 6px", fontSize: "11px" }}
+            onClick={() => setEditingRollIconTarget(null)}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ fontSize: "12px", fontWeight: 800, color: "#001b3a" }}>
+          {editingRollIconTarget.roll.name}
+        </div>
+
+        <CpIconPicker
+          selectedIconId={editingRollIconTarget.roll.icon}
+          onSelectIcon={(ic) => {
+            handleUpdateRollIcon(
+              editingRollIconTarget.groupId,
+              editingRollIconTarget.roll.id,
+              ic
+            );
+            setEditingRollIconTarget(null);
+          }}
+          onClose={() => setEditingRollIconTarget(null)}
+        />
+      </div>
+    </div>
+  );
+
   if (isStandaloneWindow) {
-    return <div style={wrapperStyle}>{sheetBody}</div>;
+    return (
+      <div style={wrapperStyle}>
+        {sheetBody}
+        {hotbarModalNode}
+        {rollIconPickerModalNode}
+      </div>
+    );
   }
 
   return (
     <div className="cp-modal-overlay" onClick={onClose}>
       {sheetBody}
+      {hotbarModalNode}
+      {rollIconPickerModalNode}
     </div>
   );
 }

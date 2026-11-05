@@ -18,6 +18,8 @@ import CompendiumModal from "../compendium/CompendiumModal";
 import ChatSidebarPanel from "../chat/ChatSidebarPanel";
 import JournalWorkspace from "../journal/JournalWorkspace";
 import PlayerProfileModal from "./PlayerProfileModal";
+import QuickActionsHotbar from "./QuickActionsHotbar";
+import EmotePickerMenu from "./EmotePickerMenu";
 
 export default function VTTLayout() {
   const { user, logout } = useAuth();
@@ -45,12 +47,18 @@ export default function VTTLayout() {
 
   const {
     characters,
+    folders: characterFolders,
     canEditCharacter,
     createCharacter,
     updateCharacter,
     updateCharacterResource,
     uploadCharacterImage,
-    deleteCharacter
+    deleteCharacter,
+    createFolder: createCharacterFolder,
+    updateFolder: updateCharacterFolder,
+    deleteFolder: deleteCharacterFolder,
+    moveCharacterToFolder,
+    moveFolder: moveCharacterFolder
   } = useCharacters();
 
   const {
@@ -63,6 +71,7 @@ export default function VTTLayout() {
   const {
     messages,
     sendTextMessage,
+    sendEmoteMessage,
     executeRoll,
     deleteMessage
   } = useChatRolls();
@@ -98,6 +107,8 @@ export default function VTTLayout() {
   const [openCharacterId, setOpenCharacterId] = useState(null);
   const [rollVisibility, setRollVisibility] = useState("public"); // 'public' | 'gm_only'
   const [dockChatText, setDockChatText] = useState("");
+  const [hotbarOpen, setHotbarOpen] = useState(false);
+  const [emotePickerOpen, setEmotePickerOpen] = useState(false);
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   const currentDisplayName =
@@ -135,7 +146,7 @@ export default function VTTLayout() {
   };
 
   // Coloca o Token do Personagem diretamente no Mapa Ativo em Tempo Real
-  const handleSpawnCharacterToken = async (char) => {
+  const handleSpawnCharacterToken = async (char, spawnOptions = {}) => {
     const targetSceneId = activeScene?.id || campaign?.activeSceneId;
     if (!char || !targetSceneId || !user) return;
 
@@ -153,11 +164,22 @@ export default function VTTLayout() {
     const startY =
       Math.round(heightPx / 2 / cellSizePx) * cellSizePx;
 
+    const showName =
+      spawnOptions?.showName !== undefined
+        ? Boolean(spawnOptions.showName)
+        : (char.defaultToken?.showName !== false);
+
+    const visibleToPlayers =
+      spawnOptions?.visibleToPlayers !== undefined
+        ? Boolean(spawnOptions.visibleToPlayers)
+        : (char.type !== "npc" || isGM);
+
     await rtdbSet(tokenRef, {
       id: tokenId,
       characterId: char.id,
       layer: "tokens",
       name: char.name || "Pinguim",
+      showName,
       mediaId: char.defaultToken?.mediaId || char.avatarMediaId || null,
       externalUrl:
         char.defaultToken?.externalUrl || char.avatarExternalUrl || null,
@@ -166,7 +188,7 @@ export default function VTTLayout() {
       sizeInCells: Number(char.defaultToken?.sizeInCells) || 1,
       rotation: 0,
       ringColor: char.cardColor || "#3090f0",
-      visibleToPlayers: char.type !== "npc" || isGM,
+      visibleToPlayers,
       controlledBy: Array.from(
         new Set([campaign?.gmId, char.ownerId].filter(Boolean))
       ),
@@ -222,6 +244,34 @@ export default function VTTLayout() {
       characterMediaId: activeCharacter
         ? activeCharacter.avatarMediaId || activeCharacter.defaultToken?.mediaId || null
         : null
+    });
+    setSidebarOpen(true);
+    setActiveSidebarTab("chat");
+  };
+
+  const handleSelectEmote = async (emote) => {
+    if (!emote) return;
+    setEmotePickerOpen(false);
+
+    const senderName = activeCharacter?.name || currentDisplayName;
+    const senderPhotoURL =
+      activeCharacter?.avatarExternalUrl ||
+      activeCharacter?.defaultToken?.externalUrl ||
+      activeCharacter?.tokenImage ||
+      activeCharacter?.avatarImage ||
+      myPlayerProfile?.photoURL ||
+      user?.photoURL ||
+      null;
+
+    await sendEmoteMessage({
+      icon: emote.id,
+      senderName,
+      senderPhotoURL,
+      characterId: activeCharacter?.id || null,
+      characterMediaId: activeCharacter
+        ? activeCharacter.avatarMediaId || activeCharacter.defaultToken?.mediaId || null
+        : null,
+      visibility: rollVisibility
     });
     setSidebarOpen(true);
     setActiveSidebarTab("chat");
@@ -404,6 +454,7 @@ export default function VTTLayout() {
             campaignId={campaignId}
             playersMap={campaign?.players || {}}
             isGM={isGM}
+            messages={messages}
             onUpdateSceneGrid={updateScene}
             onOpenScenesManager={() => setScenesModalOpen(true)}
           />
@@ -494,7 +545,107 @@ export default function VTTLayout() {
               </svg>
             </button>
 
-            {/* Meu Pinguim (Ficha) */}
+            {/* Ações Rápidas (Hotbar 3x3) */}
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                className={`cp-dock-btn ${hotbarOpen ? "active" : ""}`}
+                title="Ações Rápidas"
+                onClick={() => setHotbarOpen((prev) => !prev)}
+              >
+                <img
+                  src="/icones/iconeAcoesRapidas.png"
+                  alt="Ações Rápidas"
+                  width="22"
+                  height="22"
+                  draggable={false}
+                  style={{ objectFit: "contain", pointerEvents: "none" }}
+                />
+              </button>
+
+              {hotbarOpen && (
+                <QuickActionsHotbar
+                  character={activeCharacter}
+                  onExecuteRoll={handleExecuteSheetRoll}
+                  onUpdateCharacter={updateCharacter}
+                  onOpenSheet={(charId) => setOpenCharacterId(charId)}
+                  onClose={() => setHotbarOpen(false)}
+                />
+              )}
+            </div>
+
+            {/* Novo Botão Bola de Neve (à esquerda do chat) */}
+            <button
+              type="button"
+              className="cp-dock-btn"
+              title="Bola de Neve"
+              onClick={() => {}}
+            >
+              <img
+                src="/icones/iconeBolaDeNeve.png"
+                alt="Bola de Neve"
+                width="22"
+                height="22"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
+            </button>
+
+            {/* Novo Botão Emotes (à esquerda do chat) */}
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                className={`cp-dock-btn ${emotePickerOpen ? "active" : ""}`}
+                title="Emotes"
+                onClick={() => setEmotePickerOpen((prev) => !prev)}
+              >
+                <img
+                  src="/icones/iconeEmotes.webp"
+                  alt="Emotes"
+                  width="22"
+                  height="22"
+                  draggable={false}
+                  style={{ objectFit: "contain", pointerEvents: "none" }}
+                />
+              </button>
+
+              {emotePickerOpen && (
+                <EmotePickerMenu
+                  onSelectEmote={handleSelectEmote}
+                  onClose={() => setEmotePickerOpen(false)}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Barra de Chat Central */}
+          <form className="cp-dock-chat-form" onSubmit={handleDockChatSubmit}>
+            <input
+              type="text"
+              className="cp-dock-chat-input"
+              placeholder="Falar ou /r 1d20+4..."
+              value={dockChatText}
+              onChange={(e) => setDockChatText(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="cp-dock-chat-send"
+              title="Enviar mensagem / rolar"
+            >
+              <img
+                src="/icones/iconeChat.png"
+                alt="Enviar"
+                width="16"
+                height="16"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
+            </button>
+          </form>
+
+          {/* Grupo Direita */}
+          <div className="cp-dock-group">
+            {/* Meu Pinguim (Ficha) - Movido para a direita do chat */}
             <button
               type="button"
               className={`cp-dock-btn ${openCharacterId ? "active" : ""}`}
@@ -519,82 +670,16 @@ export default function VTTLayout() {
                 }
               }}
             >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                {/* Ícone Estilizado de Pinguim */}
-                <ellipse cx="12" cy="14" rx="7" ry="8" />
-                <circle cx="12" cy="7" r="4.5" />
-                <polygon points="12,7 15,9 12,11 9,9" fill="#ffe066" />
-                <circle cx="10.5" cy="6.2" r="0.9" fill="#001b3a" />
-                <circle cx="13.5" cy="6.2" r="0.9" fill="#001b3a" />
-                <path
-                  d="M5.5 13 C4 15, 4 18, 5 20"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  fill="none"
-                />
-                <path
-                  d="M18.5 13 C20 15, 20 18, 19 20"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  fill="none"
-                />
-              </svg>
+              <img
+                src="/icones/iconeFicha.png"
+                alt="Meu Pinguim"
+                width="22"
+                height="22"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
             </button>
 
-            {/* Botão de Ações (Bola de neve - sem ação por enquanto) */}
-            <button
-              type="button"
-              className="cp-dock-btn"
-              title="Ações (Bola de Neve)"
-              onClick={() => {}}
-            >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-              >
-                <circle cx="12" cy="12" r="8" fill="rgba(255, 255, 255, 0.4)" />
-                <circle cx="9.5" cy="9.5" r="2.5" fill="rgba(255, 255, 255, 0.9)" />
-                <circle cx="15" cy="13.5" r="1.8" fill="rgba(255, 255, 255, 0.7)" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Barra de Chat Central */}
-          <form className="cp-dock-chat-form" onSubmit={handleDockChatSubmit}>
-            <input
-              type="text"
-              className="cp-dock-chat-input"
-              placeholder="Falar ou /r 1d20+4..."
-              value={dockChatText}
-              onChange={(e) => setDockChatText(e.target.value)}
-            />
-            <button
-              type="submit"
-              className="cp-dock-chat-send"
-              title="Enviar mensagem / rolar"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <polygon points="5 3 19 12 5 21 8 12" />
-              </svg>
-            </button>
-          </form>
-
-          {/* Grupo Direita */}
-          <div className="cp-dock-group">
             {/* Livro / Compêndio */}
             <button
               type="button"
@@ -602,21 +687,14 @@ export default function VTTLayout() {
               onClick={() => setCompendiumModalOpen(true)}
               title="Livro / Compêndio"
             >
-              <svg
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                <line x1="8" y1="7" x2="16" y2="7" />
-                <line x1="8" y1="11" x2="14" y2="11" />
-              </svg>
+              <img
+                src="/icones/iconeCompendio.png"
+                alt="Livro / Compêndio"
+                width="22"
+                height="22"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
             </button>
 
             {/* Diários e Teias */}
@@ -626,22 +704,14 @@ export default function VTTLayout() {
               onClick={() => setActiveDockModule("journal")}
               title="Diários e Teias"
             >
-              <svg
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-                <line x1="10" y1="9" x2="8" y2="9" />
-              </svg>
+              <img
+                src="/icones/iconeDiarios.png"
+                alt="Diários e Teias"
+                width="22"
+                height="22"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
             </button>
 
             {/* Lista de Amigos / Agentes */}
@@ -651,21 +721,14 @@ export default function VTTLayout() {
               onClick={() => setGmModalOpen(true)}
               title="Lista de Amigos / Agentes"
             >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
+              <img
+                src="/icones/iconeListaMembros.webp"
+                alt="Lista de Amigos"
+                width="22"
+                height="22"
+                draggable={false}
+                style={{ objectFit: "contain", pointerEvents: "none" }}
+              />
             </button>
           </div>
         </nav>
@@ -723,13 +786,22 @@ export default function VTTLayout() {
           {activeSidebarTab === "sheets" && (
             <CharactersSidebarList
               characters={characters}
+              folders={characterFolders}
               campaignId={campaignId}
               isGM={isGM}
+              currentUser={user}
+              playersMap={campaign?.players || {}}
+              gmId={campaign?.gmId}
+              onlineUsers={onlineUsers}
               onCreateCharacter={createCharacter}
               onOpenSheet={(charId) => setOpenCharacterId(charId)}
               onSpawnToken={activeScene ? handleSpawnCharacterToken : null}
               onDeleteCharacter={deleteCharacter}
-              onOpenCompendium={() => setCompendiumModalOpen(true)}
+              onCreateFolder={createCharacterFolder}
+              onUpdateFolder={updateCharacterFolder}
+              onDeleteFolder={deleteCharacterFolder}
+              onMoveCharacterToFolder={moveCharacterToFolder}
+              onMoveFolder={moveCharacterFolder}
             />
           )}
 
@@ -864,6 +936,10 @@ export default function VTTLayout() {
         <CompendiumModal
           entries={compendiumEntries}
           isGM={isGM}
+          characters={characters}
+          activeCharacter={activeCharacter}
+          canEditCharacter={canEditCharacter}
+          onUpdateCharacter={updateCharacter}
           onCreateEntry={createEntry}
           onUpdateEntry={updateEntry}
           onDeleteEntry={deleteEntry}

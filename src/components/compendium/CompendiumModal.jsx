@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 const ELEMENT_COLORS = [
   { color: "#e53935", label: "Fogo" },
@@ -9,9 +9,16 @@ const ELEMENT_COLORS = [
   { color: "#38c172", label: "Natureza" }
 ];
 
+const createUniqueId = (prefix) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
 export default function CompendiumModal({
   entries,
   isGM,
+  characters = [],
+  activeCharacter = null,
+  canEditCharacter,
+  onUpdateCharacter,
   onCreateEntry,
   onUpdateEntry,
   onDeleteEntry,
@@ -20,6 +27,82 @@ export default function CompendiumModal({
   const [filterType, setFilterType] = useState("ALL"); // 'ALL' | 'ability' | 'spell' | 'skill' | 'item'
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
+
+  const userCharacters = useMemo(() => {
+    if (!characters) return [];
+    if (isGM) return characters;
+    return characters.filter((c) => (canEditCharacter ? canEditCharacter(c) : true));
+  }, [characters, isGM, canEditCharacter]);
+
+  const [selectedTargetCharId, setSelectedTargetCharId] = useState(
+    () => activeCharacter?.id || userCharacters[0]?.id || ""
+  );
+
+  const [addedFeedback, setAddedFeedback] = useState({});
+
+  const handleAddToCharacter = (entry) => {
+    const targetChar =
+      userCharacters.find((c) => c.id === selectedTargetCharId) ||
+      activeCharacter ||
+      userCharacters[0];
+    if (!targetChar || !onUpdateCharacter) return;
+
+    if (entry.type === "item") {
+      const currentInv = Array.isArray(targetChar.inventory) ? targetChar.inventory : [];
+      onUpdateCharacter(targetChar.id, {
+        inventory: [
+          ...currentInv,
+          {
+            id: createUniqueId("inv"),
+            name: entry.name,
+            qty: 1,
+            elementColor: entry.elementColor || "#38c172",
+            rollFormula: entry.effectFormula || entry.hitFormula || "",
+            description: entry.description || ""
+          }
+        ]
+      });
+    } else if (entry.type === "skill") {
+      const currentSkills = Array.isArray(targetChar.skills) ? targetChar.skills : [];
+      onUpdateCharacter(targetChar.id, {
+        skills: [
+          ...currentSkills,
+          {
+            id: createUniqueId("sk"),
+            name: entry.name,
+            attribute: entry.attribute || "forca",
+            bonus: Number(entry.bonus) || 2,
+            formula: entry.hitFormula || `1d20 + @${entry.attribute || "forca"}`
+          }
+        ]
+      });
+    } else {
+      // ability / spell
+      const currentAbilities = Array.isArray(targetChar.abilities) ? targetChar.abilities : [];
+      onUpdateCharacter(targetChar.id, {
+        abilities: [
+          ...currentAbilities,
+          {
+            id: createUniqueId("ab"),
+            name: entry.name,
+            elementColor: entry.elementColor || "#e53935",
+            cost: entry.cost || {
+              resource: entry.costResource || "mp",
+              amount: Number(entry.costAmount) || 0
+            },
+            hitFormula: entry.hitFormula || "",
+            effectFormula: entry.effectFormula || "",
+            description: entry.description || ""
+          }
+        ]
+      });
+    }
+
+    setAddedFeedback((prev) => ({ ...prev, [entry.id]: true }));
+    setTimeout(() => {
+      setAddedFeedback((prev) => ({ ...prev, [entry.id]: false }));
+    }, 2000);
+  };
 
   const [name, setName] = useState("");
   const [type, setType] = useState("ability");
@@ -345,6 +428,38 @@ export default function CompendiumModal({
               />
             </div>
 
+            {userCharacters.length > 1 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  color: "#001b3a",
+                  marginBottom: "8px",
+                  background: "#f8fafc",
+                  padding: "4px 8px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1"
+                }}
+              >
+                <span>Ficha de Destino:</span>
+                <select
+                  className="cp-input"
+                  style={{ padding: "2px 6px", fontSize: "11px" }}
+                  value={selectedTargetCharId}
+                  onChange={(e) => setSelectedTargetCharId(e.target.value)}
+                >
+                  {userCharacters.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div
               style={{
                 display: "grid",
@@ -450,45 +565,67 @@ export default function CompendiumModal({
                     )}
                   </div>
 
-                  {isGM && (
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "4px",
-                        marginTop: "6px",
-                        justifyContent: "flex-end"
-                      }}
-                    >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "4px",
+                      marginTop: "6px",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap"
+                    }}
+                  >
+                    {userCharacters.length > 0 && (
                       <button
                         type="button"
-                        className="cp-btn cp-btn-epf"
+                        className={`cp-btn ${addedFeedback[item.id] ? "cp-btn-green" : "cp-btn-gold"}`}
                         style={{ padding: "3px 8px", fontSize: "10px" }}
-                        onClick={() =>
-                          onUpdateEntry(item.id, {
-                            visibleToPlayers: !item.visibleToPlayers
-                          })
-                        }
+                        onClick={() => handleAddToCharacter(item)}
+                        title="Adicionar habilidade à sua ficha"
                       >
-                        {item.visibleToPlayers ? "Visível" : "Oculto"}
+                        {addedFeedback[item.id] ? "✓ Adicionado!" : "+ Na Ficha"}
                       </button>
-                      <button
-                        type="button"
-                        className="cp-btn"
-                        style={{ padding: "3px 8px", fontSize: "10px" }}
-                        onClick={() => handleEdit(item)}
+                    )}
+
+                    {isGM && (
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "4px",
+                          marginLeft: "auto"
+                        }}
                       >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="cp-btn cp-btn-orange"
-                        style={{ padding: "3px 8px", fontSize: "10px" }}
-                        onClick={() => onDeleteEntry(item.id)}
-                      >
-                        X
-                      </button>
-                    </div>
-                  )}
+                        <button
+                          type="button"
+                          className="cp-btn cp-btn-epf"
+                          style={{ padding: "3px 8px", fontSize: "10px" }}
+                          onClick={() =>
+                            onUpdateEntry(item.id, {
+                              visibleToPlayers: !item.visibleToPlayers
+                            })
+                          }
+                        >
+                          {item.visibleToPlayers ? "Visível" : "Oculto"}
+                        </button>
+                        <button
+                          type="button"
+                          className="cp-btn"
+                          style={{ padding: "3px 8px", fontSize: "10px" }}
+                          onClick={() => handleEdit(item)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="cp-btn cp-btn-orange"
+                          style={{ padding: "3px 8px", fontSize: "10px" }}
+                          onClick={() => onDeleteEntry(item.id)}
+                        >
+                          X
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

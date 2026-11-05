@@ -1,354 +1,62 @@
 import React from "react";
 
 /**
- * Ícones vetoriais no estilo clássico do Club Penguin (Flash Vector Art dos anos 2000):
- * - Contornos grossos escuros (cartoon / 2.5px)
- * - Cores saturadas e gradientes vibrantes com brilho direcional
- * - Inclui TODOS os emoticons originais do Club Penguin (conforme folha oficial)
- * - Inclui itens completos de RPG desenhados na mesma estética Flash
+ * Ícones oficiais do Club Penguin (WebP dos emoticons originais) combinados
+ * com itens de RPG desenhados na estética clássica Flash dos anos 2000.
+ *
+ * Todas as duplicatas utilizam diretamente os arquivos WebP oficiais em public/emotes/.
+ * Apenas os itens exclusivos de RPG sem correspondência direta permanecem em vetor SVG.
  */
+
+const emoteUrl = (filename) => {
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  return `${base}/emotes/${filename}`;
+};
+
+const renderWebp = (filename, label) => (size = 36) => (
+  <img
+    src={emoteUrl(filename)}
+    alt={label}
+    width={size}
+    height={size}
+    draggable={false}
+    style={{
+      width: `${size}px`,
+      height: `${size}px`,
+      objectFit: "contain",
+      display: "block",
+      pointerEvents: "none",
+      userSelect: "none"
+    }}
+  />
+);
 
 export const CP_FLASH_ICONS = [
   // ==========================================
-  // 1. EMOTICONS ORIGINAIS DO CLUB PENGUIN
+  // 1. EXPRESSÕES & REAÇÕES (19 emotes)
   // ==========================================
-  {
-    id: "emote_grin",
-    label: "Sorriso Aberto (Grin)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_grin" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        {/* Cabeça amarela */}
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_grin)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Olhos pretos redondos */}
-        <circle cx="12.5" cy="14" r="1.8" fill="#1e1005" />
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Boca aberta com dentes superiores e fundo vermelho escuro */}
-        <path
-          d="M10 18 C10 18 11.5 28 18 28 C24.5 28 26 18 26 18 Z"
-          fill="#881111"
-          stroke="#451a03"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-        {/* Dentes superiores brancos */}
-        <path
-          d="M10.8 19 C12 21.5 24 21.5 25.2 19 C23 18.2 13 18.2 10.8 19 Z"
-          fill="#ffffff"
-        />
-      </svg>
-    )
-  },
-  {
-    id: "emote_smile",
-    label: "Sorriso Feliz (Smile)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_smile" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_smile)" stroke="#451a03" strokeWidth="2.5" />
-        <circle cx="12.5" cy="14" r="1.8" fill="#1e1005" />
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Sorriso curvo vermelho escuro */}
-        <path
-          d="M11 19 C12.5 25.5 23.5 25.5 25 19"
-          stroke="#881111"
-          strokeWidth="2.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    )
-  },
-  {
-    id: "emote_neutral",
-    label: "Rosto Neutro (Straight)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_neutral" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_neutral)" stroke="#451a03" strokeWidth="2.5" />
-        <circle cx="12.5" cy="14" r="1.8" fill="#1e1005" />
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Linha reta */}
-        <line x1="12" y1="22" x2="24" y2="22" stroke="#451a03" strokeWidth="2.8" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "emote_sad",
-    label: "Rosto Triste (Sad)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_sad" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_sad)" stroke="#451a03" strokeWidth="2.5" />
-        <circle cx="12.5" cy="14" r="1.8" fill="#1e1005" />
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Boca curvada para baixo */}
-        <path
-          d="M12 24 C13.5 19 22.5 19 24 24"
-          stroke="#451a03"
-          strokeWidth="2.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    )
-  },
-  {
-    id: "emote_wink",
-    label: "Piscadela (Wink)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_wink" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_wink)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Olho esquerdo piscando (arco superior limpo fiel ao CP) */}
-        <path
-          d="M11 12 C12.5 9.5 15.5 10 16.8 12.5"
-          stroke="#451a03"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-        />
-        {/* Olho direito redondo */}
-        <circle cx="21.8" cy="16" r="2" fill="#1e1005" />
-        {/* Sorriso de canto com covinha na bochecha esquerda (idêntico ao emoticon original do CP) */}
-        <path
-          d="M8.8 19.2 L13.5 17.4"
-          stroke="#7f1d1d"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-        />
-        <path
-          d="M11.2 18.3 C12.2 24.5 18.5 25.5 22 23.2"
-          stroke="#7f1d1d"
-          strokeWidth="2.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    )
-  },
-  {
-    id: "emote_surprised",
-    label: "Surpreso (Gasp)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_surp" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_surp)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Olhos arregalados brancos com pupila preta */}
-        <ellipse cx="12.5" cy="13.5" rx="3.5" ry="5" fill="#ffffff" stroke="#451a03" strokeWidth="1.8" />
-        <circle cx="12.5" cy="14" r="1.5" fill="#000000" />
-        <ellipse cx="23.5" cy="13.5" rx="3.5" ry="5" fill="#ffffff" stroke="#451a03" strokeWidth="1.8" />
-        <circle cx="23.5" cy="14" r="1.5" fill="#000000" />
-        {/* Boca redonda 'O' */}
-        <ellipse cx="18" cy="24" rx="3.2" ry="4" fill="#1e1005" stroke="#451a03" strokeWidth="1" />
-      </svg>
-    )
-  },
-  {
-    id: "emote_tongue",
-    label: "Língua de Fora (Tongue)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_tongue" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_tongue)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Olhos semicerrados */}
-        <path d="M10 13.5 Q12.5 11 15 13.5" stroke="#451a03" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M21 13.5 Q23.5 11 26 13.5" stroke="#451a03" strokeWidth="2.2" strokeLinecap="round" />
-        {/* Boca */}
-        <path d="M11 18 Q18 20 25 18" stroke="#451a03" strokeWidth="2.2" strokeLinecap="round" />
-        {/* Língua vermelha saindo para baixo */}
-        <path
-          d="M15 19 C15 26.5 21 26.5 21 19 Z"
-          fill="#ef4444"
-          stroke="#7f1d1d"
-          strokeWidth="1.8"
-        />
-        <line x1="18" y1="19" x2="18" y2="23" stroke="#7f1d1d" strokeWidth="1.2" />
-      </svg>
-    )
-  },
-  {
-    id: "emote_sick",
-    label: "Enjoado (Sick)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_sick" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#86efac" />
-            <stop offset="50%" stopColor="#22c55e" />
-            <stop offset="100%" stopColor="#15803d" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_sick)" stroke="#14532d" strokeWidth="2.5" />
-        {/* Olhos caídos com bolsas */}
-        <ellipse cx="12.5" cy="14" rx="3" ry="4" fill="#ffffff" stroke="#14532d" strokeWidth="1.5" />
-        <circle cx="12.5" cy="14.5" r="1.3" fill="#14532d" />
-        <ellipse cx="23.5" cy="14" rx="3" ry="4" fill="#ffffff" stroke="#14532d" strokeWidth="1.5" />
-        <circle cx="23.5" cy="14.5" r="1.3" fill="#14532d" />
-        {/* Boca ondulada de enjoo */}
-        <path
-          d="M11 23 Q14 20 18 23 Q22 26 25 22"
-          stroke="#14532d"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    )
-  },
-  {
-    id: "emote_angry",
-    label: "Bravo / Irritado (Angry)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_angry" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#f87171" />
-            <stop offset="50%" stopColor="#ef4444" />
-            <stop offset="100%" stopColor="#991b1b" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_angry)" stroke="#450a0a" strokeWidth="2.5" />
-        {/* Sobrancelhas bravas inclinadas */}
-        <line x1="9" y1="12" x2="16" y2="15.5" stroke="#450a0a" strokeWidth="2.6" strokeLinecap="round" />
-        <line x1="27" y1="12" x2="20" y2="15.5" stroke="#450a0a" strokeWidth="2.6" strokeLinecap="round" />
-        {/* Olhos */}
-        <circle cx="13" cy="17" r="1.6" fill="#1e1005" />
-        <circle cx="23" cy="17" r="1.6" fill="#1e1005" />
-        {/* Boca reta de raiva */}
-        <line x1="12" y1="23" x2="24" y2="23" stroke="#450a0a" strokeWidth="2.8" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "emote_worried",
-    label: "Preocupado (Worried)",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_worried" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_worried)" stroke="#451a03" strokeWidth="2.5" />
-        {/* Sobrancelhas caídas no centro */}
-        <line x1="10" y1="14" x2="15.5" y2="12" stroke="#451a03" strokeWidth="2.4" strokeLinecap="round" />
-        <line x1="26" y1="14" x2="20.5" y2="12" stroke="#451a03" strokeWidth="2.4" strokeLinecap="round" />
-        <circle cx="13" cy="16" r="1.7" fill="#1e1005" />
-        <circle cx="23" cy="16" r="1.7" fill="#1e1005" />
-        {/* Boca insegura */}
-        <line x1="13" y1="23.5" x2="23" y2="23.5" stroke="#451a03" strokeWidth="2.6" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "emote_skeptical",
-    label: "Cético / Desconfiado",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_face_skep" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff566" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#d97706" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14.5" fill="url(#cp_face_skep)" stroke="#451a03" strokeWidth="2.5" />
-        <circle cx="12.5" cy="14" r="1.8" fill="#1e1005" />
-        <circle cx="23.5" cy="14" r="1.8" fill="#1e1005" />
-        {/* Boca torta/diagonal */}
-        <line x1="12" y1="24" x2="24" y2="20.5" stroke="#451a03" strokeWidth="2.8" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "joystick",
-    label: "Controle Arcade do Club Penguin",
-    category: "emotes",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_joy_red" cx="35%" cy="30%" r="65%">
-            <stop offset="0%" stopColor="#ff6b6b" />
-            <stop offset="50%" stopColor="#ef4444" />
-            <stop offset="100%" stopColor="#991b1b" />
-          </radialGradient>
-        </defs>
-        {/* Base cinza isométrica com bordas grossas */}
-        <path
-          d="M8 20L18 16L28 20L28 27L18 31L8 27Z"
-          fill="#94a3b8"
-          stroke="#1e293b"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M18 16V31" stroke="#1e293b" strokeWidth="2" />
-        <path d="M8 20L18 24L28 20" stroke="#1e293b" strokeWidth="2" />
-        <polygon points="8,20 18,16 28,20 18,24" fill="#cbd5e1" />
-        {/* Haste preta do manche */}
-        <line x1="18" y1="20" x2="18" y2="9" stroke="#0f172a" strokeWidth="4.5" strokeLinecap="round" />
-        <line x1="18" y1="20" x2="18" y2="9" stroke="#475569" strokeWidth="1.5" strokeLinecap="round" />
-        {/* Bola vermelha do topo */}
-        <circle cx="18" cy="8" r="4.5" fill="url(#cp_joy_red)" stroke="#7f1d1d" strokeWidth="2" />
-        <ellipse cx="16.5" cy="6.5" rx="1.5" ry="1" fill="#ffffff" opacity="0.8" />
-        {/* Botão vermelho na base */}
-        <ellipse cx="23" cy="22.5" rx="2" ry="1.2" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-      </svg>
-    )
-  },
+  { id: "smile", label: "Sorriso Feliz", category: "reactions", render: renderWebp("smile.webp", "Sorriso Feliz") },
+  { id: "grin", label: "Sorriso Aberto", category: "reactions", render: renderWebp("grin.webp", "Sorriso Aberto") },
+  { id: "neutral", label: "Rosto Neutro", category: "reactions", render: renderWebp("neutral.webp", "Rosto Neutro") },
+  { id: "sad", label: "Rosto Triste", category: "reactions", render: renderWebp("sad.webp", "Rosto Triste") },
+  { id: "wink", label: "Piscadela", category: "reactions", render: renderWebp("wink.webp", "Piscadela") },
+  { id: "surprised", label: "Surpreso", category: "reactions", render: renderWebp("surprised.webp", "Surpreso") },
+  { id: "tongue", label: "Língua de Fora", category: "reactions", render: renderWebp("tongue.webp", "Língua de Fora") },
+  { id: "sick", label: "Enjoado", category: "reactions", render: renderWebp("sick.webp", "Enjoado") },
+  { id: "angry", label: "Bravo / Irritado", category: "reactions", render: renderWebp("angry.webp", "Bravo") },
+  { id: "worried", label: "Preocupado", category: "reactions", render: renderWebp("worried.webp", "Preocupado") },
+  { id: "skeptical", label: "Cético / Desconfiado", category: "reactions", render: renderWebp("skeptical.webp", "Cético") },
+  { id: "cool_sunglasses", label: "Óculos Escuros", category: "reactions", render: renderWebp("cool_sunglasses.webp", "Óculos Escuros") },
+  { id: "freezing", label: "Congelando de Frio", category: "reactions", render: renderWebp("freezing.webp", "Congelando") },
+  { id: "unibrow", label: "Monocelha Séria", category: "reactions", render: renderWebp("unibrow.webp", "Monocelha") },
+  { id: "nerd", label: "Nerd / Intelectual", category: "reactions", render: renderWebp("nerd.webp", "Nerd") },
+  { id: "cute_eyes", label: "Olhos Fofos e Brilhantes", category: "reactions", render: renderWebp("cute_eyes.webp", "Olhos Fofos") },
+  { id: "clown", label: "Palhaço Divertido", category: "reactions", render: renderWebp("clown.webp", "Palhaço") },
+  { id: "8bit_smile", label: "Sorriso Pixel 8-Bit", category: "reactions", render: renderWebp("8bit_smile.webp", "Sorriso 8-Bit") },
+  { id: "penguin_woohoo", label: "Pinguim Woohoo!", category: "reactions", render: renderWebp("penguin_woohoo.webp", "Pinguim Woohoo") },
 
   // ==========================================
-  // 2. ARMAS & COMBATE RPG
+  // 2. COMBATE & EQUIPAMENTOS (14 itens)
   // ==========================================
   {
     id: "sword",
@@ -367,7 +75,6 @@ export const CP_FLASH_ICONS = [
             <stop offset="100%" stopColor="#c98a00" />
           </linearGradient>
         </defs>
-        {/* Lâmina */}
         <path
           d="M28 5L31 8L15 24L12 21L28 5Z"
           fill="url(#cp_blade_grad)"
@@ -376,7 +83,6 @@ export const CP_FLASH_ICONS = [
           strokeLinejoin="round"
         />
         <path d="M14 22L29 7" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-        {/* Guarda dourada */}
         <path
           d="M8 20L17 29L14 31L6 22L8 20Z"
           fill="url(#cp_gold_guard)"
@@ -384,7 +90,6 @@ export const CP_FLASH_ICONS = [
           strokeWidth="2"
           strokeLinejoin="round"
         />
-        {/* Cabo e Pomo com gema */}
         <path d="M10 27L5 32" stroke="#6b2100" strokeWidth="3.5" strokeLinecap="round" />
         <circle cx="4" cy="33" r="2.2" fill="#e53935" stroke="#520000" strokeWidth="1.5" />
       </svg>
@@ -397,12 +102,9 @@ export const CP_FLASH_ICONS = [
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <g transform="rotate(45 18 18)">
-          {/* Argola do cabo */}
           <circle cx="18" cy="30.5" r="3" fill="none" stroke="#1e293b" strokeWidth="2.4" />
-          {/* Cabo envolto em tecido vermelho */}
           <rect x="16.2" y="21" width="3.6" height="7" rx="1" fill="#dc2626" stroke="#1e293b" strokeWidth="2" />
           <line x1="16.2" y1="24.5" x2="19.8" y2="24.5" stroke="#7f1d1d" strokeWidth="1.5" />
-          {/* Lâmina losangular simétrica da Kunai */}
           <polygon
             points="18,3 25,16 19.8,21 16.2,21 11,16"
             fill="#94a3b8"
@@ -410,9 +112,7 @@ export const CP_FLASH_ICONS = [
             strokeWidth="2.4"
             strokeLinejoin="round"
           />
-          {/* Face iluminada esquerda da lâmina */}
           <polygon points="18,4.8 18,20.2 16.5,20.2 12.2,15.8" fill="#e2e8f0" />
-          {/* Vincos centrais */}
           <line x1="18" y1="4.5" x2="18" y2="20.5" stroke="#1e293b" strokeWidth="1.5" />
         </g>
       </svg>
@@ -425,7 +125,6 @@ export const CP_FLASH_ICONS = [
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <g transform="rotate(45 18 18)">
-          {/* Corda do arco tensionada */}
           <polyline
             points="5,22 18,26.5 31,22"
             stroke="#cbd5e1"
@@ -433,7 +132,6 @@ export const CP_FLASH_ICONS = [
             strokeLinejoin="round"
             fill="none"
           />
-          {/* Arco de madeira curvado com empunhadura central */}
           <path
             d="M5 22 C8 8.5 13 6.5 18 6.5 C23 6.5 28 8.5 31 22"
             stroke="#422006"
@@ -448,11 +146,8 @@ export const CP_FLASH_ICONS = [
             strokeLinecap="round"
             fill="none"
           />
-          {/* Penas vermelhas da flecha */}
           <polygon points="18,24 21.5,28 21.5,31 18,28.5 14.5,31 14.5,28" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1.3" strokeLinejoin="round" />
-          {/* Haste da flecha cruzando perpendicularmente o arco */}
           <line x1="18" y1="28.5" x2="18" y2="6" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" />
-          {/* Ponta triangular de aço da flecha */}
           <polygon points="18,1.5 22.5,8.5 18,7 13.5,8.5" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1.8" strokeLinejoin="round" />
         </g>
       </svg>
@@ -465,11 +160,8 @@ export const CP_FLASH_ICONS = [
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <g transform="rotate(45 18 18)">
-          {/* Cabo de madeira alinhado exatamente à base da cabeça do machado */}
           <rect x="16" y="9" width="4" height="24" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
-          {/* Ponta metálica superior alinhada ao cabo */}
           <polygon points="18,3.5 20.5,9 15.5,9" fill="#cbd5e1" stroke="#1e293b" strokeWidth="2" strokeLinejoin="round" />
-          {/* Lâmina esquerda */}
           <path
             d="M16 9.5 L6 5.5 C3 10 3 16 6 20.5 L16 16.5 Z"
             fill="#cbd5e1"
@@ -478,7 +170,6 @@ export const CP_FLASH_ICONS = [
             strokeLinejoin="round"
           />
           <path d="M7 7 C4.8 10.5 4.8 15.5 7 19" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-          {/* Lâmina direita */}
           <path
             d="M20 9.5 L30 5.5 C33 10 33 16 30 20.5 L20 16.5 Z"
             fill="#94a3b8"
@@ -487,13 +178,14 @@ export const CP_FLASH_ICONS = [
             strokeLinejoin="round"
           />
           <path d="M29 7 C31.2 10.5 31.2 15.5 29 19" stroke="#e2e8f0" strokeWidth="1.5" strokeLinecap="round" />
-          {/* Encaixe central de ferro e rebite dourado perfeitamente alinhados */}
           <rect x="15" y="9" width="6" height="8" rx="1.5" fill="#475569" stroke="#1e293b" strokeWidth="2" />
           <circle cx="18" cy="13" r="2.2" fill="#facc15" stroke="#713f12" strokeWidth="1.3" />
         </g>
       </svg>
     )
   },
+  { id: "prehistoric_club", label: "Tacape Pré-histórico", category: "combat", render: renderWebp("prehistoric_club.webp", "Tacape Pré-histórico") },
+  { id: "prehistoric_hammer", label: "Martelo de Pedra", category: "combat", render: renderWebp("prehistoric_hammer.webp", "Martelo de Pedra") },
   {
     id: "bomb",
     label: "Bomba Clássica do Club Penguin",
@@ -507,11 +199,8 @@ export const CP_FLASH_ICONS = [
             <stop offset="100%" stopColor="#0b0f17" />
           </radialGradient>
         </defs>
-        {/* Pavio aceso */}
         <path d="M22 13C25 10 27 10 29 7" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" />
-        {/* Faísca amarela */}
         <polygon points="29,7 32,5 31,8 34,8 31,10 32,13 29,11 27,13 28,10 25,9" fill="#facc15" stroke="#ea580c" strokeWidth="1.2" />
-        {/* Esfera da bomba */}
         <circle cx="16" cy="21" r="12" fill="url(#cp_bomb_grad)" stroke="#0b0f17" strokeWidth="2.5" />
         <ellipse cx="12" cy="17" rx="3.5" ry="2" fill="#ffffff" opacity="0.6" transform="rotate(-30 12 17)" />
         <rect x="18" y="10" width="6" height="4" rx="1" fill="#4b5563" stroke="#0b0f17" strokeWidth="1.5" transform="rotate(30 20 12)" />
@@ -538,84 +227,13 @@ export const CP_FLASH_ICONS = [
       </svg>
     )
   },
-  {
-    id: "wand",
-    label: "Varinha Mágica com Estrela",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          {/* Cabo da varinha centralizado em x=18 */}
-          <rect x="16.1" y="13" width="3.8" height="20" rx="1.9" fill="#818cf8" stroke="#1e1b4b" strokeWidth="2.2" />
-          {/* Estrela de 5 pontas perfeitamente simétrica e colinear ao cabo (centro em 18,11) */}
-          <polygon
-            points="18,3 20.2,8 25.6,8.5 21.5,12.1 22.7,17.5 18,14.7 13.3,17.5 14.5,12.1 10.4,8.5 15.8,8"
-            fill="#facc15"
-            stroke="#854d0e"
-            strokeWidth="2.2"
-            strokeLinejoin="round"
-          />
-          <circle cx="18" cy="11.2" r="2.2" fill="#ffffff" />
-        </g>
-      </svg>
-    )
-  },
-
-  // ==========================================
-  // 3. ARMADURAS, ESCUDOS & VESTUÁRIO
-  // ==========================================
-  {
-    id: "shield",
-    label: "Escudo do Club Penguin",
-    category: "armor",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <linearGradient id="cp_shield_blue" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0096ea" />
-            <stop offset="100%" stopColor="#004c8a" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M6 7C14 6 22 6 30 7C30 18 25 28 18 32C11 28 6 18 6 7Z"
-          fill="url(#cp_shield_blue)"
-          stroke="#001f3f"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M9 9C15 8 21 8 27 9C27 17 23 25 18 29C13 25 9 17 9 9Z"
-          fill="none"
-          stroke="#facc15"
-          strokeWidth="2"
-        />
-        <path d="M18 11V25M12 16H24" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "helmet",
-    label: "Capacete de Minerador",
-    category: "armor",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M5 24C5 14 11 8 18 8C25 8 31 14 31 24L33 26H3L5 24Z"
-          fill="#facc15"
-          stroke="#713f12"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <circle cx="18" cy="14" r="5" fill="#f8fafc" stroke="#334155" strokeWidth="2" />
-        <circle cx="18" cy="14" r="3" fill="#38bdf8" />
-        <ellipse cx="17" cy="13" rx="1.5" ry="1" fill="#ffffff" />
-      </svg>
-    )
-  },
+  { id: "pow_explosion", label: "Impacto POW!", category: "combat", render: renderWebp("pow_explosion.webp", "Impacto POW!") },
+  { id: "shield", label: "Escudo de Madeira", category: "combat", render: renderWebp("shield.webp", "Escudo de Madeira") },
+  { id: "skate_helmet", label: "Capacete de Aventura", category: "combat", render: renderWebp("skate_helmet.webp", "Capacete de Aventura") },
   {
     id: "ninja_headband",
     label: "Faixa Ninja Card-Jitsu",
-    category: "armor",
+    category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <path
@@ -633,7 +251,7 @@ export const CP_FLASH_ICONS = [
   {
     id: "crown",
     label: "Coroa Real de Ouro",
-    category: "armor",
+    category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <path
@@ -653,7 +271,7 @@ export const CP_FLASH_ICONS = [
   {
     id: "cape",
     label: "Capa Épica de Aventureiro",
-    category: "armor",
+    category: "combat",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <path
@@ -670,213 +288,20 @@ export const CP_FLASH_ICONS = [
   },
 
   // ==========================================
-  // 4. COMIDAS DO CLUB PENGUIN
+  // 3. MAGIA & MISTICISMO (7 itens)
   // ==========================================
-  {
-    id: "pizza",
-    label: "Fatia de Pizza do Pizzatron",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Triângulo de queijo amarelo com borda assada */}
-        <path
-          d="M6 28 L14 8 C20.5 9.8 25.8 13.5 29.8 18.8 L6 28 Z"
-          fill="#fef08a"
-          stroke="#92400e"
-          strokeWidth="2.3"
-          strokeLinejoin="round"
-        />
-        {/* Sombra interna dourada do queijo */}
-        <path
-          d="M7.8 26.2 L14.5 9.8 C19.8 11.4 24.5 14.5 28 18.6 L7.8 26.2 Z"
-          fill="#fde047"
-        />
-        {/* Borda recheada dourada no topo-direito (fiel ao emoticon original do CP) */}
-        <path
-          d="M13.2 6.2 C20.5 7.8 27.2 12.2 31.5 18 C32.3 19.2 30.6 20.8 29.2 19.6 C25.2 14.6 19.2 10.6 12.6 9 C11.2 8.6 11.6 5.8 13.2 6.2 Z"
-          fill="#f59e0b"
-          stroke="#78350f"
-          strokeWidth="2.2"
-          strokeLinejoin="round"
-        />
-        {/* Brilho na borda da massa */}
-        <path
-          d="M14.5 7.5 C20.5 9 25.8 12.6 29.5 17.2"
-          stroke="#fcd34d"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-        {/* Pepperonis ovais em perspectiva dentro do queijo */}
-        <ellipse cx="17" cy="14.8" rx="2.7" ry="1.4" transform="rotate(15 17 14.8)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
-        <ellipse cx="21.5" cy="18.2" rx="2.5" ry="1.3" transform="rotate(15 21.5 18.2)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
-        <ellipse cx="12.5" cy="21.8" rx="2.2" ry="1.2" transform="rotate(15 12.5 21.8)" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.1" />
-        {/* Pimentão verde */}
-        <path d="M14.5 17.5 L17.2 18.4" stroke="#15803d" strokeWidth="2.2" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "fish",
-    label: "Peixe do Ice Fishing",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <linearGradient id="cp_fish_body" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#93c5fd" />
-            <stop offset="60%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#1d4ed8" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M5 18C10 11 23 11 29 18C23 25 10 25 5 18Z"
-          fill="url(#cp_fish_body)"
-          stroke="#0f172a"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <polygon points="27,18 34,12 33,18 34,24" fill="#fbbf24" stroke="#0f172a" strokeWidth="2" strokeLinejoin="round" />
-        <path d="M15 12C18 9 22 9 24 12" fill="#fbbf24" stroke="#0f172a" strokeWidth="1.5" />
-        <circle cx="11" cy="16" r="3" fill="#ffffff" stroke="#0f172a" strokeWidth="1.5" />
-        <circle cx="10" cy="16" r="1.5" fill="#000000" />
-      </svg>
-    )
-  },
-  {
-    id: "popcorn",
-    label: "Pipoca do Cinema CP",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Balde vermelho do Club Penguin */}
-        <path d="M10 17L12 32H24L26 17H10Z" fill="#dc2626" stroke="#7f1d1d" strokeWidth="2.2" strokeLinejoin="round" />
-        <path d="M14 17L15 32M18 17V32M22 17L21 32" stroke="#fef08a" strokeWidth="2" />
-        {/* Pipocas saindo do balde */}
-        <circle cx="13" cy="15" r="3.5" fill="#fef08a" stroke="#78350f" strokeWidth="1.5" />
-        <circle cx="18" cy="12" r="4.5" fill="#fef08a" stroke="#78350f" strokeWidth="1.5" />
-        <circle cx="23" cy="15" r="3.5" fill="#fef08a" stroke="#78350f" strokeWidth="1.5" />
-        <circle cx="18" cy="14" r="2" fill="#fde047" />
-      </svg>
-    )
-  },
-  {
-    id: "cake",
-    label: "Bolo de Aniversário CP",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Base azul do bolo */}
-        <rect x="7" y="19" width="22" height="12" rx="3" fill="#60a5fa" stroke="#1e3a8a" strokeWidth="2" />
-        {/* Cobertura branca ondulada */}
-        <path
-          d="M7 20C9 23 11 23 13 20C15 23 17 23 19 20C21 23 23 23 25 20C27 23 29 23 29 20V17H7V20Z"
-          fill="#ffffff"
-          stroke="#1e3a8a"
-          strokeWidth="1.5"
-        />
-        {/* 3 Velas vermelhas */}
-        <rect x="11" y="11" width="2.5" height="6" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-        <rect x="17" y="10" width="2.5" height="7" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-        <rect x="23" y="11" width="2.5" height="6" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-        {/* Chamas amarelas */}
-        <circle cx="12.2" cy="9" r="1.5" fill="#facc15" />
-        <circle cx="18.2" cy="8" r="1.8" fill="#facc15" />
-        <circle cx="24.2" cy="9" r="1.5" fill="#facc15" />
-      </svg>
-    )
-  },
-  {
-    id: "icecream",
-    label: "Sorvete de Casquinha CP",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <polygon points="18,33 11,20 25,20" fill="#d97706" stroke="#78350f" strokeWidth="2.2" strokeLinejoin="round" />
-        <line x1="14" y1="23" x2="21" y2="28" stroke="#92400e" strokeWidth="1" />
-        <path
-          d="M11 18C10 13 14 8 18 8C22 8 26 13 25 18C26 21 10 21 11 18Z"
-          fill="#f472b6"
-          stroke="#831843"
-          strokeWidth="2.2"
-        />
-        <circle cx="16" cy="12" r="1.5" fill="#ffffff" opacity="0.6" />
-      </svg>
-    )
-  },
-  {
-    id: "meat",
-    label: "Carne com Osso",
-    category: "food",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <line x1="7" y1="29" x2="29" y2="7" stroke="#f8fafc" strokeWidth="5" strokeLinecap="round" />
-        <circle cx="6" cy="27" r="2.5" fill="#f8fafc" stroke="#475569" strokeWidth="1.5" />
-        <circle cx="8" cy="30" r="2.5" fill="#f8fafc" stroke="#475569" strokeWidth="1.5" />
-        <circle cx="28" cy="6" r="2.5" fill="#f8fafc" stroke="#475569" strokeWidth="1.5" />
-        <circle cx="31" cy="9" r="2.5" fill="#f8fafc" stroke="#475569" strokeWidth="1.5" />
-        <ellipse cx="18" cy="18" rx="8" ry="6" fill="#b91c1c" stroke="#450a0a" strokeWidth="2.5" transform="rotate(-45 18 18)" />
-        <ellipse cx="16" cy="16" rx="4" ry="2" fill="#ef4444" opacity="0.8" transform="rotate(-45 16 16)" />
-      </svg>
-    )
-  },
-
-  // ==========================================
-  // 5. BEBIDAS
-  // ==========================================
-  {
-    id: "coffee",
-    label: "Café do Coffee Shop CP",
-    category: "drink",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        {/* Asa da caneca na direita (fiel ao emoticon do Club Penguin) */}
-        <path
-          d="M24 15C29 15 29 23 24 24"
-          fill="none"
-          stroke="#475569"
-          strokeWidth="3.5"
-          strokeLinecap="round"
-        />
-        {/* Corpo cerâmico da caneca cinza/branca */}
-        <rect x="7" y="12" width="18" height="17" rx="3" fill="#f1f5f9" stroke="#334155" strokeWidth="2.5" />
-        {/* Líquido de café escuro no topo */}
-        <ellipse cx="16" cy="13" rx="8" ry="3" fill="#451a03" stroke="#334155" strokeWidth="1.5" />
-      </svg>
-    )
-  },
-  {
-    id: "tea",
-    label: "Chá Quente de Ervas",
-    category: "drink",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M23 16C28 16 28 22 23 23"
-          fill="none"
-          stroke="#166534"
-          strokeWidth="3.2"
-          strokeLinecap="round"
-        />
-        <rect x="8" y="14" width="16" height="14" rx="3" fill="#bbf7d0" stroke="#166534" strokeWidth="2.2" />
-        <ellipse cx="16" cy="15" rx="7" ry="2.5" fill="#15803d" />
-        <path d="M14 9C13 7 16 6 15 4" stroke="#86efac" strokeWidth="1.5" strokeLinecap="round" />
-        <path d="M18 9C17 7 20 6 19 4" stroke="#86efac" strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
-    )
-  },
-
-  // ==========================================
-  // 6. POÇÕES & ALQUIMIA
-  // ==========================================
+  { id: "wand", label: "Varinha Mágica", category: "magic", render: renderWebp("wand.webp", "Varinha Mágica") },
+  { id: "shooting_star", label: "Estrela Cadente", category: "magic", render: renderWebp("shooting_star.webp", "Estrela Cadente") },
+  { id: "prehistoric_clock", label: "Relógio do Tempo Ancestral", category: "magic", render: renderWebp("prehistoric_clock.webp", "Relógio Ancestral") },
   {
     id: "potion_red",
     label: "Poção de Vida (Vermelha)",
-    category: "potions",
+    category: "magic",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <defs>
           <radialGradient id="cp_pot_red" cx="40%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#ff4d4d" />
+            <stop offset="0%" stopColor="#f87171" />
             <stop offset="65%" stopColor="#dc2626" />
             <stop offset="100%" stopColor="#7f1d1d" />
           </radialGradient>
@@ -893,7 +318,7 @@ export const CP_FLASH_ICONS = [
   {
     id: "potion_blue",
     label: "Elixir de Mana (Azul)",
-    category: "potions",
+    category: "magic",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <defs>
@@ -914,7 +339,7 @@ export const CP_FLASH_ICONS = [
   {
     id: "potion_green",
     label: "Poção de Alquimia (Verde)",
-    category: "potions",
+    category: "magic",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <polygon points="18,12 28,30 8,30" fill="#22c55e" stroke="#14532d" strokeWidth="2.5" strokeLinejoin="round" />
@@ -928,7 +353,7 @@ export const CP_FLASH_ICONS = [
   {
     id: "potion_purple",
     label: "Frasco Mágico Arcano (Roxo)",
-    category: "potions",
+    category: "magic",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <polygon points="18,12 27,20 18,30 9,20" fill="#a855f7" stroke="#581c87" strokeWidth="2.5" strokeLinejoin="round" />
@@ -940,76 +365,53 @@ export const CP_FLASH_ICONS = [
   },
 
   // ==========================================
-  // 7. FERRAMENTAS & ENGENHOCAS
+  // 4. COMIDAS & BEBIDAS (17 itens)
   // ==========================================
-  {
-    id: "pickaxe",
-    label: "Picareta da Mina",
-    category: "tools",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          {/* Cabo de madeira alinhado com o centro da cabeça da picareta */}
-          <rect x="16" y="5" width="4" height="28" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
-          {/* Cabeça curvada de ferro simétrica */}
-          <path
-            d="M4 16.5 C7.5 8.5 13 6.5 18 6.5 C23 6.5 28.5 8.5 32 16.5 C28 12.5 23 11 18 11 C13 11 8 12.5 4 16.5 Z"
-            fill="#64748b"
-            stroke="#0f172a"
-            strokeWidth="2.3"
-            strokeLinejoin="round"
-          />
-          {/* Brilho metálico superior na cabeça da picareta */}
-          <path
-            d="M7.5 12 C11 8.5 14.5 7.8 18 7.8 C21.5 7.8 25 8.5 28.5 12"
-            stroke="#cbd5e1"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-          {/* Encaixe central de aço */}
-          <rect x="15" y="5.8" width="6" height="6.2" rx="1.5" fill="#94a3b8" stroke="#0f172a" strokeWidth="2" />
-        </g>
-      </svg>
-    )
-  },
-  {
-    id: "spyphone",
-    label: "Spy Phone da EPF",
-    category: "tools",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <line x1="25" y1="12" x2="25" y2="4" stroke="#475569" strokeWidth="2.5" strokeLinecap="round" />
-        <circle cx="25" cy="4" r="2" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-        <rect x="8" y="11" width="20" height="22" rx="4" fill="#003566" stroke="#001833" strokeWidth="2.5" />
-        <rect x="11" y="14" width="14" height="11" rx="2" fill="#00f0ff" stroke="#004d66" strokeWidth="1.5" />
-        <circle cx="18" cy="28.5" r="2" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-      </svg>
-    )
-  },
-  {
-    id: "lightbulb",
-    label: "Lâmpada do Gary (Ideia)",
-    category: "tools",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <rect x="14" y="26" width="8" height="6" rx="1" fill="#94a3b8" stroke="#334155" strokeWidth="2" />
-        <ellipse cx="18" cy="32" rx="3" ry="1.5" fill="#334155" />
-        <path
-          d="M13 26C11 23 8 19 8 14C8 8.5 12.5 4 18 4C23.5 4 28 8.5 28 14C28 19 25 23 23 26H13Z"
-          fill="#fef08a"
-          stroke="#ca8a04"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M15 16C16 11 20 11 21 16" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
-        <ellipse cx="14" cy="11" rx="2" ry="3" fill="#ffffff" opacity="0.8" />
-      </svg>
-    )
-  },
+  { id: "pizza", label: "Fatia de Pizza", category: "food", render: renderWebp("pizza.webp", "Fatia de Pizza") },
+  { id: "cheese", label: "Pedaço de Queijo", category: "food", render: renderWebp("cheese.webp", "Pedaço de Queijo") },
+  { id: "meat", label: "Carne Assada", category: "food", render: renderWebp("meat.webp", "Carne Assada") },
+  { id: "soup", label: "Tigela de Sopa Quente", category: "food", render: renderWebp("soup.webp", "Tigela de Sopa") },
+  { id: "popcorn", label: "Saco de Pipoca", category: "food", render: renderWebp("popcorn.webp", "Pipoca") },
+  { id: "chopsticks", label: "Hashi / Comida Oriental", category: "food", render: renderWebp("chopsticks.webp", "Hashi") },
+  { id: "fortune_cookie", label: "Biscoito da Sorte", category: "food", render: renderWebp("fortune_cookie.webp", "Biscoito da Sorte") },
+  { id: "cake", label: "Fatia de Bolo", category: "food", render: renderWebp("cake.webp", "Fatia de Bolo") },
+  { id: "ice_cream", label: "Sorvete de Baunilha", category: "food", render: renderWebp("ice_cream.webp", "Sorvete de Baunilha") },
+  { id: "ice_cream_chocolate", label: "Sorvete de Chocolate", category: "food", render: renderWebp("ice_cream_chocolate.webp", "Sorvete de Chocolate") },
+  { id: "cookie", label: "Cookie com Gotas de Chocolate", category: "food", render: renderWebp("cookie.webp", "Cookie") },
+  { id: "candy", label: "Bala Doce", category: "food", render: renderWebp("candy.webp", "Bala Doce") },
+  { id: "apple", label: "Maçã Vermelha", category: "food", render: renderWebp("apple.webp", "Maçã") },
+  { id: "oberry", label: "Pufito / O'Berry Silvestre", category: "food", render: renderWebp("oberry.webp", "Pufito") },
+  { id: "prehistoric_oberry", label: "Pufito Pré-histórico", category: "food", render: renderWebp("prehistoric_oberry.webp", "Pufito Pré-histórico") },
+  { id: "coffee", label: "Caneca de Café", category: "food", render: renderWebp("coffee.webp", "Café") },
+  { id: "teapot", label: "Bule de Chá", category: "food", render: renderWebp("teapot.webp", "Bule de Chá") },
+
+  // ==========================================
+  // 5. CRIATURAS, PUFFLES & MONSTROS (13 itens)
+  // ==========================================
+  { id: "fluffy_fish", label: "Peixe Fluffy Amarelo", category: "creatures", render: renderWebp("fluffy_fish.webp", "Peixe Fluffy") },
+  { id: "blue_puffle", label: "Puffle Azul", category: "creatures", render: renderWebp("blue_puffle.webp", "Puffle Azul") },
+  { id: "rainbow_puffle", label: "Puffle Arco-íris", category: "creatures", render: renderWebp("rainbow_puffle.webp", "Puffle Arco-íris") },
+  { id: "cat_yarn", label: "Novelo de Lã para Felinos", category: "creatures", render: renderWebp("cat_yarn.webp", "Novelo de Lã") },
+  { id: "dog_bone", label: "Osso de Cachorro", category: "creatures", render: renderWebp("dog_bone.webp", "Osso de Cachorro") },
+  { id: "paw_print", label: "Pegada Animal", category: "creatures", render: renderWebp("paw_print.webp", "Pegada Animal") },
+  { id: "ghost", label: "Fantasma", category: "creatures", render: renderWebp("ghost.webp", "Fantasma") },
+  { id: "bat", label: "Morcego das Sombras", category: "creatures", render: renderWebp("bat.webp", "Morcego") },
+  { id: "pumpkin", label: "Abóbora de Halloween", category: "creatures", render: renderWebp("pumpkin.webp", "Abóbora") },
+  { id: "ogre", label: "Criatura Ogro Verde", category: "creatures", render: renderWebp("ogre.webp", "Ogro") },
+  { id: "vampire", label: "Vampiro Noturno", category: "creatures", render: renderWebp("vampire.webp", "Vampiro") },
+  { id: "cyclops_monster", label: "Monstro Ciclope", category: "creatures", render: renderWebp("cyclops_monster.webp", "Monstro Ciclope") },
+  { id: "pirate", label: "Crânio Pirata", category: "creatures", render: renderWebp("pirate.webp", "Crânio Pirata") },
+
+  // ==========================================
+  // 6. TESOUROS, ITENS & AVENTURA (11 itens)
+  // ==========================================
+  { id: "coin", label: "Moeda do Club Penguin", category: "treasure", render: renderWebp("coin.webp", "Moeda do Club Penguin") },
+  { id: "money_bag", label: "Saco de Moedas", category: "treasure", render: renderWebp("money_bag.webp", "Saco de Moedas") },
+  { id: "treasure_chest", label: "Baú de Tesouro", category: "treasure", render: renderWebp("treasure_chest.webp", "Baú de Tesouro") },
   {
     id: "key",
     label: "Chave Secreta de Ouro",
-    category: "tools",
+    category: "treasure",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <circle cx="12" cy="12" r="7" fill="#facc15" stroke="#713f12" strokeWidth="2.5" />
@@ -1022,9 +424,35 @@ export const CP_FLASH_ICONS = [
     )
   },
   {
+    id: "pickaxe",
+    label: "Picareta da Mina",
+    category: "treasure",
+    render: (size = 36) => (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+        <g transform="rotate(45 18 18)">
+          <rect x="16" y="5" width="4" height="28" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
+          <path
+            d="M4 16.5 C7.5 8.5 13 6.5 18 6.5 C23 6.5 28.5 8.5 32 16.5 C28 12.5 23 11 18 11 C13 11 8 12.5 4 16.5 Z"
+            fill="#64748b"
+            stroke="#0f172a"
+            strokeWidth="2.3"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M7.5 12 C11 8.5 14.5 7.8 18 7.8 C21.5 7.8 25 8.5 28.5 12"
+            stroke="#cbd5e1"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+          <rect x="15" y="5.8" width="6" height="6.2" rx="1.5" fill="#94a3b8" stroke="#0f172a" strokeWidth="2" />
+        </g>
+      </svg>
+    )
+  },
+  {
     id: "magnifier",
     label: "Lupa de Detetive",
-    category: "tools",
+    category: "treasure",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
         <circle cx="15" cy="15" r="9.5" fill="#e0f2fe" stroke="#334155" strokeWidth="2.5" />
@@ -1034,35 +462,9 @@ export const CP_FLASH_ICONS = [
       </svg>
     )
   },
-
-  // ==========================================
-  // 8. JÓIAS, TESOUROS & SÍMBOLOS CP
-  // ==========================================
-  {
-    id: "coin",
-    label: "Moeda de Ouro CP",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_coin_flash" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#fff3a8" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#ca8a04" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14" fill="url(#cp_coin_flash)" stroke="#713f12" strokeWidth="2.5" />
-        <circle cx="18" cy="18" r="11" fill="none" stroke="#eab308" strokeWidth="1.5" strokeDasharray="3 1.5" />
-        <path
-          d="M18 10L19.5 14.5H24L20.5 17.5L22 22L18 19L14 22L15.5 17.5L12 14.5H16.5L18 10Z"
-          fill="#854d0e"
-        />
-      </svg>
-    )
-  },
   {
     id: "gem",
-    label: "Diamante Azul Brilhante",
+    label: "Esmeralda Mística",
     category: "treasure",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
@@ -1089,7 +491,7 @@ export const CP_FLASH_ICONS = [
   },
   {
     id: "ruby",
-    label: "Rubi Carmesim",
+    label: "Rubi Carmesim Brilhante",
     category: "treasure",
     render: (size = 36) => (
       <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
@@ -1108,128 +510,346 @@ export const CP_FLASH_ICONS = [
       </svg>
     )
   },
-  {
-    id: "heart",
-    label: "Coração Vermelho CP",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_heart_flash" cx="30%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#ff4d4d" />
-            <stop offset="60%" stopColor="#dc2626" />
-            <stop offset="100%" stopColor="#7f1d1d" />
-          </radialGradient>
-        </defs>
-        <path
-          d="M18 31C18 31 5 22 5 13C5 7 10 4 15 7C17 8 18 10 18 10C18 10 19 8 21 7C26 4 31 7 31 13C31 22 18 31 18 31Z"
-          fill="url(#cp_heart_flash)"
-          stroke="#450a0a"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <ellipse cx="11" cy="11" rx="3.5" ry="2" fill="#ffffff" opacity="0.7" transform="rotate(-30 11 11)" />
-      </svg>
-    )
-  },
-  {
-    id: "clover",
-    label: "Trevo de 4 Folhas da Sorte",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path d="M18 18C16 26 12 30 7 31" stroke="#166534" strokeWidth="3" strokeLinecap="round" />
-        <circle cx="18" cy="10" r="6" fill="#22c55e" stroke="#14532d" strokeWidth="2" />
-        <circle cx="18" cy="22" r="6" fill="#15803d" stroke="#14532d" strokeWidth="2" />
-        <circle cx="12" cy="16" r="6" fill="#16a34a" stroke="#14532d" strokeWidth="2" />
-        <circle cx="24" cy="16" r="6" fill="#16a34a" stroke="#14532d" strokeWidth="2" />
-      </svg>
-    )
-  },
-  {
-    id: "flower",
-    label: "Flor Dourada do Club Penguin",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path d="M26 21C20 23 15 28 10 32" stroke="#14532d" strokeWidth="3.5" strokeLinecap="round" />
-        <path d="M12 28C8 26 6 29 10 32C14 30 15 27 12 28Z" fill="#22c55e" stroke="#14532d" strokeWidth="1.5" />
-        <circle cx="26" cy="11" r="5" fill="#facc15" stroke="#713f12" strokeWidth="2" />
-        <circle cx="31" cy="16" r="5" fill="#facc15" stroke="#713f12" strokeWidth="2" />
-        <circle cx="29" cy="23" r="5" fill="#facc15" stroke="#713f12" strokeWidth="2" />
-        <circle cx="21" cy="21" r="5" fill="#facc15" stroke="#713f12" strokeWidth="2" />
-        <circle cx="19" cy="14" r="5" fill="#facc15" stroke="#713f12" strokeWidth="2" />
-        <circle cx="25" cy="17" r="3.5" fill="#ffffff" stroke="#713f12" strokeWidth="2" />
-      </svg>
-    )
-  }
+  { id: "campfire", label: "Fogueira de Acampamento", category: "treasure", render: renderWebp("campfire.webp", "Fogueira") },
+  { id: "camera", label: "Câmera Fotográfica", category: "treasure", render: renderWebp("camera.webp", "Câmera") },
+  { id: "gift", label: "Caixa de Presente", category: "treasure", render: renderWebp("gift.webp", "Presente") },
+
+  // ==========================================
+  // 7. ATIVIDADES, ESPORTES & MÍDIA (10 itens)
+  // ==========================================
+  { id: "beach_ball", label: "Bola de Praia", category: "activities", render: renderWebp("beach_ball.webp", "Bola de Praia") },
+  { id: "surfboard", label: "Prancha de Surfe", category: "activities", render: renderWebp("surfboard.webp", "Prancha de Surfe") },
+  { id: "whistle", label: "Apito de Juiz", category: "activities", render: renderWebp("whistle.webp", "Apito de Juiz") },
+  { id: "red_card", label: "Cartão Vermelho", category: "activities", render: renderWebp("red_card.webp", "Cartão Vermelho") },
+  { id: "yellow_card", label: "Cartão Amarelo", category: "activities", render: renderWebp("yellow_card.webp", "Cartão Amarelo") },
+  { id: "foam_finger", label: "Mãozinha de Torcida", category: "activities", render: renderWebp("foam_finger.webp", "Mãozinha de Torcida") },
+  { id: "joystick", label: "Controle de Arcade", category: "activities", render: renderWebp("joystick.webp", "Controle de Arcade") },
+  { id: "movie_clapper", label: "Claquete de Cinema", category: "activities", render: renderWebp("movie_clapper.webp", "Claquete de Cinema") },
+  { id: "music_note", label: "Nota Musical", category: "activities", render: renderWebp("music_note.webp", "Nota Musical") },
+  { id: "music_notes", label: "Notas Musicais", category: "activities", render: renderWebp("music_notes.webp", "Notas Musicais") },
+
+  // ==========================================
+  // 8. SÍMBOLOS, EPF & UTILIDADES (15 itens)
+  // ==========================================
+  { id: "epf_badge", label: "Distintivo Secreto EPF", category: "symbols", render: renderWebp("epf_badge.webp", "Distintivo EPF") },
+  { id: "epf_sunglasses", label: "Óculos de Espião EPF", category: "symbols", render: renderWebp("epf_sunglasses.webp", "Óculos EPF") },
+  { id: "police_badge", label: "Distintivo Policial", category: "symbols", render: renderWebp("police_badge.webp", "Distintivo Policial") },
+  { id: "police_siren", label: "Giroflex Policial", category: "symbols", render: renderWebp("police_siren.webp", "Giroflex Policial") },
+  { id: "alert_beacon", label: "Sinalizador de Emergência", category: "symbols", render: renderWebp("alert_beacon.webp", "Sinalizador de Emergência") },
+  { id: "heart", label: "Coração Vermelho", category: "symbols", render: renderWebp("heart.webp", "Coração Vermelho") },
+  { id: "flower", label: "Flor Margarida", category: "symbols", render: renderWebp("flower.webp", "Flor Margarida") },
+  { id: "clover", label: "Trevo de Quatro Folhas", category: "symbols", render: renderWebp("clover.webp", "Trevo da Sorte") },
+  { id: "sun", label: "Sol Radiante", category: "symbols", render: renderWebp("sun.webp", "Sol") },
+  { id: "moon", label: "Lua Crescente", category: "symbols", render: renderWebp("moon.webp", "Lua") },
+  { id: "rainbow", label: "Arco-íris Colorido", category: "symbols", render: renderWebp("rainbow.webp", "Arco-íris") },
+  { id: "igloo", label: "Iglu de Gelo", category: "symbols", render: renderWebp("igloo.webp", "Iglu") },
+  { id: "lightbulb", label: "Lâmpada de Ideia do Gary", category: "symbols", render: renderWebp("lightbulb.webp", "Lâmpada do Gary") },
+  { id: "exclamation", label: "Ponto de Exclamação", category: "symbols", render: renderWebp("exclamation.webp", "Ponto de Exclamação") },
+  { id: "question", label: "Ponto de Interrogação", category: "symbols", render: renderWebp("question.webp", "Ponto de Interrogação") }
 ];
 
 /**
- * Mapeia IDs ou emojis legados para o componente vetorial Flash correspondente.
+ * Tabela de retrocompatibilidade para mapear IDs antigos e emojis
+ * diretamente para os novos identificadores oficiais.
+ */
+const LEGACY_ALIASES = {
+  emote_grin: "grin",
+  emote_smile: "smile",
+  emote_neutral: "neutral",
+  emote_sad: "sad",
+  emote_wink: "wink",
+  emote_surprised: "surprised",
+  emote_tongue: "tongue",
+  emote_sick: "sick",
+  emote_angry: "angry",
+  emote_worried: "worried",
+  emote_skeptical: "skeptical",
+  helmet: "skate_helmet",
+  spyphone: "epf_badge",
+  fish: "fluffy_fish",
+  peixe: "fluffy_fish",
+  inv_peixe: "fluffy_fish",
+  "peixe fresco": "fluffy_fish",
+  icecream: "ice_cream",
+  tea: "teapot",
+  // Emojis UTF-8 comuns
+  "😀": "grin",
+  "😃": "grin",
+  "😄": "grin",
+  "😁": "grin",
+  "🙂": "smile",
+  "😊": "smile",
+  "😐": "neutral",
+  "😑": "neutral",
+  "🙁": "sad",
+  "😢": "sad",
+  "😭": "sad",
+  "😉": "wink",
+  "😜": "tongue",
+  "😛": "tongue",
+  "😮": "surprised",
+  "😲": "surprised",
+  "🤢": "sick",
+  "🤮": "sick",
+  "😡": "angry",
+  "😠": "angry",
+  "😟": "worried",
+  "😨": "worried",
+  "😏": "skeptical",
+  "😒": "skeptical",
+  "😎": "cool_sunglasses",
+  "🕶️": "cool_sunglasses",
+  "🥶": "freezing",
+  "🤓": "nerd",
+  "🥺": "cute_eyes",
+  "🤡": "clown",
+  "🎮": "joystick",
+  "🕹️": "joystick",
+  "⚔️": "sword",
+  "🗡️": "dagger",
+  "🏹": "bow",
+  "🪓": "axe",
+  "🔨": "prehistoric_hammer",
+  "🪵": "prehistoric_club",
+  "💥": "pow_explosion",
+  "💣": "bomb",
+  "❄️": "snowball",
+  "🛡️": "shield",
+  "🪖": "skate_helmet",
+  "🥋": "ninja_headband",
+  "👑": "crown",
+  "🦸": "cape",
+  "🪄": "wand",
+  "⭐": "shooting_star",
+  "✨": "shooting_star",
+  "⏰": "prehistoric_clock",
+  "🍷": "potion_red",
+  "🧪": "potion_green",
+  "💧": "potion_blue",
+  "🟣": "potion_purple",
+  "🍕": "pizza",
+  "🧀": "cheese",
+  "🍖": "meat",
+  "🥩": "meat",
+  "🍲": "soup",
+  "🥣": "soup",
+  "🍿": "popcorn",
+  "🥢": "chopsticks",
+  "🥠": "fortune_cookie",
+  "🎂": "cake",
+  "🍰": "cake",
+  "🍦": "ice_cream",
+  "🍫": "ice_cream_chocolate",
+  "🍪": "cookie",
+  "🍬": "candy",
+  "🍭": "candy",
+  "🍎": "apple",
+  "☕": "coffee",
+  "🫖": "teapot",
+  "🍵": "teapot",
+  "🐟": "fluffy_fish",
+  "🎣": "fluffy_fish",
+  "🧶": "cat_yarn",
+  "🦴": "dog_bone",
+  "🐾": "paw_print",
+  "👻": "ghost",
+  "🦇": "bat",
+  "🎃": "pumpkin",
+  "🧟": "ogre",
+  "🧛": "vampire",
+  "👁️": "cyclops_monster",
+  "💀": "pirate",
+  "🪙": "coin",
+  "💰": "money_bag",
+  "💎": "gem",
+  "🎁": "gift",
+  "🏕️": "campfire",
+  "🔥": "campfire",
+  "📷": "camera",
+  "🔑": "key",
+  "⛏️": "pickaxe",
+  "🔍": "magnifier",
+  "⚽": "beach_ball",
+  "🏄": "surfboard",
+  "📢": "whistle",
+  "📣": "foam_finger",
+  "🎬": "movie_clapper",
+  "🎵": "music_note",
+  "🎶": "music_notes",
+  "🚨": "police_siren",
+  "🚔": "police_badge",
+  "❤️": "heart",
+  "🌼": "flower",
+  "🌸": "flower",
+  "🍀": "clover",
+  "☘️": "clover",
+  "☀️": "sun",
+  "🌙": "moon",
+  "🌈": "rainbow",
+  "💡": "lightbulb",
+  "❗": "exclamation",
+  "❓": "question"
+};
+
+/**
+ * Mapeia IDs ou emojis legados para o componente correspondente (WebP ou SVG).
  */
 export function renderCpFlashIcon(iconOrId, size = 36) {
   if (!iconOrId) {
     return CP_FLASH_ICONS[0].render(size);
   }
 
-  // Se já for um ID direto de ícone Flash
+  // Se receber um objeto (item ou rolagem completa)
+  if (typeof iconOrId === "object" && iconOrId !== null) {
+    const name = (iconOrId.name || iconOrId.title || "").toLowerCase();
+    const id = (iconOrId.id || "").toLowerCase();
+    const icon = (iconOrId.icon || "").toLowerCase();
+    if (
+      name.includes("peixe") ||
+      name.includes("fish") ||
+      name.includes("fluffy") ||
+      id.includes("peixe")
+    ) {
+      if (!icon || icon === "meat" || icon === "carne" || icon === "fish") {
+        const fluffy = CP_FLASH_ICONS.find((i) => i.id === "fluffy_fish");
+        if (fluffy) return fluffy.render(size);
+      }
+    }
+    return renderCpFlashIcon(iconOrId.icon || iconOrId.name || "sword", size);
+  }
+
+  // 1. Se for peixe / fluffy no texto ou ID
+  const sRaw = String(iconOrId).trim();
+  const s = sRaw.toLowerCase();
+  if (
+    s === "peixe" ||
+    s === "peixe fresco" ||
+    s === "inv_peixe" ||
+    s === "fish" ||
+    s.includes("peixe") ||
+    s.includes("fluffy")
+  ) {
+    const fluffy = CP_FLASH_ICONS.find((i) => i.id === "fluffy_fish");
+    if (fluffy) return fluffy.render(size);
+  }
+
+  // 2. Se já for um ID direto de ícone existente
   const foundById = CP_FLASH_ICONS.find((i) => i.id === iconOrId);
   if (foundById) {
     return foundById.render(size);
   }
 
-  // Mapeamento de emojis e palavras-chave legadas para os ícones Flash
-  const s = String(iconOrId).toLowerCase();
+  // 3. Tabela direta de retrocompatibilidade
+  const aliasId = LEGACY_ALIASES[iconOrId] || LEGACY_ALIASES[s];
+  if (aliasId) {
+    const foundAlias = CP_FLASH_ICONS.find((i) => i.id === aliasId);
+    if (foundAlias) {
+      return foundAlias.render(size);
+    }
+  }
+
+  // 4. Mapeamento heurístico por texto / palavra-chave
   let matchId = "sword";
 
-  if (s.includes("grin") || s.includes("😀") || s.includes("😃") || s.includes("😄") || s.includes("dente")) matchId = "emote_grin";
-  else if (s.includes("smile") || s.includes("🙂") || s.includes("feliz") || s.includes("sorriso") || s.includes("😊")) matchId = "emote_smile";
-  else if (s.includes("neutro") || s.includes("😐") || s.includes("straight")) matchId = "emote_neutral";
-  else if (s.includes("triste") || s.includes("🙁") || s.includes("sad") || s.includes("choro") || s.includes("😢")) matchId = "emote_sad";
-  else if (s.includes("pisca") || s.includes("wink") || s.includes("😉")) matchId = "emote_wink";
-  else if (s.includes("surpres") || s.includes("gasp") || s.includes("😮") || s.includes("shock")) matchId = "emote_surprised";
-  else if (s.includes("lingua") || s.includes("língua") || s.includes("tongue") || s.includes("😛") || s.includes("😜")) matchId = "emote_tongue";
-  else if (s.includes("sick") || s.includes("enjoo") || s.includes("verde") || s.includes("🤢") || s.includes("vomit")) matchId = "emote_sick";
-  else if (s.includes("angry") || s.includes("bravo") || s.includes("raiva") || s.includes("😡") || s.includes("irritado")) matchId = "emote_angry";
-  else if (s.includes("worried") || s.includes("preocupado") || s.includes("medo") || s.includes("😟")) matchId = "emote_worried";
-  else if (s.includes("skep") || s.includes("cético") || s.includes("desconfiado") || s.includes("😏") || s.includes("😒")) matchId = "emote_skeptical";
-  else if (s.includes("joystick") || s.includes("gamepad") || s.includes("arcade") || s.includes("jogo") || s.includes("🕹️")) matchId = "joystick";
-  else if (s.includes("pizza") || s.includes("🍕")) matchId = "pizza";
-  else if (s.includes("cafe") || s.includes("café") || s.includes("☕") || s.includes("caneca") || s.includes("copo")) matchId = "coffee";
-  else if (s.includes("cha") || s.includes("chá") || s.includes("🍵")) matchId = "tea";
-  else if (s.includes("peixe") || s.includes("🐟") || s.includes("fish")) matchId = "fish";
-  else if (s.includes("pipoca") || s.includes("🍿") || s.includes("popcorn")) matchId = "popcorn";
-  else if (s.includes("bolo") || s.includes("🎂") || s.includes("cake")) matchId = "cake";
-  else if (s.includes("sorvete") || s.includes("🍦") || s.includes("icecream")) matchId = "icecream";
-  else if (s.includes("carne") || s.includes("🍖") || s.includes("meat")) matchId = "meat";
-  else if (s.includes("bomba") || s.includes("💣") || s.includes("bomb")) matchId = "bomb";
-  else if (s.includes("neve") || s.includes("❄️") || s.includes("gelo") || s.includes("snowball")) matchId = "snowball";
-  else if (s.includes("kunai") || s.includes("adaga") || s.includes("🗡️")) matchId = "dagger";
-  else if (s.includes("arco") || s.includes("🏹") || s.includes("flecha")) matchId = "bow";
-  else if (s.includes("machado") || s.includes("🪓") || s.includes("axe")) matchId = "axe";
-  else if (s.includes("varinha") || s.includes("🪄") || s.includes("cajado") || s.includes("wand")) matchId = "wand";
-  else if (s.includes("escudo") || s.includes("🛡️") || s.includes("protecao") || s.includes("shield")) matchId = "shield";
-  else if (s.includes("capacete") || s.includes("🪖") || s.includes("miner") || s.includes("helmet")) matchId = "helmet";
-  else if (s.includes("faixa") || s.includes("ninja") || s.includes("headband") || s.includes("🥋")) matchId = "ninja_headband";
-  else if (s.includes("coroa") || s.includes("crown") || s.includes("👑")) matchId = "crown";
+  if (s.includes("peixe") || s.includes("fluffy") || s.includes("fish")) matchId = "fluffy_fish";
+  else if (s.includes("grin") || s.includes("dente")) matchId = "grin";
+  else if (s.includes("smile") || s.includes("feliz") || s.includes("sorriso")) matchId = "smile";
+  else if (s.includes("neutro") || s.includes("straight")) matchId = "neutral";
+  else if (s.includes("triste") || s.includes("sad") || s.includes("choro")) matchId = "sad";
+  else if (s.includes("pisca") || s.includes("wink")) matchId = "wink";
+  else if (s.includes("surpres") || s.includes("gasp") || s.includes("shock")) matchId = "surprised";
+  else if (s.includes("lingua") || s.includes("língua") || s.includes("tongue")) matchId = "tongue";
+  else if (s.includes("sick") || s.includes("enjoo") || s.includes("vomit")) matchId = "sick";
+  else if (s.includes("angry") || s.includes("bravo") || s.includes("raiva") || s.includes("irritado")) matchId = "angry";
+  else if (s.includes("worried") || s.includes("preocupado") || s.includes("medo")) matchId = "worried";
+  else if (s.includes("skep") || s.includes("cético") || s.includes("desconfiado")) matchId = "skeptical";
+  else if (s.includes("oculos") || s.includes("óculos") || s.includes("cool")) matchId = "cool_sunglasses";
+  else if (s.includes("congel") || s.includes("frio") || s.includes("freez")) matchId = "freezing";
+  else if (s.includes("mono") || s.includes("unibrow")) matchId = "unibrow";
+  else if (s.includes("nerd") || s.includes("geek")) matchId = "nerd";
+  else if (s.includes("fofo") || s.includes("cute")) matchId = "cute_eyes";
+  else if (s.includes("palhac") || s.includes("palhaç") || s.includes("clown")) matchId = "clown";
+  else if (s.includes("8bit") || s.includes("pixel")) matchId = "8bit_smile";
+  else if (s.includes("woohoo") || s.includes("festa")) matchId = "penguin_woohoo";
+  else if (s.includes("joystick") || s.includes("gamepad") || s.includes("arcade") || s.includes("jogo")) matchId = "joystick";
+  else if (s.includes("pizza")) matchId = "pizza";
+  else if (s.includes("queijo") || s.includes("cheese")) matchId = "cheese";
+  else if (s.includes("carne") || s.includes("meat")) matchId = "meat";
+  else if (s.includes("sopa") || s.includes("soup")) matchId = "soup";
+  else if (s.includes("pipoca") || s.includes("popcorn")) matchId = "popcorn";
+  else if (s.includes("hashi") || s.includes("chopstick")) matchId = "chopsticks";
+  else if (s.includes("sorte") || s.includes("fortune")) matchId = "fortune_cookie";
+  else if (s.includes("bolo") || s.includes("cake")) matchId = "cake";
+  else if (s.includes("chocolate")) matchId = "ice_cream_chocolate";
+  else if (s.includes("sorvete") || s.includes("icecream") || s.includes("ice_cream")) matchId = "ice_cream";
+  else if (s.includes("cookie") || s.includes("biscoito")) matchId = "cookie";
+  else if (s.includes("doce") || s.includes("bala") || s.includes("candy")) matchId = "candy";
+  else if (s.includes("maca") || s.includes("maçã") || s.includes("apple")) matchId = "apple";
+  else if (s.includes("oberry") || s.includes("pufito")) matchId = "oberry";
+  else if (s.includes("cafe") || s.includes("café") || s.includes("caneca")) matchId = "coffee";
+  else if (s.includes("cha") || s.includes("chá") || s.includes("bule") || s.includes("teapot") || s.includes("tea")) matchId = "teapot";
+  else if (s.includes("arco-iris") || s.includes("arco-íris") || s.includes("rainbow")) matchId = "rainbow";
+  else if (s.includes("puffle") || s.includes("pet")) matchId = "blue_puffle";
+  else if (s.includes("gato") || s.includes("novelo") || s.includes("yarn")) matchId = "cat_yarn";
+  else if (s.includes("osso") || s.includes("cachorro") || s.includes("bone")) matchId = "dog_bone";
+  else if (s.includes("pata") || s.includes("pegada") || s.includes("paw")) matchId = "paw_print";
+  else if (s.includes("fantasma") || s.includes("ghost")) matchId = "ghost";
+  else if (s.includes("morcego") || s.includes("bat")) matchId = "bat";
+  else if (s.includes("abobora") || s.includes("abóbora") || s.includes("pumpkin")) matchId = "pumpkin";
+  else if (s.includes("ogro") || s.includes("ogre")) matchId = "ogre";
+  else if (s.includes("vampiro") || s.includes("vampire")) matchId = "vampire";
+  else if (s.includes("ciclope") || s.includes("cyclops")) matchId = "cyclops_monster";
+  else if (s.includes("caveira") || s.includes("pirata") || s.includes("pirate")) matchId = "pirate";
+  else if (s.includes("moeda") || s.includes("coin") || s.includes("ouro")) matchId = "coin";
+  else if (s.includes("saco") || s.includes("money")) matchId = "money_bag";
+  else if (s.includes("bau") || s.includes("baú") || s.includes("chest")) matchId = "treasure_chest";
+  else if (s.includes("fogueira") || s.includes("fogo") || s.includes("campfire")) matchId = "campfire";
+  else if (s.includes("camera") || s.includes("câmera") || s.includes("foto")) matchId = "camera";
+  else if (s.includes("presente") || s.includes("gift")) matchId = "gift";
+  else if (s.includes("bomba") || s.includes("bomb")) matchId = "bomb";
+  else if (s.includes("neve") || s.includes("gelo") || s.includes("snowball")) matchId = "snowball";
+  else if (s.includes("kunai") || s.includes("adaga") || s.includes("dagger")) matchId = "dagger";
+  else if (s.includes("arco") || s.includes("flecha") || s.includes("bow")) matchId = "bow";
+  else if (s.includes("machado") || s.includes("axe")) matchId = "axe";
+  else if (s.includes("varinha") || s.includes("cajado") || s.includes("wand")) matchId = "wand";
+  else if (s.includes("estrela") || s.includes("star")) matchId = "shooting_star";
+  else if (s.includes("relogio") || s.includes("relógio") || s.includes("clock")) matchId = "prehistoric_clock";
+  else if (s.includes("escudo") || s.includes("protecao") || s.includes("shield")) matchId = "shield";
+  else if (s.includes("capacete") || s.includes("helmet")) matchId = "skate_helmet";
+  else if (s.includes("faixa") || s.includes("ninja") || s.includes("headband")) matchId = "ninja_headband";
+  else if (s.includes("coroa") || s.includes("crown")) matchId = "crown";
   else if (s.includes("capa") || s.includes("cape") || s.includes("manto")) matchId = "cape";
-  else if (s.includes("cura") || s.includes("vida") || s.includes("🍷") || s.includes("pot_red")) matchId = "potion_red";
-  else if (s.includes("mana") || s.includes("energia") || s.includes("💧") || s.includes("pot_blue")) matchId = "potion_blue";
-  else if (s.includes("pocao") || s.includes("poção") || s.includes("🧪") || s.includes("alquimia")) matchId = "potion_green";
+  else if (s.includes("cura") || s.includes("vida") || s.includes("pot_red")) matchId = "potion_red";
+  else if (s.includes("mana") || s.includes("energia") || s.includes("pot_blue")) matchId = "potion_blue";
+  else if (s.includes("pocao") || s.includes("poção") || s.includes("alquimia")) matchId = "potion_green";
   else if (s.includes("arcano") || s.includes("purp") || s.includes("roxa") || s.includes("elixir")) matchId = "potion_purple";
-  else if (s.includes("picareta") || s.includes("⛏️") || s.includes("mina") || s.includes("pickaxe")) matchId = "pickaxe";
-  else if (s.includes("spy") || s.includes("phone") || s.includes("📱") || s.includes("epf")) matchId = "spyphone";
-  else if (s.includes("lampada") || s.includes("lâmpada") || s.includes("💡") || s.includes("gary") || s.includes("ideia")) matchId = "lightbulb";
-  else if (s.includes("chave") || s.includes("key") || s.includes("🔑")) matchId = "key";
-  else if (s.includes("lupa") || s.includes("detetive") || s.includes("🔍") || s.includes("investig")) matchId = "magnifier";
-  else if (s.includes("moeda") || s.includes("coin") || s.includes("ouro") || s.includes("🪙")) matchId = "coin";
-  else if (s.includes("diamante") || s.includes("gem") || s.includes("💎")) matchId = "gem";
-  else if (s.includes("rubi") || s.includes("ruby") || s.includes("vermelha")) matchId = "ruby";
-  else if (s.includes("coracao") || s.includes("coração") || s.includes("heart") || s.includes("❤️")) matchId = "heart";
-  else if (s.includes("trevo") || s.includes("clover") || s.includes("☘️") || s.includes("🍀")) matchId = "clover";
-  else if (s.includes("flor") || s.includes("flower") || s.includes("🌸") || s.includes("🌼")) matchId = "flower";
-  else if (s.includes("espada") || s.includes("⚔️") || s.includes("sword") || s.includes("arma")) matchId = "sword";
+  else if (s.includes("picareta") || s.includes("mina") || s.includes("pickaxe")) matchId = "pickaxe";
+  else if (s.includes("spy") || s.includes("phone") || s.includes("epf")) matchId = "epf_badge";
+  else if (s.includes("policia") || s.includes("polícia") || s.includes("badge")) matchId = "police_badge";
+  else if (s.includes("sirene") || s.includes("giroflex") || s.includes("siren")) matchId = "police_siren";
+  else if (s.includes("alerta") || s.includes("beacon")) matchId = "alert_beacon";
+  else if (s.includes("lampada") || s.includes("lâmpada") || s.includes("gary") || s.includes("ideia") || s.includes("lightbulb")) matchId = "lightbulb";
+  else if (s.includes("chave") || s.includes("key")) matchId = "key";
+  else if (s.includes("lupa") || s.includes("detetive") || s.includes("investig") || s.includes("magnifier")) matchId = "magnifier";
+  else if (s.includes("diamante") || s.includes("esmeralda") || s.includes("gem")) matchId = "gem";
+  else if (s.includes("rubi") || s.includes("ruby")) matchId = "ruby";
+  else if (s.includes("praia") || s.includes("beach")) matchId = "beach_ball";
+  else if (s.includes("surfe") || s.includes("surf")) matchId = "surfboard";
+  else if (s.includes("apito") || s.includes("whistle")) matchId = "whistle";
+  else if (s.includes("vermelho") && s.includes("cartao")) matchId = "red_card";
+  else if (s.includes("amarelo") && s.includes("cartao")) matchId = "yellow_card";
+  else if (s.includes("torcida") || s.includes("dedo") || s.includes("foam")) matchId = "foam_finger";
+  else if (s.includes("filme") || s.includes("cinema") || s.includes("claquete")) matchId = "movie_clapper";
+  else if (s.includes("musica") || s.includes("música") || s.includes("nota") || s.includes("som")) matchId = "music_note";
+  else if (s.includes("coracao") || s.includes("coração") || s.includes("heart")) matchId = "heart";
+  else if (s.includes("trevo") || s.includes("clover")) matchId = "clover";
+  else if (s.includes("flor") || s.includes("flower")) matchId = "flower";
+  else if (s.includes("sol") || s.includes("sun")) matchId = "sun";
+  else if (s.includes("lua") || s.includes("moon")) matchId = "moon";
+  else if (s.includes("iglu") || s.includes("igloo")) matchId = "igloo";
+  else if (s.includes("exclamacao") || s.includes("exclamação") || s.includes("!")) matchId = "exclamation";
+  else if (s.includes("interrogacao") || s.includes("interrogação") || s.includes("?")) matchId = "question";
+  else if (s.includes("espada") || s.includes("sword") || s.includes("arma")) matchId = "sword";
 
   const target = CP_FLASH_ICONS.find((i) => i.id === matchId) || CP_FLASH_ICONS[0];
   return target.render(size);

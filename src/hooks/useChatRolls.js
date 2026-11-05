@@ -58,6 +58,51 @@ export function useChatRolls() {
     return ["ALL"];
   };
 
+  const sendEmoteMessage = async ({
+    icon,
+    senderName,
+    senderPhotoURL = null,
+    characterId = null,
+    characterMediaId = null,
+    visibility = "public"
+  }) => {
+    if (!user || !campaignId || !icon) return null;
+
+    const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const msgRef = doc(db, "campaigns", campaignId, "messages", msgId);
+    const playerProfile = campaign?.players?.[user.uid];
+
+    const resolvedSenderName =
+      senderName ||
+      playerProfile?.displayName ||
+      user.displayName ||
+      user.email?.split("@")[0] ||
+      "Pinguim";
+
+    const resolvedPhotoURL =
+      senderPhotoURL !== null
+        ? senderPhotoURL
+        : (characterId ? null : (playerProfile?.photoURL || user.photoURL || null));
+
+    const emoteMessage = {
+      id: msgId,
+      senderId: user.uid,
+      senderName: resolvedSenderName,
+      senderPhotoURL: resolvedPhotoURL,
+      characterId,
+      characterMediaId,
+      type: "emote",
+      visibility,
+      visibleTo: buildVisibleToList(visibility),
+      icon,
+      timestampMs: Date.now(),
+      createdAt: serverTimestamp()
+    };
+
+    await setDoc(msgRef, emoteMessage);
+    return emoteMessage;
+  };
+
   const sendTextMessage = async ({
     content,
     senderName,
@@ -109,7 +154,8 @@ export function useChatRolls() {
     secondaryLabel = "Efeito / Dano",
     cost = null, // { resource: 'mp' | 'hp', amount: number }
     visibility = "public",
-    onDeductResource = null
+    onDeductResource = null,
+    icon = null
   }) => {
     if (!user || !campaignId) return null;
 
@@ -180,11 +226,13 @@ export function useChatRolls() {
       visibility,
       visibleTo: buildVisibleToList(visibility),
       content: description || "",
+      icon: icon || null,
       rollData: {
         title,
         categoryColor,
         costPaid,
-        rolls
+        rolls,
+        icon: icon || null
       },
       timestampMs: Date.now(),
       createdAt: serverTimestamp()
@@ -202,6 +250,7 @@ export function useChatRolls() {
   return {
     messages,
     sendTextMessage,
+    sendEmoteMessage,
     executeRoll,
     deleteMessage
   };

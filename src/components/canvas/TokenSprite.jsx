@@ -1,4 +1,5 @@
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import TokenSpeechBubble from "./TokenSpeechBubble";
 
 export default function TokenSprite({
   token,
@@ -8,9 +9,11 @@ export default function TokenSprite({
   canControl,
   isInteractive = true,
   isSelected,
+  speechBubble = null,
   onStartDrag,
   onSelect,
   onQuickToggleVisibility,
+  onQuickToggleName,
   onQuickAdjustHp,
   onOpenEditModal
 }) {
@@ -134,6 +137,18 @@ export default function TokenSprite({
             </button>
           )}
 
+          {(isGM || canControl) && onQuickToggleName && (
+            <button
+              type="button"
+              className="cp-btn"
+              style={{ padding: "2px 8px", fontSize: "11px" }}
+              onClick={() => onQuickToggleName(token)}
+              title={token.showName === false ? "Exibir nome" : "Ocultar nome"}
+            >
+              {token.showName === false ? "Mostrar Nome" : "Ocultar Nome"}
+            </button>
+          )}
+
           <button
             type="button"
             className="cp-btn cp-btn-gold"
@@ -222,28 +237,36 @@ export default function TokenSprite({
         )}
       </div>
 
+      {/* Balão de Fala Estilo Club Penguin */}
+      <TokenSpeechBubble
+        speechBubble={speechBubble}
+        bottomOffset={showHpBar ? 20 : 10}
+      />
+
       {/* Placa de Nome na Base do Token */}
-      <div
-        style={{
-          position: "absolute",
-          top: `${sizePx + 2}px`,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(0, 27, 58, 0.88)",
-          border: "1.5px solid #001b3a",
-          borderRadius: "999px",
-          padding: "1px 8px",
-          color: "#ffffff",
-          fontSize: "11px",
-          fontWeight: 800,
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.45)"
-        }}
-      >
-        {token.name}
-        {isHiddenFromPlayers && isGM ? " (OCULTO)" : ""}
-      </div>
+      {token.showName !== false && (
+        <div
+          style={{
+            position: "absolute",
+            top: `${sizePx + 2}px`,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(0, 27, 58, 0.88)",
+            border: "1.5px solid #001b3a",
+            borderRadius: "999px",
+            padding: "1px 8px",
+            color: "#ffffff",
+            fontSize: "11px",
+            fontWeight: 800,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            boxShadow: "0 2px 4px rgba(0,0,0,0.45)"
+          }}
+        >
+          {token.name}
+          {isHiddenFromPlayers && isGM ? " (OCULTO)" : ""}
+        </div>
+      )}
     </div>
   );
 }

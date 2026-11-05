@@ -44,6 +44,9 @@ export default function TokenModal({
   const [visibleToPlayers, setVisibleToPlayers] = useState(
     initialToken ? initialToken.visibleToPlayers !== false : true
   );
+  const [showName, setShowName] = useState(
+    initialToken ? initialToken.showName !== false : true
+  );
   const [hpCurrent, setHpCurrent] = useState(
     initialToken?.hpCurrent ?? ""
   );
@@ -109,6 +112,7 @@ export default function TokenModal({
           sizeInCells: Number(sizeInCells) || 1,
           ringColor,
           visibleToPlayers,
+          showName,
           controlledBy,
           hpCurrent: hpCurrent !== "" ? Number(hpCurrent) : null,
           hpMax: hpMax !== "" ? Number(hpMax) : null,
@@ -328,6 +332,24 @@ export default function TokenModal({
                     onChange={(e) => setVisibleToPlayers(e.target.checked)}
                   />
                   Visível aos Players
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "13px",
+                    fontWeight: 800,
+                    cursor: "pointer"
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showName}
+                    onChange={(e) => setShowName(e.target.checked)}
+                  />
+                  Exibir Nome
                 </label>
 
                 <label

@@ -115,6 +115,7 @@ export default function BoardViewport({
   campaignId,
   playersMap,
   isGM,
+  messages = [],
   onUpdateSceneGrid,
   onOpenScenesManager
 }) {
@@ -950,11 +951,60 @@ export default function BoardViewport({
     });
   };
 
+  const handleQuickToggleTokenName = async (token) => {
+    await updateToken(token.id, {
+      showName: token.showName === false
+    });
+  };
+
   const handleQuickAdjustHp = async (token, delta) => {
     const current = Number(token.hpCurrent) || 0;
     const max = Number(token.hpMax) || current;
     const nextHp = Math.max(0, Math.min(max, current + delta));
     await updateToken(token.id, { hpCurrent: nextHp });
+  };
+
+  // Mapeia a última fala ou emote/skill de cada personagem/token para o balão estilo Club Penguin
+  const latestSpeeches = useMemo(() => {
+    if (!messages || messages.length === 0) return { byCharId: {}, byName: {} };
+    const byCharId = {};
+    const byName = {};
+
+    for (const msg of messages) {
+      const icon = msg.icon || msg.rollData?.icon || null;
+      const isText = msg.type === "text" && Boolean(msg.content && msg.content.trim());
+      const isEmote = msg.type === "emote" && Boolean(icon);
+      const isAbilityWithIcon = msg.type === "ability_roll" && Boolean(icon);
+
+      if (!isText && !isEmote && !isAbilityWithIcon) continue;
+
+      const speechData = {
+        id: msg.id,
+        text: (isEmote || isAbilityWithIcon) ? null : msg.content,
+        icon: (isEmote || isAbilityWithIcon) ? icon : null,
+        timestampMs: msg.timestampMs || 0
+      };
+
+      if (msg.characterId) {
+        byCharId[msg.characterId] = speechData;
+      }
+      if (msg.senderName) {
+        byName[msg.senderName.trim().toLowerCase()] = speechData;
+      }
+    }
+
+    return { byCharId, byName };
+  }, [messages]);
+
+  const getTokenSpeech = (token) => {
+    if (!token) return null;
+    if (token.characterId && latestSpeeches.byCharId[token.characterId]) {
+      return latestSpeeches.byCharId[token.characterId];
+    }
+    if (token.name && latestSpeeches.byName[token.name.trim().toLowerCase()]) {
+      return latestSpeeches.byName[token.name.trim().toLowerCase()];
+    }
+    return null;
   };
 
   if (!activeScene) {
@@ -2249,9 +2299,11 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "map" && isGM
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            speechBubble={getTokenSpeech(token)}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
+            onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>
               setTokenModalState({ open: true, editingToken: tok })
@@ -2310,9 +2362,11 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "objects" && isGM
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            speechBubble={getTokenSpeech(token)}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
+            onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>
               setTokenModalState({ open: true, editingToken: tok })
@@ -2339,9 +2393,11 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "tokens"
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            speechBubble={getTokenSpeech(token)}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
+            onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
             onOpenEditModal={(tok) =>
               setTokenModalState({ open: true, editingToken: tok })

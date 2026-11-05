@@ -31,8 +31,8 @@ export const DEFAULT_SKILLS = [
 
 export function useCharacters() {
   const { user } = useAuth();
-  const { campaignId, campaign, isRealGM, isGM } = useCampaign();
-  const [rawCharacters, setRawCharacters] = useState([]);
+  const { campaignId, campaign, isGM } = useCampaign();
+  const [rawItems, setRawItems] = useState([]);
 
   useEffect(() => {
     if (!user || !campaignId) return;
@@ -41,20 +41,51 @@ export function useCharacters() {
     const unsubscribe = onSnapshot(
       charCol,
       (snapshot) => {
-        const list = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data()
-        }));
+        const list = snapshot.docs.map((d) => {
+          const data = d.data();
+          if (Array.isArray(data.inventory)) {
+            data.inventory = data.inventory.map((it) => {
+              const nameLower = (it.name || "").toLowerCase();
+              const idLower = (it.id || "").toLowerCase();
+              const iconLower = (it.icon || "").toLowerCase();
+              if (
+                nameLower.includes("peixe") ||
+                nameLower.includes("fish") ||
+                nameLower.includes("fluffy") ||
+                idLower.includes("peixe")
+              ) {
+                if (!iconLower || iconLower === "meat" || iconLower === "carne" || iconLower === "fish") {
+                  return { ...it, icon: "fluffy_fish" };
+                }
+              }
+              return it;
+            });
+          }
+          return {
+            id: d.id,
+            ...data
+          };
+        });
         list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-        setRawCharacters(list);
+        setRawItems(list);
       },
       (err) => {
-        console.error("Erro ao carregar fichas:", err);
+        console.error("Erro ao carregar fichas e pastas:", err);
       }
     );
 
     return () => unsubscribe();
   }, [user, campaignId]);
+
+  const rawCharacters = useMemo(
+    () => rawItems.filter((i) => !i.isFolder),
+    [rawItems]
+  );
+
+  const rawFolders = useMemo(
+    () => rawItems.filter((i) => Boolean(i.isFolder)),
+    [rawItems]
+  );
 
   const characters = useMemo(() => {
     if (isGM) return rawCharacters;
@@ -68,6 +99,21 @@ export function useCharacters() {
       );
     });
   }, [rawCharacters, isGM, user?.uid]);
+
+  const folders = useMemo(() => {
+    if (isGM) return rawFolders;
+    const currentUid = user?.uid;
+    const gmUid = campaign?.gmId;
+    return rawFolders.filter((f) => {
+      const vis = Array.isArray(f.visibleTo) ? f.visibleTo : [];
+      return (
+        f.ownerId === currentUid ||
+        vis.includes("ALL") ||
+        (currentUid && vis.includes(currentUid)) ||
+        f.ownerId === gmUid
+      );
+    });
+  }, [rawFolders, isGM, user?.uid, campaign?.gmId]);
 
   const canEditCharacter = (character) => {
     if (!user || !character) return false;
@@ -83,26 +129,30 @@ export function useCharacters() {
     name,
     type = "pc", // 'pc' | 'npc'
     cardColor = "#02529c",
-    visibleToAll = false
+    visibleToAll = false,
+    folderId = null,
+    ownerId = null
   }) => {
     if (!user || !campaignId) return null;
 
     const gmUid = campaign?.gmId || user.uid;
+    const effectiveOwnerId = ownerId || user.uid;
     const charId = `char_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const charRef = doc(db, "campaigns", campaignId, "characters", charId);
 
     const visibleTo = Array.from(
       new Set(
-        [gmUid, user.uid, ...(visibleToAll ? ["ALL"] : [])].filter(Boolean)
+        [gmUid, effectiveOwnerId, ...(visibleToAll ? ["ALL"] : [])].filter(Boolean)
       )
     );
-    const editableBy = Array.from(new Set([gmUid, user.uid].filter(Boolean)));
+    const editableBy = Array.from(new Set([gmUid, effectiveOwnerId].filter(Boolean)));
 
     const newCharacter = {
       id: charId,
       name: name?.trim() || "Novo Pinguim",
       type,
-      ownerId: user.uid,
+      ownerId: effectiveOwnerId,
+      folderId: folderId || null,
       cardColor: cardColor || "#02529c",
       visibleTo,
       editableBy,
@@ -137,6 +187,7 @@ export function useCharacters() {
         {
           id: "inv_peixe",
           name: "Peixe Fresco",
+          icon: "fluffy_fish",
           qty: 2,
           elementColor: "#38c172",
           rollFormula: "1d8 + 2",
@@ -183,7 +234,7 @@ export function useCharacters() {
 
     try {
       await setDoc(charRef, newCharacter);
-      setRawCharacters((prev) => {
+      setRawItems((prev) => {
         if (prev.some((c) => c.id === charId)) return prev;
         return [...prev, newCharacter];
       });
@@ -192,6 +243,113 @@ export function useCharacters() {
       console.error("Erro ao salvar personagem no Firestore:", err);
       throw err;
     }
+  };
+
+  const createFolder = async ({ name, parentId = null, ownerId = null }) => {
+    if (!user || !campaignId || !name?.trim()) return null;
+    const gmUid = campaign?.gmId || user.uid;
+    const effectiveOwnerId = ownerId || (isGM ? gmUid : user.uid);
+    const folderId = `folder_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const folderRef = doc(db, "campaigns", campaignId, "characters", folderId);
+
+    const visibleTo = Array.from(
+      new Set([gmUid, effectiveOwnerId, "ALL"].filter(Boolean))
+    );
+    const editableBy = Array.from(new Set([gmUid, effectiveOwnerId].filter(Boolean)));
+
+    const newFolder = {
+      id: folderId,
+      isFolder: true,
+      name: name.trim(),
+      parentId: parentId || null,
+      ownerId: effectiveOwnerId,
+      visibleTo,
+      editableBy,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(folderRef, newFolder);
+    setRawItems((prev) =>
+      prev.some((item) => item.id === folderId) ? prev : [...prev, newFolder]
+    );
+    return folderId;
+  };
+
+  const updateFolder = async (folderId, updates) => {
+    if (!user || !campaignId || !folderId) return;
+    const folderRef = doc(db, "campaigns", campaignId, "characters", folderId);
+    await updateDoc(folderRef, {
+      ...updates,
+      updatedAt: serverTimestamp()
+    });
+  };
+
+  const deleteFolder = async (folderId) => {
+    if (!user || !campaignId || !folderId) return;
+    const folderTarget = rawFolders.find((f) => f.id === folderId);
+    if (!folderTarget) return;
+    if (!isGM && folderTarget.ownerId !== user.uid) return;
+
+    // Localiza todas as subpastas recursivamente
+    const collectFolderIds = (fid) => {
+      let ids = [fid];
+      const children = rawFolders.filter((f) => f.parentId === fid);
+      for (const child of children) {
+        ids = ids.concat(collectFolderIds(child.id));
+      }
+      return ids;
+    };
+    const allFolderIds = collectFolderIds(folderId);
+
+    // Mover personagens contidos para o pai da pasta deletada ou raiz
+    const parentDestination = folderTarget.parentId || null;
+    const affectedChars = rawCharacters.filter((c) =>
+      allFolderIds.includes(c.folderId)
+    );
+    for (const c of affectedChars) {
+      const cRef = doc(db, "campaigns", campaignId, "characters", c.id);
+      await updateDoc(cRef, {
+        folderId: parentDestination,
+        updatedAt: serverTimestamp()
+      });
+    }
+
+    // Deleta os documentos de pastas
+    for (const fid of allFolderIds) {
+      await deleteDoc(doc(db, "campaigns", campaignId, "characters", fid));
+    }
+  };
+
+  const moveCharacterToFolder = async (charId, targetFolderId, targetOwnerId = null) => {
+    if (!user || !campaignId || !charId) return;
+    const char = rawCharacters.find((c) => c.id === charId);
+    if (!char) return;
+    if (!isGM && char.ownerId !== user.uid) return;
+
+    const updates = {
+      folderId: targetFolderId || null
+    };
+    if (targetOwnerId && isGM) {
+      updates.ownerId = targetOwnerId;
+    }
+    await updateCharacter(charId, updates);
+  };
+
+  const moveFolder = async (folderId, targetParentId, targetOwnerId = null) => {
+    if (!user || !campaignId || !folderId) return;
+    const folder = rawFolders.find((f) => f.id === folderId);
+    if (!folder) return;
+    if (!isGM && folder.ownerId !== user.uid) return;
+    if (folderId === targetParentId) return;
+
+    const updates = {
+      parentId: targetParentId || null
+    };
+    if (targetOwnerId && isGM) {
+      updates.ownerId = targetOwnerId;
+    }
+    await updateFolder(folderId, updates);
   };
 
   const updateCharacter = async (charId, updates) => {
@@ -261,12 +419,15 @@ export function useCharacters() {
   };
 
   const deleteCharacter = async (charId) => {
-    if (!isRealGM || !campaignId || !charId) return;
+    if (!user || !campaignId || !charId) return;
     const target = rawCharacters.find((c) => c.id === charId);
-    if (target?.avatarMediaId) {
+    if (!target) return;
+    if (!isGM && target.ownerId !== user.uid) return;
+
+    if (target.avatarMediaId) {
       await deleteMedia(target.avatarMediaId, campaignId);
     }
-    if (target?.defaultToken?.mediaId) {
+    if (target.defaultToken?.mediaId) {
       await deleteMedia(target.defaultToken.mediaId, campaignId);
     }
     await deleteDoc(doc(db, "campaigns", campaignId, "characters", charId));
@@ -274,12 +435,17 @@ export function useCharacters() {
 
   return {
     characters,
+    folders,
     canEditCharacter,
     createCharacter,
     updateCharacter,
     updateCharacterResource,
     uploadCharacterImage,
-    deleteCharacter
+    deleteCharacter,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveCharacterToFolder,
+    moveFolder
   };
 }
-

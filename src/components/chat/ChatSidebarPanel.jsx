@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
 
 const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100];
 
@@ -76,7 +77,9 @@ export default function ChatSidebarPanel({
   }, [characters, isGM, canEditCharacter, user?.uid]);
 
   // Seletor de emissor: 'player' ou characterId
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState("player");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState(
+    () => (activeCharacter?.id ? activeCharacter.id : "player")
+  );
 
   // Garante que se o personagem selecionado não existir mais, fala como player
   const speakAs = useMemo(() => {
@@ -251,6 +254,7 @@ export default function ChatSidebarPanel({
 
       {/* Lista de Mensagens e Cards de Rolagem com Scrollbar Independente */}
       <div
+        className="cp-chat-scrollable"
         style={{
           flex: 1,
           minHeight: 0,
@@ -259,11 +263,60 @@ export default function ChatSidebarPanel({
           display: "flex",
           flexDirection: "column",
           gap: "8px",
-          paddingRight: "4px"
+          paddingRight: "4px",
+          userSelect: "text",
+          WebkitUserSelect: "text"
         }}
       >
         {(messages || []).map((msg) => {
           const isSecret = msg.visibility && msg.visibility !== "public";
+
+          if (msg.type === "emote" && msg.icon) {
+            return (
+              <div
+                key={msg.id}
+                style={{
+                  background: isSecret ? "#0b192c" : "#ffffff",
+                  color: isSecret ? "#e2f1ff" : "var(--cp-text-dark)",
+                  border: "2.5px solid var(--cp-blue-border)",
+                  borderRadius: "14px",
+                  padding: "8px 10px",
+                  boxShadow: "0 2px 0 rgba(0,27,58,0.2)"
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    color: isSecret ? "var(--epf-cyan-glow)" : "#02529c",
+                    marginBottom: "4px"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <MessageAvatar msg={msg} campaignId={campaignId} />
+                    <span>{msg.senderName}</span>
+                  </div>
+                  {isSecret && <span>SECRETO</span>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", padding: "4px 0" }}>
+                  <div
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}
+                  >
+                    {renderCpFlashIcon(msg.icon, 34)}
+                  </div>
+                </div>
+              </div>
+            );
+          }
 
           if (msg.type === "ability_roll" && msg.rollData) {
             const borderColor = msg.rollData.categoryColor || "#02529c";
@@ -341,10 +394,27 @@ export default function ChatSidebarPanel({
                     fontFamily: "var(--font-display)",
                     fontSize: "15px",
                     color: borderColor,
-                    marginBottom: "6px"
+                    marginBottom: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px"
                   }}
                 >
-                  {msg.rollData.title}
+                  {(msg.icon || msg.rollData.icon) && (
+                    <div
+                      style={{
+                        width: "22px",
+                        height: "22px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0
+                      }}
+                    >
+                      {renderCpFlashIcon(msg.icon || msg.rollData.icon, 20)}
+                    </div>
+                  )}
+                  <span>{msg.rollData.title}</span>
                 </div>
 
                 <div
