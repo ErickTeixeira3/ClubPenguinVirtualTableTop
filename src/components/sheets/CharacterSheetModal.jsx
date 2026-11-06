@@ -61,7 +61,7 @@ function CpCoinIcon({ size = 20 }) {
         objectFit: "contain",
         display: "block",
         flexShrink: 0,
-        transform: "rotate(-45deg)",
+        transform: "rotate(-90deg)",
         filter: "drop-shadow(0 1.5px 2px rgba(0,0,0,0.35))",
         pointerEvents: "none",
         userSelect: "none"
