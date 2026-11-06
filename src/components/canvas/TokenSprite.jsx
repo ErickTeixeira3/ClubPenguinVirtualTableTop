@@ -10,6 +10,7 @@ export default function TokenSprite({
   isInteractive = true,
   isSelected,
   speechBubble = null,
+  snowballAimActive = false,
   onStartDrag,
   onSelect,
   onQuickToggleVisibility,
@@ -55,9 +56,15 @@ export default function TokenSprite({
       onMouseDown={(e) => {
         if (!isInteractive) return;
         e.stopPropagation();
-        onSelect(token.id, e);
-        if (canControl && e.button === 0) {
-          onStartDrag(e, token);
+        if (snowballAimActive) {
+          onSelect(token.id, e);
+          return;
+        }
+        if (isGM || canControl) {
+          onSelect(token.id, e);
+          if (e.button === 0) {
+            onStartDrag(e, token);
+          }
         }
       }}
       onDoubleClick={(e) => {
@@ -78,7 +85,7 @@ export default function TokenSprite({
           ? "default"
           : canControl
             ? "grab"
-            : "pointer",
+            : "default",
         pointerEvents: isInteractive ? "auto" : "none",
         opacity: isHiddenFromPlayers ? 0.58 : 1,
         userSelect: "none"

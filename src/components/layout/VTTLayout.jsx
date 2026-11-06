@@ -103,12 +103,15 @@ export default function VTTLayout() {
   const [gmModalOpen, setGmModalOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [scenesModalOpen, setScenesModalOpen] = useState(false);
+  const [scenesModalInitialTab, setScenesModalInitialTab] = useState("map");
   const [compendiumModalOpen, setCompendiumModalOpen] = useState(false);
   const [openCharacterId, setOpenCharacterId] = useState(null);
   const [rollVisibility, setRollVisibility] = useState("public"); // 'public' | 'gm_only'
   const [dockChatText, setDockChatText] = useState("");
   const [hotbarOpen, setHotbarOpen] = useState(false);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+  const [snowballAimActive, setSnowballAimActive] = useState(false);
+  const [selectedTokenOnBoard, setSelectedTokenOnBoard] = useState(null);
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   const currentDisplayName =
@@ -118,15 +121,40 @@ export default function VTTLayout() {
     "Pinguim";
 
   const activeCharacter = useMemo(() => {
-    if (openCharacterId) {
-      return characters.find((c) => c.id === openCharacterId) || null;
+    // 1. Se houver um token selecionado no tabuleiro, valida se o usuário pode controlá-lo
+    if (selectedTokenOnBoard) {
+      const isControlled = isGM || (() => {
+        const list = Array.isArray(selectedTokenOnBoard.controlledBy) ? selectedTokenOnBoard.controlledBy : [];
+        return list.includes("ALL") || (user && list.includes(user.uid));
+      })();
+
+      if (isControlled) {
+        if (selectedTokenOnBoard.characterId) {
+          const charFromToken = characters.find((c) => c.id === selectedTokenOnBoard.characterId);
+          if (charFromToken && canEditCharacter(charFromToken)) return charFromToken;
+        }
+        if (selectedTokenOnBoard.name) {
+          const charByName = characters.find(
+            (c) => c.name?.trim().toLowerCase() === selectedTokenOnBoard.name.trim().toLowerCase()
+          );
+          if (charByName && canEditCharacter(charByName)) return charByName;
+        }
+      }
     }
+
+    // 2. Se houver ficha aberta
+    if (openCharacterId) {
+      const opened = characters.find((c) => c.id === openCharacterId);
+      if (opened && canEditCharacter(opened)) return opened;
+    }
+
+    // 3. Primeiro personagem pertencente ao usuário
     return (
       characters.find((c) => c.ownerId === user?.uid) ||
-      characters[0] ||
+      (isGM ? characters[0] : null) ||
       null
     );
-  }, [characters, openCharacterId, user?.uid]);
+  }, [selectedTokenOnBoard, isGM, user, characters, openCharacterId, canEditCharacter]);
 
   const openedSheetCharacter = useMemo(() => {
     const targetId = standaloneSheetId || openCharacterId;
@@ -208,14 +236,13 @@ export default function VTTLayout() {
 
     // Determina o emissor ativo (personagem aberto ou perfil do usuário)
     const senderName = activeCharacter?.name || currentDisplayName;
-    const senderPhotoURL =
-      activeCharacter?.avatarExternalUrl ||
-      activeCharacter?.defaultToken?.externalUrl ||
-      activeCharacter?.tokenImage ||
-      activeCharacter?.avatarImage ||
-      myPlayerProfile?.photoURL ||
-      user?.photoURL ||
-      null;
+    const senderPhotoURL = activeCharacter
+      ? (activeCharacter.avatarExternalUrl ||
+         activeCharacter.defaultToken?.externalUrl ||
+         activeCharacter.tokenImage ||
+         activeCharacter.avatarImage ||
+         null)
+      : (myPlayerProfile?.photoURL || user?.photoURL || null);
 
     // Rolagens no chat
     if (raw.startsWith("/r ") || raw.startsWith("/roll ")) {
@@ -254,14 +281,13 @@ export default function VTTLayout() {
     setEmotePickerOpen(false);
 
     const senderName = activeCharacter?.name || currentDisplayName;
-    const senderPhotoURL =
-      activeCharacter?.avatarExternalUrl ||
-      activeCharacter?.defaultToken?.externalUrl ||
-      activeCharacter?.tokenImage ||
-      activeCharacter?.avatarImage ||
-      myPlayerProfile?.photoURL ||
-      user?.photoURL ||
-      null;
+    const senderPhotoURL = activeCharacter
+      ? (activeCharacter.avatarExternalUrl ||
+         activeCharacter.defaultToken?.externalUrl ||
+         activeCharacter.tokenImage ||
+         activeCharacter.avatarImage ||
+         null)
+      : (myPlayerProfile?.photoURL || user?.photoURL || null);
 
     await sendEmoteMessage({
       icon: emote.id,
@@ -323,7 +349,7 @@ export default function VTTLayout() {
   const combinedError = firestoreError || scenesError;
 
   return (
-    <div className="vtt-shell">
+    <div className={`vtt-shell ${snowballAimActive ? "cp-snowball-aiming" : ""}`}>
       {/* Barra Superior */}
       <header className="vtt-topbar">
         <div className="vtt-topbar-left">
@@ -455,8 +481,15 @@ export default function VTTLayout() {
             playersMap={campaign?.players || {}}
             isGM={isGM}
             messages={messages}
+            activeCharacter={activeCharacter}
             onUpdateSceneGrid={updateScene}
-            onOpenScenesManager={() => setScenesModalOpen(true)}
+            onOpenScenesManager={() => {
+              setScenesModalInitialTab("scenes");
+              setScenesModalOpen(true);
+            }}
+            onSelectedTokenChange={setSelectedTokenOnBoard}
+            snowballAimActive={snowballAimActive}
+            onDeactivateSnowballAim={() => setSnowballAimActive(false)}
           />
         )}
 
@@ -500,21 +533,22 @@ export default function VTTLayout() {
           {sidebarOpen ? "▶" : "◀"}
         </button>
 
-        {/* Botão de Mapas para o Mestre no canto esquerdo da tela */}
-        {isGM && (
-          <button
-            type="button"
-            className={`cp-dock-map-trigger ${scenesModalOpen ? "active" : ""}`}
-            onClick={() => setScenesModalOpen(true)}
-            title={`Mapas (${scenes.length})`}
-          >
-            <img
-              src="/map-icon.png"
-              alt={`Mapas (${scenes.length})`}
-              className="cp-dock-map-img"
-            />
-          </button>
-        )}
+        {/* Botão de Mapa no canto inferior esquerdo para todos (Mestre e Players) */}
+        <button
+          type="button"
+          className={`cp-dock-map-trigger ${scenesModalOpen ? "active" : ""}`}
+          onClick={() => {
+            setScenesModalInitialTab("map");
+            setScenesModalOpen(true);
+          }}
+          title="Mapa da Campanha"
+        >
+          <img
+            src="/map-icon.png"
+            alt="Mapa da Campanha"
+            className="cp-dock-map-img"
+          />
+        </button>
 
         {/* Dock Inferior Clássico do Club Penguin */}
         <nav className="vtt-dock">
@@ -577,9 +611,18 @@ export default function VTTLayout() {
             {/* Novo Botão Bola de Neve (à esquerda do chat) */}
             <button
               type="button"
-              className="cp-dock-btn"
+              className={`cp-dock-btn ${snowballAimActive ? "active" : ""}`}
               title="Bola de Neve"
-              onClick={() => {}}
+              onClick={() => {
+                if (!snowballAimActive) {
+                  if (activeDockModule !== "board") {
+                    setActiveDockModule("board");
+                  }
+                  setSnowballAimActive(true);
+                } else {
+                  setSnowballAimActive(false);
+                }
+              }}
             >
               <img
                 src="/icones/iconeBolaDeNeve.png"
@@ -919,11 +962,13 @@ export default function VTTLayout() {
 
       {gmModalOpen && <GMPanelModal onClose={() => setGmModalOpen(false)} />}
 
-      {isGM && scenesModalOpen && (
+      {scenesModalOpen && (
         <ScenesManagerModal
           scenes={scenes}
           activeSceneId={campaign?.activeSceneId || null}
           campaignId={campaignId}
+          isGM={isGM}
+          initialTab={scenesModalInitialTab}
           onCreateScene={createScene}
           onUpdateScene={updateScene}
           onDeleteScene={deleteScene}

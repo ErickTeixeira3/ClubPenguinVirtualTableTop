@@ -232,7 +232,7 @@ export function useBoardInteractive(sceneId) {
     }, 70);
   };
 
-  const triggerPing = async (x, y, color = "#00f0ff") => {
+  const triggerPing = async (x, y, color = "#00f0ff", origin = null) => {
     if (!user || !campaignId || !sceneId) return;
     const pingId = `ping_${user.uid}_${Date.now()}`;
     const pingRef = ref(
@@ -250,6 +250,11 @@ export function useBoardInteractive(sceneId) {
         user.displayName || user.email?.split("@")[0] || "Pinguim",
       timestamp: Date.now()
     };
+
+    if (origin && typeof origin.x === "number" && typeof origin.y === "number") {
+      payload.startX = Math.round(origin.x);
+      payload.startY = Math.round(origin.y);
+    }
 
     await rtdbSet(pingRef, payload);
     setTimeout(() => {

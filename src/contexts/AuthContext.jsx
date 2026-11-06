@@ -97,7 +97,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const registerWithEmail = async (email, password, displayName) => {
+  const registerWithEmail = async (email, password, displayName, photoURL = null) => {
     setAuthError("");
     try {
       const cleanEmail = email.trim().toLowerCase();
@@ -113,11 +113,16 @@ export function AuthProvider({ children }) {
         setAuthError(err.message);
         throw err;
       }
-      if (displayName?.trim()) {
+      if (displayName?.trim() || photoURL) {
         await updateProfile(result.user, {
-          displayName: displayName.trim()
+          ...(displayName?.trim() ? { displayName: displayName.trim() } : {}),
+          ...(photoURL ? { photoURL } : {})
         });
-        setUser({ ...result.user, displayName: displayName.trim() });
+        setUser({
+          ...result.user,
+          displayName: displayName?.trim() || result.user.displayName,
+          photoURL: photoURL || result.user.photoURL
+        });
       }
       return result.user;
     } catch (err) {

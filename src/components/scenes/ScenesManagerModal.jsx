@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   compressImageToWebP,
   formatBytes
@@ -46,15 +46,34 @@ function SceneThumbnail({ scene, campaignId }) {
 }
 
 export default function ScenesManagerModal({
-  scenes,
+  scenes = [],
   activeSceneId,
   campaignId,
+  isGM = false,
+  initialTab = "map",
   onCreateScene,
   onUpdateScene,
   onDeleteScene,
   onActivateScene,
   onClose
 }) {
+  const [activeTab, setActiveTab] = useState(isGM ? initialTab : "map");
+
+  useEffect(() => {
+    setActiveTab(isGM ? initialTab : "map");
+  }, [initialTab, isGM]);
+
+  // Fecha o modal ao pressionar ESC
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const [editingSceneId, setEditingSceneId] = useState(null);
   const [name, setName] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
@@ -153,14 +172,112 @@ export default function ScenesManagerModal({
     });
   };
 
+  if (activeTab === "map") {
+    return (
+      <div
+        className="cp-modal-overlay"
+        onClick={onClose}
+        style={{
+          background: "rgba(0, 10, 25, 0.78)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "16px",
+          zIndex: 4000
+        }}
+      >
+        {/* Botão de Alternar para Gerenciador de Cenas para o Mestre */}
+        {isGM && (
+          <button
+            type="button"
+            className="cp-btn cp-btn-gold"
+            style={{
+              position: "fixed",
+              top: "16px",
+              left: "16px",
+              zIndex: 60,
+              fontSize: "12px",
+              padding: "6px 14px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              boxShadow: "0 4px 14px rgba(0, 0, 0, 0.6)"
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab("scenes");
+            }}
+            title="Ir para o gerenciador de cenas do tabuleiro"
+          >
+            ⚙️ Gerenciar Cenas & Tabuleiro
+          </button>
+        )}
+
+        {/* Imagem do Mapa Inteira (sem borda extra) */}
+        <div
+          style={{
+            position: "relative",
+            width: "min(1000px, 94vw)",
+            maxWidth: "1000px",
+            aspectRatio: "1000 / 632",
+            maxHeight: "92vh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            userSelect: "none"
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <img
+            src="/Mapa%20Campanhaa.jpg"
+            alt="Mapa da Campanha"
+            draggable={false}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+              filter: "drop-shadow(0 12px 32px rgba(0, 0, 0, 0.75))",
+              pointerEvents: "none"
+            }}
+          />
+
+          {/* Botão de Fechar transparente sobre o (X) desenhado na foto */}
+          <button
+            type="button"
+            onClick={onClose}
+            title="Fechar Mapa"
+            style={{
+              position: "absolute",
+              top: "0.8%",
+              right: "0.8%",
+              width: "4.2%",
+              height: "6.6%",
+              background: "transparent",
+              border: "none",
+              borderRadius: "50%",
+              cursor: "pointer",
+              outline: "none",
+              padding: 0,
+              zIndex: 10
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="cp-modal-overlay" onClick={onClose}>
       <div
         className="cp-window"
         style={{
-          width: "100%",
-          maxWidth: "880px",
+          width: "min(1080px, 94vw)",
+          maxWidth: "1080px",
+          height: "min(760px, 88vh)",
           maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden"
         }}
         onClick={(e) => e.stopPropagation()}
@@ -170,14 +287,32 @@ export default function ScenesManagerModal({
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between"
+            justifyContent: "space-between",
+            marginBottom: "10px",
+            gap: "10px"
           }}
         >
-          <h2 className="cp-title" style={{ fontSize: "22px" }}>
+          <h2 className="cp-title" style={{ fontSize: "20px", margin: 0 }}>
             GERENCIADOR DE MAPAS & CENAS
           </h2>
 
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              type="button"
+              className="cp-btn cp-btn-epf"
+              style={{
+                padding: "5px 12px",
+                fontSize: "12px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px"
+              }}
+              onClick={() => setActiveTab("map")}
+              title="Ver o mapa da campanha"
+            >
+              🗺️ Mapa da Campanha
+            </button>
+
             {activeSceneId && (
               <button
                 type="button"
@@ -188,13 +323,22 @@ export default function ScenesManagerModal({
                 Recolher Mapa da Mesa
               </button>
             )}
+
             <button
               type="button"
               className="cp-btn cp-btn-orange"
-              style={{ padding: "5px 12px", fontSize: "13px" }}
+              style={{
+                padding: "4px 10px",
+                fontSize: "13px",
+                minWidth: "32px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}
               onClick={onClose}
+              title="Fechar"
             >
-              X
+              ✕
             </button>
           </div>
         </div>
@@ -206,7 +350,8 @@ export default function ScenesManagerModal({
             gridTemplateColumns: "340px 1fr",
             gap: "12px",
             overflow: "hidden",
-            flex: 1
+            flex: 1,
+            minHeight: 0
           }}
         >
           {/* Coluna Esquerda: Criar / Editar Mapa */}

@@ -8,7 +8,9 @@ const QUICK_DICE = [4, 6, 8, 10, 12, 20, 100];
 
 function MessageAvatar({ msg, campaignId }) {
   const { url } = useMediaUrl(msg.characterMediaId, null, campaignId);
-  const resolvedUrl = msg.senderPhotoURL || url;
+  const resolvedUrl = (msg.characterId || msg.characterMediaId)
+    ? (msg.senderPhotoURL || url)
+    : (msg.senderPhotoURL || null);
 
   if (resolvedUrl) {
     return (
@@ -77,16 +79,15 @@ export default function ChatSidebarPanel({
   }, [characters, isGM, canEditCharacter, user?.uid]);
 
   // Seletor de emissor: 'player' ou characterId
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState(
-    () => (activeCharacter?.id ? activeCharacter.id : "player")
-  );
+  const [userChosenSpeakerId, setUserChosenSpeakerId] = useState(null);
 
   // Garante que se o personagem selecionado não existir mais, fala como player
   const speakAs = useMemo(() => {
-    if (selectedSpeakerId === "player") return "player";
-    const exists = accessibleCharacters.some((c) => c.id === selectedSpeakerId);
-    return exists ? selectedSpeakerId : "player";
-  }, [selectedSpeakerId, accessibleCharacters]);
+    const candidateId = userChosenSpeakerId !== null ? userChosenSpeakerId : (activeCharacter?.id || "player");
+    if (candidateId === "player") return "player";
+    const exists = accessibleCharacters.some((c) => c.id === candidateId);
+    return exists ? candidateId : "player";
+  }, [userChosenSpeakerId, activeCharacter?.id, accessibleCharacters]);
 
   const currentCharacter = useMemo(() => {
     if (speakAs === "player") return null;
@@ -589,7 +590,7 @@ export default function ChatSidebarPanel({
 
           <select
             value={speakAs}
-            onChange={(e) => setSelectedSpeakerId(e.target.value)}
+            onChange={(e) => setUserChosenSpeakerId(e.target.value)}
             style={{
               flex: 1,
               minWidth: 0,

@@ -116,8 +116,12 @@ export default function BoardViewport({
   playersMap,
   isGM,
   messages = [],
+  activeCharacter = null,
   onUpdateSceneGrid,
-  onOpenScenesManager
+  onOpenScenesManager,
+  onSelectedTokenChange,
+  snowballAimActive = false,
+  onDeactivateSnowballAim
 }) {
   const containerRef = useRef(null);
   const boardSurfaceRef = useRef(null);
@@ -221,6 +225,18 @@ export default function BoardViewport({
   const [draggingToken, setDraggingToken] = useState(null);
   const [draggingTokensDelta, setDraggingTokensDelta] = useState(null);
 
+  // Notifica o componente pai sobre o token prioritário selecionado
+  useEffect(() => {
+    if (!onSelectedTokenChange) return;
+    if (selectedTokenIds.length === 0) {
+      onSelectedTokenChange(null);
+      return;
+    }
+    const lastId = selectedTokenIds[selectedTokenIds.length - 1];
+    const tok = tokens.find((t) => t.id === lastId);
+    onSelectedTokenChange(tok || null);
+  }, [selectedTokenIds, tokens, onSelectedTokenChange]);
+
   const [draftFogRect, setDraftFogRect] = useState(null);
   const fogStartRef = useRef(null);
 
@@ -270,8 +286,86 @@ export default function BoardViewport({
     removeToken
   ]);
 
+  // Cancela a mira de bola de neve no ESC ou clique com botão direito
+  useEffect(() => {
+    if (!snowballAimActive) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        onDeactivateSnowballAim?.();
+      }
+    };
+    const handleContextMenu = (e) => {
+      e.preventDefault();
+      onDeactivateSnowballAim?.();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("contextmenu", handleContextMenu);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("contextmenu", handleContextMenu);
+    };
+  }, [snowballAimActive, onDeactivateSnowballAim]);
+
+  // Obtém o centro do token ativo ou selecionado para a origem da bola de neve
+  const getSelectedTokenCenter = () => {
+    if (selectedTokenIds.length > 0) {
+      const lastId = selectedTokenIds[selectedTokenIds.length - 1];
+      const tok = tokens.find((t) => t.id === lastId);
+      if (tok) {
+        const sizePx = (tok.sizeInCells || 1) * cellSizePx;
+        return { x: tok.x + sizePx / 2, y: tok.y + sizePx / 2 };
+      }
+    }
+    if (activeCharacter?.id) {
+      const tok = tokens.find(
+        (t) =>
+          t.characterId === activeCharacter.id ||
+          (t.name && t.name.trim().toLowerCase() === activeCharacter.name?.trim().toLowerCase())
+      );
+      if (tok) {
+        const sizePx = (tok.sizeInCells || 1) * cellSizePx;
+        return { x: tok.x + sizePx / 2, y: tok.y + sizePx / 2 };
+      }
+    }
+    return null;
+  };
+
+  const getPingColor = () => {
+    if (isGM) {
+      if (snowballAimActive || selectedTokenIds.length > 0) {
+        if (activeCharacter?.cardColor) return activeCharacter.cardColor;
+        if (selectedTokenIds.length > 0) {
+          const lastId = selectedTokenIds[selectedTokenIds.length - 1];
+          const tok = tokens.find((t) => t.id === lastId);
+          if (tok?.ringColor) return tok.ringColor;
+        }
+      }
+      return "#00f0ff";
+    }
+
+    if (activeCharacter?.cardColor) {
+      return activeCharacter.cardColor;
+    }
+    if (selectedTokenIds.length > 0) {
+      const lastId = selectedTokenIds[selectedTokenIds.length - 1];
+      const tok = tokens.find((t) => t.id === lastId);
+      if (tok?.ringColor) return tok.ringColor;
+    }
+    return drawColor || "#008be3";
+  };
+
   // Manipulador de clique em itens (desenhos, textos, formas, tokens) com suporte a Shift
   const handleItemClick = (e, itemId, itemType = "drawing") => {
+    if (snowballAimActive && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      const pt = clientToBoardCoords(e.clientX, e.clientY);
+      const origin = getSelectedTokenCenter();
+      triggerPing(pt.x, pt.y, getPingColor(), origin);
+      onDeactivateSnowballAim?.();
+      return;
+    }
+
     const isShift = Boolean(e?.shiftKey);
 
     if (itemType === "drawing") {
@@ -286,6 +380,11 @@ export default function BoardViewport({
         setSelectedTokenIds([]);
       }
     } else if (itemType === "token") {
+      const targetTok = tokens.find((t) => t.id === itemId);
+      if (!isGM && !canControlToken(targetTok)) {
+        return;
+      }
+
       if (isShift) {
         setSelectedTokenIds((prev) =>
           prev.includes(itemId)
@@ -467,6 +566,16 @@ export default function BoardViewport({
 
     const pt = clientToBoardCoords(e.clientX, e.clientY);
 
+    // Se estiver no modo Mira de Bola de Neve, o clique invoca o ping imediatamente
+    if (snowballAimActive && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      const origin = getSelectedTokenCenter();
+      triggerPing(pt.x, pt.y, getPingColor(), origin);
+      onDeactivateSnowballAim?.();
+      return;
+    }
+
     // 1. Modo Medir (Régua 1,5m por quadrado)
     if (toolMode === "measure" && e.button === 0) {
       setMeasureLine({
@@ -640,7 +749,7 @@ export default function BoardViewport({
           triggerPing(
             panStartRef.current.boardX,
             panStartRef.current.boardY,
-            isGM ? "#00f0ff" : drawColor
+            getPingColor()
           );
         }
       }, 750);
@@ -2300,6 +2409,7 @@ export default function BoardViewport({
             }
             isSelected={selectedTokenIds.includes(token.id)}
             speechBubble={getTokenSpeech(token)}
+            snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
@@ -2363,6 +2473,7 @@ export default function BoardViewport({
             }
             isSelected={selectedTokenIds.includes(token.id)}
             speechBubble={getTokenSpeech(token)}
+            snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
@@ -2394,6 +2505,7 @@ export default function BoardViewport({
             }
             isSelected={selectedTokenIds.includes(token.id)}
             speechBubble={getTokenSpeech(token)}
+            snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
@@ -2415,23 +2527,44 @@ export default function BoardViewport({
           draftRect={draftFogRect}
         />
 
-        {/* PINGS DE ONDA DE ÁGUA (WATER DROP RIPPLE) */}
-        {activePings.map((ping) => (
-          <div
-            key={ping.id}
-            className="cp-ping-container"
-            style={{
-              left: `${ping.x}px`,
-              top: `${ping.y}px`,
-              "--ping-color": ping.color || "#00f0ff"
-            }}
-          >
-            <div className="cp-ping-ring" />
-            <div className="cp-ping-ring delay-1" />
-            <div className="cp-ping-ring delay-2" />
-            <div className="cp-ping-center-drop" />
-          </div>
-        ))}
+        {/* PINGS E BOLAS DE NEVE EM VOO */}
+        {activePings.map((ping) => {
+          const hasSnowball =
+            typeof ping.startX === "number" && typeof ping.startY === "number";
+          const dx = hasSnowball ? ping.x - ping.startX : 0;
+          const dy = hasSnowball ? ping.y - ping.startY : 0;
+
+          return (
+            <div key={ping.id}>
+              {hasSnowball && (
+                <div
+                  className="cp-snowball-projectile"
+                  style={{
+                    left: `${ping.startX}px`,
+                    top: `${ping.startY}px`,
+                    "--snowball-dx": `${dx}px`,
+                    "--snowball-dy": `${dy}px`
+                  }}
+                >
+                  <div className="cp-snowball-projectile-ball" />
+                </div>
+              )}
+              <div
+                className={`cp-ping-container ${hasSnowball ? "cp-ping-with-snowball" : ""}`}
+                style={{
+                  left: `${ping.x}px`,
+                  top: `${ping.y}px`,
+                  "--ping-color": ping.color || "#00f0ff"
+                }}
+              >
+                <div className="cp-ping-ring" />
+                <div className="cp-ping-ring delay-1" />
+                <div className="cp-ping-ring delay-2" />
+                <div className="cp-ping-center-drop" />
+              </div>
+            </div>
+          );
+        })}
 
         {/* CAMADA SVG INTERATIVA: RÉGUA DE MEDIÇÃO (1,5m), SELEÇÃO E ROTAÇÃO */}
         <svg
