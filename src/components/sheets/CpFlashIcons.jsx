@@ -56,313 +56,39 @@ export const CP_FLASH_ICONS = [
   { id: "penguin_woohoo", label: "Pinguim Woohoo!", category: "reactions", render: renderWebp("penguin_woohoo.webp", "Pinguim Woohoo") },
 
   // ==========================================
-  // 2. COMBATE & EQUIPAMENTOS (14 itens)
+  // 2. COMBATE & EQUIPAMENTOS (18 itens)
   // ==========================================
-  {
-    id: "sword",
-    label: "Espada de Cavaleiro CP",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <linearGradient id="cp_blade_grad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="40%" stopColor="#d1e0ea" />
-            <stop offset="100%" stopColor="#8ba5b8" />
-          </linearGradient>
-          <linearGradient id="cp_gold_guard" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ffe666" />
-            <stop offset="100%" stopColor="#c98a00" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M28 5L31 8L15 24L12 21L28 5Z"
-          fill="url(#cp_blade_grad)"
-          stroke="#1b2838"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M14 22L29 7" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-        <path
-          d="M8 20L17 29L14 31L6 22L8 20Z"
-          fill="url(#cp_gold_guard)"
-          stroke="#523800"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-        <path d="M10 27L5 32" stroke="#6b2100" strokeWidth="3.5" strokeLinecap="round" />
-        <circle cx="4" cy="33" r="2.2" fill="#e53935" stroke="#520000" strokeWidth="1.5" />
-      </svg>
-    )
-  },
-  {
-    id: "dagger",
-    label: "Kunai Ninja Card-Jitsu",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          <circle cx="18" cy="30.5" r="3" fill="none" stroke="#1e293b" strokeWidth="2.4" />
-          <rect x="16.2" y="21" width="3.6" height="7" rx="1" fill="#dc2626" stroke="#1e293b" strokeWidth="2" />
-          <line x1="16.2" y1="24.5" x2="19.8" y2="24.5" stroke="#7f1d1d" strokeWidth="1.5" />
-          <polygon
-            points="18,3 25,16 19.8,21 16.2,21 11,16"
-            fill="#94a3b8"
-            stroke="#1e293b"
-            strokeWidth="2.4"
-            strokeLinejoin="round"
-          />
-          <polygon points="18,4.8 18,20.2 16.5,20.2 12.2,15.8" fill="#e2e8f0" />
-          <line x1="18" y1="4.5" x2="18" y2="20.5" stroke="#1e293b" strokeWidth="1.5" />
-        </g>
-      </svg>
-    )
-  },
-  {
-    id: "bow",
-    label: "Arco e Flecha",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          <polyline
-            points="5,22 18,26.5 31,22"
-            stroke="#cbd5e1"
-            strokeWidth="1.8"
-            strokeLinejoin="round"
-            fill="none"
-          />
-          <path
-            d="M5 22 C8 8.5 13 6.5 18 6.5 C23 6.5 28 8.5 31 22"
-            stroke="#422006"
-            strokeWidth="5"
-            strokeLinecap="round"
-            fill="none"
-          />
-          <path
-            d="M5 22 C8 8.5 13 6.5 18 6.5 C23 6.5 28 8.5 31 22"
-            stroke="#b45309"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            fill="none"
-          />
-          <polygon points="18,24 21.5,28 21.5,31 18,28.5 14.5,31 14.5,28" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1.3" strokeLinejoin="round" />
-          <line x1="18" y1="28.5" x2="18" y2="6" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" />
-          <polygon points="18,1.5 22.5,8.5 18,7 13.5,8.5" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1.8" strokeLinejoin="round" />
-        </g>
-      </svg>
-    )
-  },
-  {
-    id: "axe",
-    label: "Machado Viking Duplo",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          <rect x="16" y="9" width="4" height="24" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
-          <polygon points="18,3.5 20.5,9 15.5,9" fill="#cbd5e1" stroke="#1e293b" strokeWidth="2" strokeLinejoin="round" />
-          <path
-            d="M16 9.5 L6 5.5 C3 10 3 16 6 20.5 L16 16.5 Z"
-            fill="#cbd5e1"
-            stroke="#1e293b"
-            strokeWidth="2.3"
-            strokeLinejoin="round"
-          />
-          <path d="M7 7 C4.8 10.5 4.8 15.5 7 19" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-          <path
-            d="M20 9.5 L30 5.5 C33 10 33 16 30 20.5 L20 16.5 Z"
-            fill="#94a3b8"
-            stroke="#1e293b"
-            strokeWidth="2.3"
-            strokeLinejoin="round"
-          />
-          <path d="M29 7 C31.2 10.5 31.2 15.5 29 19" stroke="#e2e8f0" strokeWidth="1.5" strokeLinecap="round" />
-          <rect x="15" y="9" width="6" height="8" rx="1.5" fill="#475569" stroke="#1e293b" strokeWidth="2" />
-          <circle cx="18" cy="13" r="2.2" fill="#facc15" stroke="#713f12" strokeWidth="1.3" />
-        </g>
-      </svg>
-    )
-  },
+  { id: "sword", label: "Espada de Cavaleiro CP", category: "combat", render: renderWebp("sword.png", "Espada de Cavaleiro CP") },
+  { id: "wooden_sword", label: "Espada de Madeira de Treino", category: "combat", render: renderWebp("wooden_sword.png", "Espada de Madeira") },
+  { id: "dagger", label: "Kunai Ninja Card-Jitsu", category: "combat", render: renderWebp("kunai.png", "Kunai Ninja Card-Jitsu") },
+  { id: "bow", label: "Arco e Flecha", category: "combat", render: renderWebp("bow.png", "Arco e Flecha") },
+  { id: "axe", label: "Machado Viking", category: "combat", render: renderWebp("axe.png", "Machado Viking") },
+  { id: "battle_axe", label: "Machado de Batalha Pesado", category: "combat", render: renderWebp("battle_axe.png", "Machado de Batalha") },
   { id: "prehistoric_club", label: "Tacape Pré-histórico", category: "combat", render: renderWebp("prehistoric_club.webp", "Tacape Pré-histórico") },
   { id: "prehistoric_hammer", label: "Martelo de Pedra", category: "combat", render: renderWebp("prehistoric_hammer.webp", "Martelo de Pedra") },
-  {
-    id: "bomb",
-    label: "Bomba Clássica do Club Penguin",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_bomb_grad" cx="35%" cy="35%" r="65%">
-            <stop offset="0%" stopColor="#4b5563" />
-            <stop offset="60%" stopColor="#1f2937" />
-            <stop offset="100%" stopColor="#0b0f17" />
-          </radialGradient>
-        </defs>
-        <path d="M22 13C25 10 27 10 29 7" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" />
-        <polygon points="29,7 32,5 31,8 34,8 31,10 32,13 29,11 27,13 28,10 25,9" fill="#facc15" stroke="#ea580c" strokeWidth="1.2" />
-        <circle cx="16" cy="21" r="12" fill="url(#cp_bomb_grad)" stroke="#0b0f17" strokeWidth="2.5" />
-        <ellipse cx="12" cy="17" rx="3.5" ry="2" fill="#ffffff" opacity="0.6" transform="rotate(-30 12 17)" />
-        <rect x="18" y="10" width="6" height="4" rx="1" fill="#4b5563" stroke="#0b0f17" strokeWidth="1.5" transform="rotate(30 20 12)" />
-      </svg>
-    )
-  },
-  {
-    id: "snowball",
-    label: "Bola de Neve do Club Penguin",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_snow_grad" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="55%" stopColor="#dff0fc" />
-            <stop offset="100%" stopColor="#89c2ec" />
-          </radialGradient>
-        </defs>
-        <circle cx="18" cy="18" r="14" fill="url(#cp_snow_grad)" stroke="#024379" strokeWidth="2.5" />
-        <ellipse cx="13" cy="12" rx="4" ry="2.5" fill="#ffffff" opacity="0.9" transform="rotate(-25 13 12)" />
-        <circle cx="23" cy="21" r="1.5" fill="#ffffff" opacity="0.8" />
-        <circle cx="21" cy="25" r="2" fill="#69a8da" opacity="0.6" />
-      </svg>
-    )
-  },
+  { id: "bomb", label: "Bomba Clássica do Club Penguin", category: "combat", render: renderWebp("bomb.png", "Bomba Clássica") },
+  { id: "snowball", label: "Bola de Neve do Club Penguin", category: "combat", render: renderWebp("snowball.png", "Bola de Neve") },
   { id: "pow_explosion", label: "Impacto POW!", category: "combat", render: renderWebp("pow_explosion.webp", "Impacto POW!") },
   { id: "shield", label: "Escudo de Madeira", category: "combat", render: renderWebp("shield.webp", "Escudo de Madeira") },
   { id: "skate_helmet", label: "Capacete de Aventura", category: "combat", render: renderWebp("skate_helmet.webp", "Capacete de Aventura") },
-  {
-    id: "ninja_headband",
-    label: "Faixa Ninja Card-Jitsu",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M4 17C12 15 24 15 32 17L30 22C22 20 14 20 6 22L4 17Z"
-          fill="#1e293b"
-          stroke="#020617"
-          strokeWidth="2"
-        />
-        <path d="M30 21L34 29L31 31L28 22Z" fill="#1e293b" stroke="#020617" strokeWidth="1.5" />
-        <circle cx="18" cy="18.5" r="4.5" fill="#e53935" stroke="#7f1d1d" strokeWidth="1.5" />
-        <path d="M16 18.5H20M18 16.5V20.5" stroke="#ffffff" strokeWidth="1.5" />
-      </svg>
-    )
-  },
-  {
-    id: "crown",
-    label: "Coroa Real de Ouro",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M5 26L7 12L13 18L18 9L23 18L29 12L31 26H5Z"
-          fill="#facc15"
-          stroke="#713f12"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <circle cx="18" cy="9" r="2" fill="#ef4444" stroke="#7f1d1d" strokeWidth="1" />
-        <circle cx="7" cy="12" r="1.5" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1" />
-        <circle cx="29" cy="12" r="1.5" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1" />
-        <rect x="7" y="22" width="22" height="3" fill="#eab308" />
-      </svg>
-    )
-  },
-  {
-    id: "cape",
-    label: "Capa Épica de Aventureiro",
-    category: "combat",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <path
-          d="M11 8L5 28C11 31 25 31 31 28L25 8H11Z"
-          fill="#b91c1c"
-          stroke="#450a0a"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M11 8C14 13 22 13 25 8" fill="#ef4444" stroke="#450a0a" strokeWidth="1.5" />
-        <circle cx="18" cy="9" r="2.5" fill="#facc15" stroke="#713f12" strokeWidth="1.5" />
-      </svg>
-    )
-  },
+  { id: "ninja_headband", label: "Faixa Ninja Card-Jitsu", category: "combat", render: renderWebp("ninja_headband.png", "Faixa Ninja") },
+  { id: "crown", label: "Coroa do Rei", category: "combat", render: renderWebp("king_crown.png", "Coroa do Rei") },
+  { id: "queen_crown", label: "Coroa da Rainha", category: "combat", render: renderWebp("queen_crown.png", "Coroa da Rainha") },
+  { id: "princess_crown", label: "Tiara da Princesa", category: "combat", render: renderWebp("princess_crown.png", "Tiara da Princesa") },
+  { id: "cape", label: "Capa Épica de Aventureiro", category: "combat", render: renderWebp("cape.png", "Capa de Aventureiro") },
 
   // ==========================================
-  // 3. MAGIA & MISTICISMO (7 itens)
+  // 3. MAGIA & MISTICISMO (9 itens)
   // ==========================================
   { id: "wand", label: "Varinha Mágica", category: "magic", render: renderWebp("wand.webp", "Varinha Mágica") },
   { id: "shooting_star", label: "Estrela Cadente", category: "magic", render: renderWebp("shooting_star.webp", "Estrela Cadente") },
   { id: "prehistoric_clock", label: "Relógio do Tempo Ancestral", category: "magic", render: renderWebp("prehistoric_clock.webp", "Relógio Ancestral") },
-  {
-    id: "potion_red",
-    label: "Poção de Vida (Vermelha)",
-    category: "magic",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_pot_red" cx="40%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#f87171" />
-            <stop offset="65%" stopColor="#dc2626" />
-            <stop offset="100%" stopColor="#7f1d1d" />
-          </radialGradient>
-        </defs>
-        <rect x="15" y="5" width="6" height="4" rx="1" fill="#b45309" stroke="#451a03" strokeWidth="1.5" />
-        <rect x="16" y="8" width="4" height="4" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1.5" />
-        <circle cx="18" cy="22" r="11" fill="url(#cp_pot_red)" stroke="#1e293b" strokeWidth="2.5" />
-        <circle cx="15" cy="18" r="1.5" fill="#ffffff" opacity="0.8" />
-        <circle cx="21" cy="23" r="1.2" fill="#ffffff" opacity="0.6" />
-        <ellipse cx="14" cy="24" rx="2" ry="1" fill="#ffffff" opacity="0.4" />
-      </svg>
-    )
-  },
-  {
-    id: "potion_blue",
-    label: "Elixir de Mana (Azul)",
-    category: "magic",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <radialGradient id="cp_pot_blue" cx="40%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#60a5fa" />
-            <stop offset="65%" stopColor="#2563eb" />
-            <stop offset="100%" stopColor="#1e3a8a" />
-          </radialGradient>
-        </defs>
-        <rect x="15" y="5" width="6" height="4" rx="1" fill="#b45309" stroke="#451a03" strokeWidth="1.5" />
-        <rect x="16" y="8" width="4" height="4" fill="#e2e8f0" stroke="#1e293b" strokeWidth="1.5" />
-        <circle cx="18" cy="22" r="11" fill="url(#cp_pot_blue)" stroke="#1e293b" strokeWidth="2.5" />
-        <circle cx="15" cy="18" r="1.5" fill="#ffffff" opacity="0.8" />
-        <circle cx="20" cy="24" r="1.5" fill="#93c5fd" opacity="0.8" />
-      </svg>
-    )
-  },
-  {
-    id: "potion_green",
-    label: "Poção de Alquimia (Verde)",
-    category: "magic",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <polygon points="18,12 28,30 8,30" fill="#22c55e" stroke="#14532d" strokeWidth="2.5" strokeLinejoin="round" />
-        <rect x="16" y="5" width="4" height="7" fill="#e2e8f0" stroke="#14532d" strokeWidth="1.5" />
-        <rect x="15" y="4" width="6" height="3" fill="#b45309" stroke="#451a03" strokeWidth="1" />
-        <circle cx="16" cy="24" r="2" fill="#86efac" />
-        <circle cx="21" cy="22" r="1.5" fill="#86efac" />
-      </svg>
-    )
-  },
-  {
-    id: "potion_purple",
-    label: "Frasco Mágico Arcano (Roxo)",
-    category: "magic",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <polygon points="18,12 27,20 18,30 9,20" fill="#a855f7" stroke="#581c87" strokeWidth="2.5" strokeLinejoin="round" />
-        <rect x="16" y="6" width="4" height="6" fill="#e2e8f0" stroke="#581c87" strokeWidth="1.5" />
-        <rect x="15" y="4" width="6" height="3" fill="#b45309" stroke="#451a03" strokeWidth="1" />
-        <circle cx="18" cy="20" r="2" fill="#f3e8ff" />
-      </svg>
-    )
-  },
+  { id: "potion_red", label: "Poção de Vida (Vermelha)", category: "magic", render: renderWebp("potion_red.png", "Poção de Vida") },
+  { id: "potion_blue", label: "Elixir de Mana (Azul)", category: "magic", render: renderWebp("potion_blue.png", "Elixir de Mana") },
+  { id: "potion_magic", label: "Poção Mágica Mística", category: "magic", render: renderWebp("potion_magic.png", "Poção Mágica Mística") },
+  { id: "firegem", label: "Gema do Fogo Ninja", category: "magic", render: renderWebp("firegem.png", "Gema do Fogo") },
+  { id: "watergem", label: "Gema da Água Ninja", category: "magic", render: renderWebp("watergem.png", "Gema da Água") },
+  { id: "snowgem", label: "Gema da Neve Ninja", category: "magic", render: renderWebp("snowgem.png", "Gema da Neve") },
 
   // ==========================================
   // 4. COMIDAS & BEBIDAS (17 itens)
@@ -408,117 +134,21 @@ export const CP_FLASH_ICONS = [
   { id: "coin", label: "Moeda do Club Penguin", category: "treasure", render: renderWebp("coin.webp", "Moeda do Club Penguin") },
   { id: "money_bag", label: "Saco de Moedas", category: "treasure", render: renderWebp("money_bag.webp", "Saco de Moedas") },
   { id: "treasure_chest", label: "Baú de Tesouro", category: "treasure", render: renderWebp("treasure_chest.webp", "Baú de Tesouro") },
-  {
-    id: "key",
-    label: "Chave Secreta de Ouro",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <circle cx="12" cy="12" r="7" fill="#facc15" stroke="#713f12" strokeWidth="2.5" />
-        <circle cx="12" cy="12" r="3" fill="#ffffff" stroke="#713f12" strokeWidth="1.5" />
-        <line x1="17" y1="17" x2="30" y2="30" stroke="#facc15" strokeWidth="4.5" strokeLinecap="round" />
-        <line x1="17" y1="17" x2="30" y2="30" stroke="#713f12" strokeWidth="1.8" strokeLinecap="round" />
-        <line x1="27" y1="27" x2="30" y2="24" stroke="#713f12" strokeWidth="2.5" strokeLinecap="round" />
-        <line x1="24" y1="24" x2="26" y2="22" stroke="#713f12" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "pickaxe",
-    label: "Picareta da Mina",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <g transform="rotate(45 18 18)">
-          <rect x="16" y="5" width="4" height="28" rx="2" fill="#92400e" stroke="#3b1500" strokeWidth="2.2" />
-          <path
-            d="M4 16.5 C7.5 8.5 13 6.5 18 6.5 C23 6.5 28.5 8.5 32 16.5 C28 12.5 23 11 18 11 C13 11 8 12.5 4 16.5 Z"
-            fill="#64748b"
-            stroke="#0f172a"
-            strokeWidth="2.3"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M7.5 12 C11 8.5 14.5 7.8 18 7.8 C21.5 7.8 25 8.5 28.5 12"
-            stroke="#cbd5e1"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-          <rect x="15" y="5.8" width="6" height="6.2" rx="1.5" fill="#94a3b8" stroke="#0f172a" strokeWidth="2" />
-        </g>
-      </svg>
-    )
-  },
-  {
-    id: "magnifier",
-    label: "Lupa de Detetive",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <circle cx="15" cy="15" r="9.5" fill="#e0f2fe" stroke="#334155" strokeWidth="2.5" />
-        <ellipse cx="13" cy="12" rx="4" ry="2" fill="#ffffff" opacity="0.8" transform="rotate(-30 13 12)" />
-        <line x1="22" y1="22" x2="31" y2="31" stroke="#78350f" strokeWidth="5.5" strokeLinecap="round" />
-        <line x1="22" y1="22" x2="31" y2="31" stroke="#3b1500" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
-    id: "gem",
-    label: "Esmeralda Mística",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <defs>
-          <linearGradient id="cp_gem_grad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#e0f2fe" />
-            <stop offset="40%" stopColor="#38bdf8" />
-            <stop offset="100%" stopColor="#0369a1" />
-          </linearGradient>
-        </defs>
-        <polygon
-          points="10,8 26,8 32,16 18,31 4,16"
-          fill="url(#cp_gem_grad)"
-          stroke="#082f49"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <line x1="4" y1="16" x2="32" y2="16" stroke="#082f49" strokeWidth="1.5" />
-        <line x1="10" y1="8" x2="18" y2="31" stroke="#082f49" strokeWidth="1.5" />
-        <line x1="26" y1="8" x2="18" y2="31" stroke="#082f49" strokeWidth="1.5" />
-        <polygon points="10,8 18,16 26,8" fill="#ffffff" opacity="0.5" />
-      </svg>
-    )
-  },
-  {
-    id: "ruby",
-    label: "Rubi Carmesim Brilhante",
-    category: "treasure",
-    render: (size = 36) => (
-      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
-        <polygon
-          points="12,7 24,7 30,15 18,31 6,15"
-          fill="#dc2626"
-          stroke="#450a0a"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <line x1="6" y1="15" x2="30" y2="15" stroke="#450a0a" strokeWidth="1.5" />
-        <polygon points="12,7 18,15 24,7" fill="#ef4444" />
-        <line x1="12" y1="7" x2="18" y2="31" stroke="#450a0a" strokeWidth="1.5" />
-        <line x1="24" y1="7" x2="18" y2="31" stroke="#450a0a" strokeWidth="1.5" />
-        <polygon points="12,7 15,11 18,7" fill="#ffffff" opacity="0.6" />
-      </svg>
-    )
-  },
+  { id: "key", label: "Chave Secreta de Ouro", category: "treasure", render: renderWebp("key.png", "Chave Secreta de Ouro") },
+  { id: "pickaxe", label: "Picareta da Mina", category: "treasure", render: renderWebp("pickaxe.png", "Picareta da Mina") },
+  { id: "magnifier", label: "Lupa de Detetive", category: "treasure", render: renderWebp("magnifier.png", "Lupa de Detetive") },
+  { id: "ruby", label: "Rubi Carmesim Brilhante", category: "treasure", render: renderWebp("ruby.png", "Rubi Carmesim Brilhante") },
+  { id: "diamond_ring", label: "Anel de Diamante", category: "treasure", render: renderWebp("diamond_ring.png", "Anel de Diamante") },
   { id: "campfire", label: "Fogueira de Acampamento", category: "treasure", render: renderWebp("campfire.webp", "Fogueira") },
   { id: "camera", label: "Câmera Fotográfica", category: "treasure", render: renderWebp("camera.webp", "Câmera") },
   { id: "gift", label: "Caixa de Presente", category: "treasure", render: renderWebp("gift.webp", "Presente") },
 
   // ==========================================
-  // 7. ATIVIDADES, ESPORTES & MÍDIA (10 itens)
+  // 7. ATIVIDADES, ESPORTES & MÍDIA (11 itens)
   // ==========================================
   { id: "beach_ball", label: "Bola de Praia", category: "activities", render: renderWebp("beach_ball.webp", "Bola de Praia") },
   { id: "surfboard", label: "Prancha de Surfe", category: "activities", render: renderWebp("surfboard.webp", "Prancha de Surfe") },
+  { id: "fishing_rod", label: "Vara de Pescaria", category: "activities", render: renderWebp("fishing_rod.png", "Vara de Pescaria") },
   { id: "whistle", label: "Apito de Juiz", category: "activities", render: renderWebp("whistle.webp", "Apito de Juiz") },
   { id: "red_card", label: "Cartão Vermelho", category: "activities", render: renderWebp("red_card.webp", "Cartão Vermelho") },
   { id: "yellow_card", label: "Cartão Amarelo", category: "activities", render: renderWebp("yellow_card.webp", "Cartão Amarelo") },
@@ -529,8 +159,9 @@ export const CP_FLASH_ICONS = [
   { id: "music_notes", label: "Notas Musicais", category: "activities", render: renderWebp("music_notes.webp", "Notas Musicais") },
 
   // ==========================================
-  // 8. SÍMBOLOS, EPF & UTILIDADES (15 itens)
+  // 8. SÍMBOLOS, EPF & UTILIDADES (16 itens)
   // ==========================================
+  { id: "spy_phone", label: "Telefone Secreto da PSA", category: "symbols", render: renderWebp("spy_phone.png", "Telefone Secreto da PSA") },
   { id: "epf_badge", label: "Distintivo Secreto EPF", category: "symbols", render: renderWebp("epf_badge.webp", "Distintivo EPF") },
   { id: "epf_sunglasses", label: "Óculos de Espião EPF", category: "symbols", render: renderWebp("epf_sunglasses.webp", "Óculos EPF") },
   { id: "police_badge", label: "Distintivo Policial", category: "symbols", render: renderWebp("police_badge.webp", "Distintivo Policial") },
@@ -565,7 +196,16 @@ const LEGACY_ALIASES = {
   emote_worried: "worried",
   emote_skeptical: "skeptical",
   helmet: "skate_helmet",
-  spyphone: "epf_badge",
+  spyphone: "spy_phone",
+  spy_phone: "spy_phone",
+  coroa_do_rei: "crown",
+  coroa_da_rainha: "queen_crown",
+  coroa_da_princesa: "princess_crown",
+  vara_de_pescar: "fishing_rod",
+  anel: "diamond_ring",
+  gem: "diamond_ring",
+  potion_green: "potion_magic",
+  potion_purple: "potion_magic",
   fish: "fluffy_fish",
   peixe: "fluffy_fish",
   inv_peixe: "fluffy_fish",
@@ -617,16 +257,20 @@ const LEGACY_ALIASES = {
   "🛡️": "shield",
   "🪖": "skate_helmet",
   "🥋": "ninja_headband",
+  "💎": "diamond_ring",
+  "💍": "diamond_ring",
   "👑": "crown",
+  "👸": "princess_crown",
+  "🎣": "fishing_rod",
   "🦸": "cape",
   "🪄": "wand",
   "⭐": "shooting_star",
   "✨": "shooting_star",
   "⏰": "prehistoric_clock",
   "🍷": "potion_red",
-  "🧪": "potion_green",
   "💧": "potion_blue",
-  "🟣": "potion_purple",
+  "🟣": "potion_magic",
+  "🧪": "potion_magic",
   "🍕": "pizza",
   "🧀": "cheese",
   "🍖": "meat",
@@ -648,7 +292,6 @@ const LEGACY_ALIASES = {
   "🫖": "teapot",
   "🍵": "teapot",
   "🐟": "fluffy_fish",
-  "🎣": "fluffy_fish",
   "🧶": "cat_yarn",
   "🦴": "dog_bone",
   "🐾": "paw_print",
@@ -661,7 +304,6 @@ const LEGACY_ALIASES = {
   "💀": "pirate",
   "🪙": "coin",
   "💰": "money_bag",
-  "💎": "gem",
   "🎁": "gift",
   "🏕️": "campfire",
   "🔥": "campfire",
@@ -814,24 +456,31 @@ export function renderCpFlashIcon(iconOrId, size = 36) {
   else if (s.includes("varinha") || s.includes("cajado") || s.includes("wand")) matchId = "wand";
   else if (s.includes("estrela") || s.includes("star")) matchId = "shooting_star";
   else if (s.includes("relogio") || s.includes("relógio") || s.includes("clock")) matchId = "prehistoric_clock";
+  else if (s.includes("pesca") || s.includes("vara") || s.includes("fishing")) matchId = "fishing_rod";
   else if (s.includes("escudo") || s.includes("protecao") || s.includes("shield")) matchId = "shield";
   else if (s.includes("capacete") || s.includes("helmet")) matchId = "skate_helmet";
   else if (s.includes("faixa") || s.includes("ninja") || s.includes("headband")) matchId = "ninja_headband";
-  else if (s.includes("coroa") || s.includes("crown")) matchId = "crown";
+  else if (s.includes("rainha")) matchId = "queen_crown";
+  else if (s.includes("princesa") || s.includes("tiara")) matchId = "princess_crown";
+  else if (s.includes("coroa") || s.includes("crown") || s.includes("rei")) matchId = "crown";
   else if (s.includes("capa") || s.includes("cape") || s.includes("manto")) matchId = "cape";
   else if (s.includes("cura") || s.includes("vida") || s.includes("pot_red")) matchId = "potion_red";
   else if (s.includes("mana") || s.includes("energia") || s.includes("pot_blue")) matchId = "potion_blue";
-  else if (s.includes("pocao") || s.includes("poção") || s.includes("alquimia")) matchId = "potion_green";
-  else if (s.includes("arcano") || s.includes("purp") || s.includes("roxa") || s.includes("elixir")) matchId = "potion_purple";
+  else if (s.includes("pocao") || s.includes("poção") || s.includes("alquimia") || s.includes("mistica") || s.includes("mística") || s.includes("arcano") || s.includes("pot_magic")) matchId = "potion_magic";
+  else if (s.includes("fogo") && s.includes("gema")) matchId = "firegem";
+  else if (s.includes("agua") || s.includes("água") && s.includes("gema")) matchId = "watergem";
+  else if (s.includes("neve") && s.includes("gema")) matchId = "snowgem";
   else if (s.includes("picareta") || s.includes("mina") || s.includes("pickaxe")) matchId = "pickaxe";
-  else if (s.includes("spy") || s.includes("phone") || s.includes("epf")) matchId = "epf_badge";
+  else if (s.includes("anel") || s.includes("ring")) matchId = "diamond_ring";
+  else if (s.includes("spy") || s.includes("telefone") || s.includes("psa") || s.includes("phone")) matchId = "spy_phone";
+  else if (s.includes("epf")) matchId = "epf_badge";
   else if (s.includes("policia") || s.includes("polícia") || s.includes("badge")) matchId = "police_badge";
   else if (s.includes("sirene") || s.includes("giroflex") || s.includes("siren")) matchId = "police_siren";
   else if (s.includes("alerta") || s.includes("beacon")) matchId = "alert_beacon";
   else if (s.includes("lampada") || s.includes("lâmpada") || s.includes("gary") || s.includes("ideia") || s.includes("lightbulb")) matchId = "lightbulb";
   else if (s.includes("chave") || s.includes("key")) matchId = "key";
   else if (s.includes("lupa") || s.includes("detetive") || s.includes("investig") || s.includes("magnifier")) matchId = "magnifier";
-  else if (s.includes("diamante") || s.includes("esmeralda") || s.includes("gem")) matchId = "gem";
+  else if (s.includes("diamante") || s.includes("esmeralda") || s.includes("gem")) matchId = "diamond_ring";
   else if (s.includes("rubi") || s.includes("ruby")) matchId = "ruby";
   else if (s.includes("praia") || s.includes("beach")) matchId = "beach_ball";
   else if (s.includes("surfe") || s.includes("surf")) matchId = "surfboard";

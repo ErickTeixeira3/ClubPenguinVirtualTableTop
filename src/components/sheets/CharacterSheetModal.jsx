@@ -47,42 +47,49 @@ const resolveItemIcon = (item) => {
 };
 
 function CpCoinIcon({ size = 20 }) {
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
   return (
-    <svg
+    <img
+      src={`${base}/emotes/coin.webp`}
+      alt="Moeda"
       width={size}
       height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      style={{ flexShrink: 0, filter: "drop-shadow(0 1.5px 2px rgba(0,0,0,0.35))" }}
-    >
-      <circle cx="16" cy="16" r="14" fill="#d99800" stroke="#523200" strokeWidth="2.5" />
-      <circle cx="16" cy="16" r="11.5" fill="#ffcb2b" stroke="#b37800" strokeWidth="1.5" />
-      <circle cx="16" cy="16" r="8" fill="#ffe566" opacity="0.6" />
-      <path
-        d="M16 9.5L17.5 13.8H22L18.4 16.5L19.8 21L16 18.2L12.2 21L13.6 16.5L10 13.8H14.5L16 9.5Z"
-        fill="#995e00"
-      />
-    </svg>
+      draggable={false}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        objectFit: "contain",
+        display: "block",
+        flexShrink: 0,
+        transform: "rotate(-45deg)",
+        filter: "drop-shadow(0 1.5px 2px rgba(0,0,0,0.35))",
+        pointerEvents: "none",
+        userSelect: "none"
+      }}
+    />
   );
 }
 
 function CpStampIcon({ size = 20 }) {
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
   return (
-    <svg
+    <img
+      src={`${base}/emotes/stamp_book.png`}
+      alt="Livro de Selos"
       width={size}
       height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      style={{ flexShrink: 0, filter: "drop-shadow(0 1.5px 2px rgba(0,0,0,0.35))" }}
-    >
-      <rect x="3" y="3" width="26" height="26" rx="6" fill="#ffffff" stroke="#00264d" strokeWidth="2.5" />
-      <rect x="5.5" y="5.5" width="21" height="21" rx="4" fill="#008be3" />
-      <circle cx="16" cy="16" r="7" fill="#ffffff" />
-      <path
-        d="M16 11.5L17.2 14.8H20.8L18 16.8L19 20.2L16 18.2L13 20.2L14 16.8L11.2 14.8H14.8L16 11.5Z"
-        fill="#005b96"
-      />
-    </svg>
+      draggable={false}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        objectFit: "contain",
+        display: "block",
+        flexShrink: 0,
+        filter: "drop-shadow(0 1.5px 2px rgba(0,0,0,0.35))",
+        pointerEvents: "none",
+        userSelect: "none"
+      }}
+    />
   );
 }
 
@@ -931,7 +938,7 @@ export default function CharacterSheetModal({
               }}
             >
               <CpCoinIcon size={22} />
-              <span className="cp-stat-label">Your Coins:</span>
+              <span className="cp-stat-label">Total de Moedas:</span>
               <input
                 type="number"
                 className="cp-stat-input"
@@ -952,7 +959,7 @@ export default function CharacterSheetModal({
           ) : (
             <div className="cp-playercard-stat-row">
               <CpCoinIcon size={22} />
-              <span className="cp-stat-label">Your Coins:</span>
+              <span className="cp-stat-label">Total de Moedas:</span>
               <span className="cp-stat-value">{coins}</span>
               {canEdit && (
                 <button
@@ -983,7 +990,7 @@ export default function CharacterSheetModal({
               }}
             >
               <CpStampIcon size={22} />
-              <span className="cp-stat-label">Your Stamps:</span>
+              <span className="cp-stat-label">Total de Experiência:</span>
               <input
                 type="number"
                 className="cp-stat-input"
@@ -1004,7 +1011,7 @@ export default function CharacterSheetModal({
           ) : (
             <div className="cp-playercard-stat-row">
               <CpStampIcon size={22} />
-              <span className="cp-stat-label">Your Stamps:</span>
+              <span className="cp-stat-label">Total de Experiência:</span>
               <span className="cp-stat-value">{xp}</span>
               {canEdit && (
                 <button
