@@ -180,6 +180,9 @@ export function useCharacters() {
           cost: { resource: "mp", amount: 0 },
           hitFormula: "1d20 + @agilidade + @pontaria",
           effectFormula: "1d6 + @agilidade",
+          trigger: "active",
+          effectType: "damage",
+          savingThrow: { enabled: false, dcFormula: "12", attribute: "resistencia", effectDescription: "" },
           description: "Ataque rápido à distância."
         }
       ],
@@ -191,6 +194,9 @@ export function useCharacters() {
           qty: 2,
           elementColor: "#38c172",
           rollFormula: "1d8 + 2",
+          trigger: "active",
+          effectType: "heal",
+          consumeOnUse: true,
           description: "Recupera vida ao consumir."
         }
       ],
@@ -205,6 +211,7 @@ export function useCharacters() {
               color: "#e53935",
               hitFormula: "1d20 + @forca + @luta",
               effectFormula: "1d8 + @forca",
+              effectType: "damage",
               costResource: "mp",
               costAmount: 0
             }
@@ -435,6 +442,7 @@ export function useCharacters() {
 
   return {
     characters,
+    allCharacters: rawCharacters,
     folders,
     canEditCharacter,
     createCharacter,

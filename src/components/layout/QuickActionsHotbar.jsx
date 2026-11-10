@@ -49,16 +49,21 @@ export default function QuickActionsHotbar({
   const handleRollSlot = (slotData) => {
     if (!slotData) return;
     const latest = allRolls.find((r) => r.id === slotData.rollId) || slotData;
+    const costAmt = Number(latest.costAmount) || 0;
     onExecuteRoll({
       title: latest.name,
       categoryColor: latest.color || "#02529c",
-      primaryFormula: latest.hitFormula || "1d20",
-      primaryLabel: "Rolagem",
+      primaryFormula: latest.hitFormula || "",
+      primaryLabel: latest.effectFormula ? "Acerto" : "Rolagem",
+      rollKind: "attack",
       secondaryFormula: latest.effectFormula || "",
       secondaryLabel: "Efeito / Dano",
       character,
+      cost: costAmt > 0 ? { resource: latest.costResource || "mp", amount: costAmt } : null,
       costResource: latest.costResource,
       costAmount: latest.costAmount,
+      effectType: latest.effectType || (latest.effectFormula ? "damage" : null),
+      savingThrow: latest.savingThrow || null,
       icon: latest.icon || slotData.icon || latest.name
     });
     onClose?.();
@@ -75,7 +80,9 @@ export default function QuickActionsHotbar({
       hitFormula: roll.hitFormula || "1d20",
       effectFormula: roll.effectFormula || "",
       costResource: roll.costResource || "mp",
-      costAmount: roll.costAmount || 0
+      costAmount: roll.costAmount || 0,
+      effectType: roll.effectType || "damage",
+      savingThrow: roll.savingThrow || null
     };
     onUpdateCharacter(character.id, { hotbar: next });
     setPickingSlotIndex(null);

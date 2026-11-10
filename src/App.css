@@ -595,6 +595,48 @@
   border-radius: 22px;
 }
 
+.cp-playercard-container.standalone {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.cp-playercard-container.standalone .cp-playercard-left {
+  width: clamp(320px, 28vw, 420px);
+  border-radius: 0;
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+}
+
+.cp-playercard-container.standalone .cp-playercard-notch {
+  display: none;
+}
+
+.cp-playercard-container.standalone .cp-playercard-photo-frame {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.cp-playercard-container.standalone .cp-playercard-right {
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.cp-playercard-container.standalone .cp-inv-grid {
+  grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+  grid-auto-rows: 120px;
+}
+
 /* Lado Esquerdo: Player Card Clássico */
 .cp-playercard-left {
   width: 340px;

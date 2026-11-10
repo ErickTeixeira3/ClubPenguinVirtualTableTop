@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { TRIGGER_TYPES, EFFECT_TYPES, SAVE_ATTRIBUTES } from "../../engines/combatEngine";
 
 const ELEMENT_COLORS = [
   { color: "#e53935", label: "Fogo" },
@@ -58,6 +59,9 @@ export default function CompendiumModal({
             qty: 1,
             elementColor: entry.elementColor || "#38c172",
             rollFormula: entry.effectFormula || entry.hitFormula || "",
+            trigger: entry.trigger || "active",
+            effectType: entry.effectType || "heal",
+            savingThrow: entry.savingThrow || null,
             description: entry.description || ""
           }
         ]
@@ -92,6 +96,9 @@ export default function CompendiumModal({
             },
             hitFormula: entry.hitFormula || "",
             effectFormula: entry.effectFormula || "",
+            trigger: entry.trigger || "active",
+            effectType: entry.effectType || "damage",
+            savingThrow: entry.savingThrow || null,
             description: entry.description || ""
           }
         ]
@@ -111,6 +118,12 @@ export default function CompendiumModal({
   const [costAmount, setCostAmount] = useState(0);
   const [hitFormula, setHitFormula] = useState("1d20 + @forca");
   const [effectFormula, setEffectFormula] = useState("1d8 + @forca");
+  const [trigger, setTrigger] = useState("active");
+  const [effectType, setEffectType] = useState("damage");
+  const [saveEnabled, setSaveEnabled] = useState(false);
+  const [saveDcFormula, setSaveDcFormula] = useState("12");
+  const [saveAttribute, setSaveAttribute] = useState("resistencia");
+  const [saveEffectDesc, setSaveEffectDesc] = useState("");
   const [description, setDescription] = useState("");
   const [visibleToPlayers, setVisibleToPlayers] = useState(true);
 
@@ -123,6 +136,12 @@ export default function CompendiumModal({
     setCostAmount(0);
     setHitFormula("1d20 + @forca");
     setEffectFormula("1d8 + @forca");
+    setTrigger("active");
+    setEffectType("damage");
+    setSaveEnabled(false);
+    setSaveDcFormula("12");
+    setSaveAttribute("resistencia");
+    setSaveEffectDesc("");
     setDescription("");
     setVisibleToPlayers(true);
   };
@@ -136,6 +155,12 @@ export default function CompendiumModal({
     setCostAmount(entry.cost?.amount ?? 0);
     setHitFormula(entry.hitFormula || "");
     setEffectFormula(entry.effectFormula || "");
+    setTrigger(entry.trigger || "active");
+    setEffectType(entry.effectType || "damage");
+    setSaveEnabled(Boolean(entry.savingThrow?.enabled));
+    setSaveDcFormula(entry.savingThrow?.dcFormula || "12");
+    setSaveAttribute(entry.savingThrow?.attribute || "resistencia");
+    setSaveEffectDesc(entry.savingThrow?.effectDescription || "");
     setDescription(entry.description || "");
     setVisibleToPlayers(entry.visibleToPlayers !== false);
   };
@@ -143,6 +168,13 @@ export default function CompendiumModal({
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim() || !isGM) return;
+
+    const savingThrow = {
+      enabled: Boolean(saveEnabled),
+      dcFormula: saveDcFormula.trim() || "12",
+      attribute: saveAttribute || "resistencia",
+      effectDescription: saveEffectDesc.trim()
+    };
 
     if (editingId) {
       await onUpdateEntry(editingId, {
@@ -155,6 +187,9 @@ export default function CompendiumModal({
         },
         hitFormula: hitFormula.trim(),
         effectFormula: effectFormula.trim(),
+        trigger,
+        effectType,
+        savingThrow,
         description: description.trim(),
         visibleToPlayers
       });
@@ -167,6 +202,9 @@ export default function CompendiumModal({
         costAmount,
         hitFormula: hitFormula.trim(),
         effectFormula: effectFormula.trim(),
+        trigger,
+        effectType,
+        savingThrow,
         description: description.trim(),
         visibleToPlayers
       });
@@ -356,6 +394,94 @@ export default function CompendiumModal({
                 value={effectFormula}
                 onChange={(e) => setEffectFormula(e.target.value)}
               />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" }}>
+                <select
+                  className="cp-input"
+                  value={trigger}
+                  onChange={(e) => setTrigger(e.target.value)}
+                  style={{ fontSize: "11px" }}
+                >
+                  {TRIGGER_TYPES.map((tr) => (
+                    <option key={tr.id} value={tr.id}>
+                      {tr.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="cp-input"
+                  value={effectType}
+                  onChange={(e) => setEffectType(e.target.value)}
+                  style={{ fontSize: "11px" }}
+                >
+                  {EFFECT_TYPES.map((et) => (
+                    <option key={et.id} value={et.id}>
+                      {et.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "12px",
+                  fontWeight: 800,
+                  cursor: "pointer"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={saveEnabled}
+                  onChange={(e) => setSaveEnabled(e.target.checked)}
+                />
+                Exige Teste de Resistência
+              </label>
+
+              {saveEnabled && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px",
+                    background: "#f8fafc",
+                    padding: "6px",
+                    borderRadius: "8px",
+                    border: "1.5px solid #cbd5e1"
+                  }}
+                >
+                  <input
+                    type="text"
+                    className="cp-input"
+                    placeholder="CD (ex: 14 ou 10+@forca)"
+                    value={saveDcFormula}
+                    onChange={(e) => setSaveDcFormula(e.target.value)}
+                    style={{ fontSize: "11px" }}
+                  />
+                  <select
+                    className="cp-input"
+                    value={saveAttribute}
+                    onChange={(e) => setSaveAttribute(e.target.value)}
+                    style={{ fontSize: "11px" }}
+                  >
+                    {SAVE_ATTRIBUTES.map((sa) => (
+                      <option key={sa.id} value={sa.id}>
+                        {sa.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    className="cp-input"
+                    placeholder="Efeito na falha (ex: Derrubado)"
+                    value={saveEffectDesc}
+                    onChange={(e) => setSaveEffectDesc(e.target.value)}
+                    style={{ gridColumn: "1 / -1", fontSize: "11px" }}
+                  />
+                </div>
+              )}
 
               <textarea
                 className="cp-input"

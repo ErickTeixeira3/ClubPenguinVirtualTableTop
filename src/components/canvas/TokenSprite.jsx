@@ -9,10 +9,14 @@ export default function TokenSprite({
   canControl,
   isInteractive = true,
   isSelected,
+  isTargeted = false,
+  isAoeHighlighted = false,
   speechBubble = null,
   snowballAimActive = false,
   onStartDrag,
   onSelect,
+  onHoverToken,
+  onTokenClickForTarget,
   onQuickToggleVisibility,
   onQuickToggleName,
   onQuickAdjustHp,
@@ -53,7 +57,22 @@ export default function TokenSprite({
 
   return (
     <div
+      onMouseEnter={() => {
+        if (!isHiddenFromPlayers || isGM) {
+          onHoverToken?.(token);
+        }
+      }}
+      onMouseLeave={() => {
+        onHoverToken?.(null);
+      }}
       onMouseDown={(e) => {
+        if (!isHiddenFromPlayers || isGM) {
+          const handledTarget = onTokenClickForTarget?.(token, e);
+          if (handledTarget) {
+            e.stopPropagation();
+            return;
+          }
+        }
         if (!isInteractive) return;
         e.stopPropagation();
         if (snowballAimActive) {
@@ -80,17 +99,88 @@ export default function TokenSprite({
         top: `${token.y}px`,
         width: `${sizePx}px`,
         height: `${sizePx}px`,
-        zIndex: isSelected ? baseZIndex + 3 : baseZIndex,
+        zIndex: isTargeted ? baseZIndex + 4 : isSelected ? baseZIndex + 3 : baseZIndex,
         cursor: !isInteractive
           ? "default"
           : canControl
             ? "grab"
-            : "default",
-        pointerEvents: isInteractive ? "auto" : "none",
+            : "pointer",
+        pointerEvents: isInteractive || !isHiddenFromPlayers || isGM ? "auto" : "none",
         opacity: isHiddenFromPlayers ? 0.58 : 1,
         userSelect: "none"
       }}
     >
+      {/* Indicador de Alvo (Target Reticle) */}
+      {isTargeted && (
+        <div
+          style={{
+            position: "absolute",
+            inset: "-8px",
+            borderRadius: "50%",
+            border: "3px dashed #ff2a55",
+            boxShadow: "0 0 16px rgba(255, 42, 85, 0.75), inset 0 0 10px rgba(255, 42, 85, 0.35)",
+            pointerEvents: "none",
+            zIndex: 20
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: "-18px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#e11d48",
+              color: "#ffffff",
+              border: "1.5px solid #fecdd3",
+              borderRadius: "999px",
+              padding: "0px 6px",
+              fontSize: "9px",
+              fontWeight: 900,
+              letterSpacing: "0.05em",
+              whiteSpace: "nowrap",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.6)"
+            }}
+          >
+            🎯 ALVO
+          </div>
+        </div>
+      )}
+
+      {/* Indicador de Prévia de Área (AoE) */}
+      {isAoeHighlighted && !isTargeted && (
+        <div
+          style={{
+            position: "absolute",
+            inset: "-8px",
+            borderRadius: "50%",
+            border: "3px solid #f97316",
+            boxShadow: "0 0 16px rgba(249, 115, 22, 0.85), inset 0 0 10px rgba(249, 115, 22, 0.45)",
+            pointerEvents: "none",
+            zIndex: 19
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: "-18px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#ea580c",
+              color: "#ffffff",
+              border: "1.5px solid #fed7aa",
+              borderRadius: "999px",
+              padding: "0px 6px",
+              fontSize: "9px",
+              fontWeight: 900,
+              letterSpacing: "0.05em",
+              whiteSpace: "nowrap",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.6)"
+            }}
+          >
+            NA ÁREA
+          </div>
+        </div>
+      )}
       {/* Menu Rápido quando o Token está Selecionado */}
       {isSelected && (isGM || canControl) && (
         <div

@@ -51,6 +51,7 @@ export default function TokenModal({
     initialToken?.hpCurrent ?? ""
   );
   const [hpMax, setHpMax] = useState(initialToken?.hpMax ?? "");
+  const [defense, setDefense] = useState(initialToken?.defense ?? 10);
   const [showBarsToPlayers, setShowBarsToPlayers] = useState(
     initialToken ? initialToken.showBarsToPlayers !== false : true
   );
@@ -116,6 +117,7 @@ export default function TokenModal({
           controlledBy,
           hpCurrent: hpCurrent !== "" ? Number(hpCurrent) : null,
           hpMax: hpMax !== "" ? Number(hpMax) : null,
+          defense: defense !== "" ? Number(defense) : 10,
           showBarsToPlayers
         },
         selectedFile
@@ -273,11 +275,11 @@ export default function TokenModal({
             </select>
           </div>
 
-          {/* Barra de Vida (HP) */}
+          {/* Barra de Vida (HP) e Defesa */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              gridTemplateColumns: "1fr 1fr 1fr",
               gap: "8px"
             }}
           >
@@ -294,6 +296,14 @@ export default function TokenModal({
               placeholder="HP Máximo"
               value={hpMax}
               onChange={(e) => setHpMax(e.target.value)}
+            />
+            <input
+              type="number"
+              className="cp-input"
+              placeholder="Defesa"
+              title="Defesa"
+              value={defense}
+              onChange={(e) => setDefense(e.target.value)}
             />
           </div>
 

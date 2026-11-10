@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
 import { CP_FLASH_ICONS, renderCpFlashIcon } from "./CpFlashIcons";
+import { TRIGGER_TYPES, EFFECT_TYPES, SAVE_ATTRIBUTES, SKILL_RANGE_TYPES, SKILL_AOE_TYPES } from "../../engines/combatEngine";
 
 const CARD_COLORS = [
   "#008be3", // CP Blue Classic
@@ -17,7 +18,8 @@ const CARD_COLORS = [
 
 const TABS = [
   { id: "inventory", label: "Inventário" },
-  { id: "main", label: "Atributos & Skills" },
+  { id: "attributes", label: "Atributos" },
+  { id: "skills", label: "Skills" },
   { id: "notes", label: "História & Notas" },
   { id: "rolls", label: "Rolagens & Ações" }
 ];
@@ -247,17 +249,20 @@ export default function CharacterSheetModal({
   onUpdateCharacter,
   onUploadCharacterImage,
   onExecuteRoll,
+  onPingSkill,
   onSpawnTokenOnMap,
   onClose,
-  isStandaloneWindow = false
+  isStandaloneWindow = false,
+  onStartAoeDemarcate = null
 }) {
-  // 'main' | 'inventory' | 'notes' | 'rolls'
+  // 'attributes' | 'skills' | 'inventory' | 'notes' | 'rolls'
   const [activeTab, setActiveTab] = useState("inventory");
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState(
     character?.rollGroups?.[0]?.id || "grp_combate"
   );
+  const [expandedSkillIds, setExpandedSkillIds] = useState(new Set());
 
   // Estados de edição das Moedas e XP
   const [editingCoins, setEditingCoins] = useState(false);
@@ -275,18 +280,37 @@ export default function CharacterSheetModal({
   const [newSkillBonus, setNewSkillBonus] = useState(2);
 
   const [newAbilityOpen, setNewAbilityOpen] = useState(false);
+  const [editingAbilityId, setEditingAbilityId] = useState(null);
   const [abName, setAbName] = useState("");
   const [abColor, setAbColor] = useState("#e53935");
   const [abCostRes, setAbCostRes] = useState("mp");
   const [abCostAmt, setAbCostAmt] = useState(0);
   const [abHit, setAbHit] = useState("1d20 + @forca");
   const [abEffect, setAbEffect] = useState("1d8 + @forca");
+  const [abTrigger, setAbTrigger] = useState("active");
+  const [abEffectType, setAbEffectType] = useState("damage");
+  const [abRangeType, setAbRangeType] = useState("ranged"); // 'self' | 'touch' | 'ranged'
+  const [abRangeDist, setAbRangeDist] = useState(9); // metros
+  const [abAoeType, setAbAoeType] = useState("single"); // 'single' | 'circle' | 'cone'
+  const [abAoeRadius, setAbAoeRadius] = useState(6); // raio em metros (ou comprimento do cone)
+  const [abAoeConeAngle, setAbAoeConeAngle] = useState(45); // 45 ou 60 graus
+  const [abSaveEnabled, setAbSaveEnabled] = useState(false);
+  const [abSaveDc, setAbSaveDc] = useState("12");
+  const [abSaveAttr, setAbSaveAttr] = useState("resistencia");
+  const [abSaveDesc, setAbSaveDesc] = useState("");
   const [abDesc, setAbDesc] = useState("");
 
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [itemName, setItemName] = useState("");
   const [itemQty, setItemQty] = useState(1);
   const [itemFormula, setItemFormula] = useState("");
+  const [itemTrigger, setItemTrigger] = useState("active");
+  const [itemEffectType, setItemEffectType] = useState("heal");
+  const [itemConsumeOnUse, setItemConsumeOnUse] = useState(true);
+  const [itemSaveEnabled, setItemSaveEnabled] = useState(false);
+  const [itemSaveDc, setItemSaveDc] = useState("12");
+  const [itemSaveAttr, setItemSaveAttr] = useState("resistencia");
+  const [itemSaveDesc, setItemSaveDesc] = useState("");
   const [itemDesc, setItemDesc] = useState("");
   const [itemIcon, setItemIcon] = useState("sword");
   const [showIconPicker, setShowIconPicker] = useState(false);
@@ -300,11 +324,33 @@ export default function CharacterSheetModal({
   const [crColor, setCrColor] = useState("#3090f0");
   const [crHit, setCrHit] = useState("1d20 + @forca");
   const [crEffect, setCrEffect] = useState("");
+  const [crEffectType, setCrEffectType] = useState("damage");
+  const [crSaveEnabled, setCrSaveEnabled] = useState(false);
+  const [crSaveDc, setCrSaveDc] = useState("12");
+  const [crSaveAttr, setCrSaveAttr] = useState("resistencia");
+  const [crSaveDesc, setCrSaveDesc] = useState("");
   const [crCostRes, setCrCostRes] = useState("mp");
   const [crCostAmt, setCrCostAmt] = useState(0);
   const [hotbarModalRoll, setHotbarModalRoll] = useState(null);
   const [importFromSheetOpen, setImportFromSheetOpen] = useState(false);
   const [editingRollIconTarget, setEditingRollIconTarget] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", handleFsChange);
+    return () => document.removeEventListener("fullscreenchange", handleFsChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  };
 
   const inventoryScrollRef = useRef(null);
 
@@ -356,7 +402,7 @@ export default function CharacterSheetModal({
     window.open(
       url,
       `cpvtt_sheet_${character.id}`,
-      "width=1080,height=760,menubar=no,toolbar=no,location=no,status=no"
+      "width=1280,height=860,resizable=yes,menubar=no,toolbar=no,location=no,status=no"
     );
   };
 
@@ -383,6 +429,56 @@ export default function CharacterSheetModal({
     });
   };
 
+  const toggleExpandSkill = (skillId) => {
+    setExpandedSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) {
+        next.delete(skillId);
+      } else {
+        next.add(skillId);
+      }
+      return next;
+    });
+  };
+
+  const handleDemarcateArea = (ab) => {
+    const config = {
+      skillId: ab.id,
+      skillName: ab.name,
+      rangeType: ab.range?.type || ab.rangeType || "ranged",
+      rangeMeters: Number(ab.range?.distanceMeters ?? ab.rangeMeters ?? 9) || 9,
+      aoeType: ab.aoe?.type || ab.aoeType || "circle",
+      aoeRadiusMeters: Number(ab.aoe?.radiusMeters ?? ab.aoeRadiusMeters ?? 6) || 6,
+      aoeConeAngleDeg: Number(ab.aoe?.coneAngleDeg ?? ab.aoeConeAngleDeg ?? 45) || 45,
+      sourceCharacterId: character?.id || null,
+      sourceCharacterName: character?.name || null,
+      timestamp: Date.now()
+    };
+    if (onStartAoeDemarcate) {
+      onStartAoeDemarcate(config);
+    }
+    try {
+      localStorage.setItem(`cp_vtt_aoe_demarcate_${campaignId || "default"}`, JSON.stringify(config));
+    } catch {}
+  };
+
+  const handlePing = (skillOrAbility) => {
+    if (onPingSkill) {
+      onPingSkill({
+        character,
+        skill: skillOrAbility,
+        visibility: rollVisibility
+      });
+    } else if (onExecuteRoll) {
+      onExecuteRoll({
+        isPingOnly: true,
+        character,
+        skill: skillOrAbility,
+        visibility: rollVisibility
+      });
+    }
+  };
+
   const pinToRollGroup = (rollEntry, targetGroupId = null) => {
     if (!canEdit) return;
     const groups =
@@ -397,8 +493,10 @@ export default function CharacterSheetModal({
       name: rollEntry.name || "Rolagem",
       color: rollEntry.color || "#02529c",
       icon: rollEntry.icon || "sword",
-      hitFormula: rollEntry.hitFormula || "1d20",
+      hitFormula: rollEntry.hitFormula ?? "1d20",
       effectFormula: rollEntry.effectFormula || "",
+      effectType: rollEntry.effectType || (rollEntry.effectFormula ? "damage" : null),
+      savingThrow: rollEntry.savingThrow || null,
       costResource: rollEntry.costResource || "mp",
       costAmount: rollEntry.costAmount || 0
     };
@@ -478,23 +576,88 @@ export default function CharacterSheetModal({
     });
   };
 
+  const resetAbilityForm = () => {
+    setEditingAbilityId(null);
+    setAbName("");
+    setAbColor("#e53935");
+    setAbCostRes("mp");
+    setAbCostAmt(0);
+    setAbHit("1d20 + @forca");
+    setAbEffect("1d8 + @forca");
+    setAbTrigger("active");
+    setAbEffectType("damage");
+    setAbRangeType("ranged");
+    setAbRangeDist(9);
+    setAbAoeType("single");
+    setAbAoeRadius(6);
+    setAbAoeConeAngle(45);
+    setAbSaveEnabled(false);
+    setAbSaveDc("12");
+    setAbSaveAttr("resistencia");
+    setAbSaveDesc("");
+    setAbDesc("");
+  };
+
+  const handleStartEditAbility = (ab) => {
+    if (!canEdit || !ab) return;
+    setEditingAbilityId(ab.id);
+    setAbName(ab.name || "");
+    setAbColor(ab.elementColor || "#e53935");
+    setAbCostRes(ab.cost?.resource || "mp");
+    setAbCostAmt(ab.cost?.amount ?? 0);
+    setAbHit(ab.hitFormula ?? "");
+    setAbEffect(ab.effectFormula ?? "");
+    setAbTrigger(ab.trigger || "active");
+    setAbEffectType(ab.effectType || "damage");
+    setAbRangeType(ab.range?.type || ab.rangeType || "ranged");
+    setAbRangeDist(ab.range?.distanceMeters ?? ab.rangeMeters ?? 9);
+    setAbAoeType(ab.aoe?.type || ab.aoeType || "single");
+    setAbAoeRadius(ab.aoe?.radiusMeters ?? ab.aoeRadiusMeters ?? 6);
+    setAbAoeConeAngle(ab.aoe?.coneAngleDeg ?? ab.aoeConeAngleDeg ?? 45);
+    setAbSaveEnabled(Boolean(ab.savingThrow?.enabled));
+    setAbSaveDc(ab.savingThrow?.dcFormula || "12");
+    setAbSaveAttr(ab.savingThrow?.attribute || "resistencia");
+    setAbSaveDesc(ab.savingThrow?.effectDescription || "");
+    setAbDesc(ab.description || "");
+    setNewAbilityOpen(true);
+  };
+
   const handleAddAbility = (e) => {
     e.preventDefault();
     if (!canEdit || !abName.trim()) return;
-    const nextAb = {
-      id: `ab_${Date.now()}`,
+    const payload = {
+      id: editingAbilityId || `ab_${Date.now()}`,
       name: abName.trim(),
       elementColor: abColor,
       cost: { resource: abCostRes, amount: Number(abCostAmt) || 0 },
       hitFormula: abHit.trim(),
       effectFormula: abEffect.trim(),
+      trigger: abTrigger || "active",
+      effectType: abEffectType || "damage",
+      range: {
+        type: abRangeType || "ranged",
+        distanceMeters: abRangeType === "ranged" ? Math.max(0, Number(abRangeDist) || 0) : 0
+      },
+      aoe: {
+        type: abAoeType || "single",
+        radiusMeters: abAoeType !== "single" ? Math.max(1, Number(abAoeRadius) || 1) : 0,
+        coneAngleDeg: abAoeType === "cone" ? (Number(abAoeConeAngle) === 60 ? 60 : 45) : 45
+      },
+      savingThrow: {
+        enabled: Boolean(abSaveEnabled),
+        dcFormula: abSaveDc.trim() || "12",
+        attribute: abSaveAttr || "resistencia",
+        effectDescription: abSaveDesc.trim()
+      },
       description: abDesc.trim()
     };
+    const nextAbilities = editingAbilityId
+      ? abilities.map((a) => (a.id === editingAbilityId ? { ...a, ...payload } : a))
+      : [...abilities, payload];
     onUpdateCharacter(character.id, {
-      abilities: [...abilities, nextAb]
+      abilities: nextAbilities
     });
-    setAbName("");
-    setAbDesc("");
+    resetAbilityForm();
     setNewAbilityOpen(false);
   };
 
@@ -516,6 +679,9 @@ export default function CharacterSheetModal({
             elementColor: entry.elementColor || "#38c172",
             icon: isFish ? "fluffy_fish" : (entry.icon || "sword"),
             rollFormula: entry.effectFormula || entry.hitFormula || "",
+            trigger: entry.trigger || "active",
+            effectType: entry.effectType || "heal",
+            savingThrow: entry.savingThrow || null,
             description: entry.description || ""
           }
         ]
@@ -544,6 +710,9 @@ export default function CharacterSheetModal({
             cost: entry.cost || { resource: "mp", amount: 0 },
             hitFormula: entry.hitFormula || "",
             effectFormula: entry.effectFormula || "",
+            trigger: entry.trigger || "active",
+            effectType: entry.effectType || "damage",
+            savingThrow: entry.savingThrow || null,
             description: entry.description || ""
           }
         ]
@@ -580,12 +749,28 @@ export default function CharacterSheetModal({
           elementColor: "#38c172",
           icon: finalIcon,
           rollFormula: itemFormula.trim(),
+          trigger: itemTrigger || "active",
+          effectType: itemEffectType || "heal",
+          consumeOnUse: Boolean(itemConsumeOnUse),
+          savingThrow: {
+            enabled: Boolean(itemSaveEnabled),
+            dcFormula: itemSaveDc.trim() || "12",
+            attribute: itemSaveAttr || "resistencia",
+            effectDescription: itemSaveDesc.trim()
+          },
           description: itemDesc.trim()
         }
       ]
     });
     setItemName("");
     setItemFormula("");
+    setItemTrigger("active");
+    setItemEffectType("heal");
+    setItemConsumeOnUse(true);
+    setItemSaveEnabled(false);
+    setItemSaveDc("12");
+    setItemSaveAttr("resistencia");
+    setItemSaveDesc("");
     setItemDesc("");
     setItemIcon("sword");
     setShowIconPicker(false);
@@ -667,6 +852,13 @@ export default function CharacterSheetModal({
         icon: crIcon,
         hitFormula: crHit.trim(),
         effectFormula: crEffect.trim(),
+        effectType: crEffectType || "damage",
+        savingThrow: {
+          enabled: Boolean(crSaveEnabled),
+          dcFormula: crSaveDc.trim() || "12",
+          attribute: crSaveAttr || "resistencia",
+          effectDescription: crSaveDesc.trim()
+        },
         costResource: crCostRes,
         costAmount: Number(crCostAmt) || 0
       },
@@ -674,6 +866,11 @@ export default function CharacterSheetModal({
     );
     setCrName("");
     setCrEffect("");
+    setCrEffectType("damage");
+    setCrSaveEnabled(false);
+    setCrSaveDc("12");
+    setCrSaveAttr("resistencia");
+    setCrSaveDesc("");
     setCrIcon("sword");
     setShowRollIconPicker(false);
     setNewCustomRollOpen(false);
@@ -704,8 +901,10 @@ export default function CharacterSheetModal({
       name: roll.name,
       color: roll.color || "#02529c",
       icon: roll.icon || roll.name,
-      hitFormula: roll.hitFormula || "1d20",
+      hitFormula: roll.hitFormula ?? "1d20",
       effectFormula: roll.effectFormula || "",
+      effectType: roll.effectType || (roll.effectFormula ? "damage" : null),
+      savingThrow: roll.savingThrow || null,
       costResource: roll.costResource || "mp",
       costAmount: roll.costAmount || 0
     };
@@ -786,16 +985,16 @@ export default function CharacterSheetModal({
     ? {
         width: "100vw",
         height: "100vh",
-        padding: "16px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center"
+        padding: 0,
+        margin: 0,
+        overflow: "hidden",
+        display: "flex"
       }
     : undefined;
 
   const sheetBody = (
     <div
-      className="cp-playercard-container"
+      className={`cp-playercard-container ${isStandaloneWindow ? "standalone" : ""}`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* LADO ESQUERDO: PLAYER CARD CLÁSSICO DO CLUB PENGUIN */}
@@ -1109,6 +1308,17 @@ export default function CharacterSheetModal({
                 Permissões
               </button>
             )}
+
+            {isStandaloneWindow && (
+              <button
+                type="button"
+                className="cp-btn cp-btn-gold"
+                style={{ padding: "3px 8px", fontSize: "11px", height: "26px" }}
+                onClick={toggleFullscreen}
+              >
+                {isFullscreen ? "⛶ Sair da Tela Cheia" : "⛶ Tela Cheia"}
+              </button>
+            )}
           </div>
 
           {/* Ações Específicas da Aba Aberta */}
@@ -1152,6 +1362,58 @@ export default function CharacterSheetModal({
                 onClick={() => setNewItemOpen((p) => !p)}
               >
                 + Novo Item
+              </button>
+            </div>
+          )}
+
+          {activeTab === "skills" && canEdit && (
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              {compendiumEntries.filter((e) => e.type === "skill" || e.type === "ability").length > 0 && (
+                <select
+                  className="cp-input"
+                  style={{
+                    width: "160px",
+                    padding: "2px 6px",
+                    fontSize: "11px",
+                    height: "26px"
+                  }}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const found = compendiumEntries.find(
+                      (c) => c.id === e.target.value
+                    );
+                    if (found) handlePullFromCompendium(found);
+                    e.target.value = "";
+                  }}
+                >
+                  <option value="" disabled>
+                    + Puxar Compêndio...
+                  </option>
+                  {compendiumEntries
+                    .filter((e) => e.type === "skill" || e.type === "ability")
+                    .map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.name}
+                      </option>
+                    ))}
+                </select>
+              )}
+
+              <button
+                type="button"
+                className="cp-btn cp-btn-green"
+                style={{ padding: "3px 10px", fontSize: "11px", height: "26px" }}
+                onClick={() => {
+                  if (newAbilityOpen) {
+                    setNewAbilityOpen(false);
+                    resetAbilityForm();
+                  } else {
+                    resetAbilityForm();
+                    setNewAbilityOpen(true);
+                  }
+                }}
+              >
+                + Habilidade
               </button>
             </div>
           )}
@@ -1295,6 +1557,84 @@ export default function CharacterSheetModal({
                 onClose={() => setShowIconPicker(false)}
               />
             )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "6px", alignItems: "center" }}>
+              <select
+                className="cp-input"
+                value={itemTrigger}
+                onChange={(e) => setItemTrigger(e.target.value)}
+                style={{ fontSize: "11px", padding: "3px 6px" }}
+              >
+                {TRIGGER_TYPES.map((tr) => (
+                  <option key={tr.id} value={tr.id}>
+                    {tr.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="cp-input"
+                value={itemEffectType}
+                onChange={(e) => setItemEffectType(e.target.value)}
+                style={{ fontSize: "11px", padding: "3px 6px" }}
+              >
+                {EFFECT_TYPES.map((et) => (
+                  <option key={et.id} value={et.id}>
+                    {et.label}
+                  </option>
+                ))}
+              </select>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: "#1e293b", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={itemConsumeOnUse}
+                  onChange={(e) => setItemConsumeOnUse(e.target.checked)}
+                />
+                Consumível
+              </label>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 800, color: "#003264", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={itemSaveEnabled}
+                  onChange={(e) => setItemSaveEnabled(e.target.checked)}
+                />
+                Exige Resistência
+              </label>
+              {itemSaveEnabled && (
+                <>
+                  <input
+                    type="text"
+                    className="cp-input"
+                    placeholder="CD (ex: 12)"
+                    value={itemSaveDc}
+                    onChange={(e) => setItemSaveDc(e.target.value)}
+                    style={{ width: "80px", fontSize: "11px", padding: "2px 6px" }}
+                  />
+                  <select
+                    className="cp-input"
+                    value={itemSaveAttr}
+                    onChange={(e) => setItemSaveAttr(e.target.value)}
+                    style={{ fontSize: "11px", padding: "2px 6px" }}
+                  >
+                    {SAVE_ATTRIBUTES.map((sa) => (
+                      <option key={sa.id} value={sa.id}>
+                        {sa.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    className="cp-input"
+                    placeholder="Efeito na falha..."
+                    value={itemSaveDesc}
+                    onChange={(e) => setItemSaveDesc(e.target.value)}
+                    style={{ flex: 1, minWidth: "110px", fontSize: "11px", padding: "2px 6px" }}
+                  />
+                </>
+              )}
+            </div>
 
             <input
               type="text"
@@ -1542,16 +1882,23 @@ export default function CharacterSheetModal({
                     type="button"
                     className="cp-btn cp-btn-gold"
                     style={{ padding: "4px 10px", fontSize: "11px" }}
-                    onClick={() =>
+                    onClick={() => {
+                      const effType = inspectedItem.effectType || "heal";
                       triggerRoll({
                         title: `Item: ${inspectedItem.name}`,
                         categoryColor: "#38c172",
                         description: inspectedItem.description || "",
                         primaryFormula: inspectedItem.rollFormula || "1d20",
                         primaryLabel: "Uso / Efeito",
+                        effectType: effType,
+                        savingThrow: inspectedItem.savingThrow || null,
+                        deferSecondaryDamage: false,
                         icon: resolveItemIcon(inspectedItem)
-                      })
-                    }
+                      });
+                      if (inspectedItem.consumeOnUse) {
+                        handleAdjustItemQty(inspectedItem.id, -1);
+                      }
+                    }}
                   >
                     🎲 Usar
                   </button>
@@ -1568,6 +1915,8 @@ export default function CharacterSheetModal({
                             name: inspectedItem.name,
                             color: "#38c172",
                             hitFormula: inspectedItem.rollFormula || "1d20",
+                            effectType: inspectedItem.effectType || "heal",
+                            savingThrow: inspectedItem.savingThrow || null,
                             icon: resolveItemIcon(inspectedItem)
                           })
                         }
@@ -1619,9 +1968,9 @@ export default function CharacterSheetModal({
           )}
 
           {/* =========================================================================
-              ABA 1: ATRIBUTOS, PERÍCIAS E HABILIDADES
+              ABA: ATRIBUTOS (Recursos HP/MP, Defesa, Nível, Token e Atributos Principais)
              ========================================================================= */}
-          {activeTab === "main" && (
+          {(activeTab === "attributes" || activeTab === "main") && (
             <div
               style={{
                 flex: 1,
@@ -2087,146 +2436,31 @@ export default function CharacterSheetModal({
                   </form>
                 )}
               </div>
+            </div>
+          )}
 
-              {/* Seção Perícias (Skills) */}
-              <div>
-                <strong style={{ fontSize: "12px", color: "#003264", textTransform: "uppercase" }}>
-                  Perícias
-                </strong>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
-                    marginTop: "4px"
-                  }}
-                >
-                  {skills.map((sk) => (
-                    <div
-                      key={sk.id}
-                      style={{
-                        background: "#ffffff",
-                        border: "1.5px solid #cbd5e1",
-                        borderRadius: "8px",
-                        padding: "4px 8px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "6px"
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px",
-                          flex: 1,
-                          minWidth: "140px"
-                        }}
-                      >
-                        <strong style={{ fontSize: "12px", color: "#1e293b" }}>{sk.name}</strong>
-                        <span style={{ fontSize: "10px", color: "#64748b" }}>
-                          ({sk.attribute})
-                        </span>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#003264" }}>
-                          +{sk.bonus}
-                        </span>
-                        <button
-                          type="button"
-                          className="cp-btn cp-btn-gold"
-                          style={{ padding: "3px 8px", fontSize: "10px", height: "24px" }}
-                          onClick={() =>
-                            triggerRoll({
-                              title: `Perícia: ${sk.name}`,
-                              categoryColor: "#02529c",
-                              primaryFormula: sk.formula || `1d20 + @${sk.attribute} + ${sk.bonus}`,
-                              primaryLabel: sk.name,
-                              icon: sk.icon || sk.name
-                            })
-                          }
-                        >
-                          🎲 Rolar
-                        </button>
-                        {canEdit && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSkill(sk.id)}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: "#ef5350",
-                              fontSize: "12px",
-                              cursor: "pointer",
-                              padding: "0 2px"
-                            }}
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {canEdit && (
-                  <form
-                    onSubmit={handleAddSkill}
-                    style={{
-                      display: "flex",
-                      gap: "4px",
-                      marginTop: "6px",
-                      flexWrap: "wrap"
-                    }}
-                  >
-                    <input
-                      type="text"
-                      className="cp-input"
-                      style={{ width: "130px", padding: "3px 6px", fontSize: "11px", height: "26px" }}
-                      placeholder="Nova Perícia..."
-                      value={newSkillName}
-                      onChange={(e) => setNewSkillName(e.target.value)}
-                    />
-                    <select
-                      className="cp-input"
-                      style={{ width: "100px", padding: "3px 6px", fontSize: "11px", height: "26px" }}
-                      value={newSkillAttr}
-                      onChange={(e) => setNewSkillAttr(e.target.value)}
-                    >
-                      {attributes.map((a) => (
-                        <option key={a.key} value={a.key}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      className="cp-input"
-                      style={{ width: "50px", padding: "3px 4px", fontSize: "11px", height: "26px" }}
-                      value={newSkillBonus}
-                      onChange={(e) => setNewSkillBonus(e.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      className="cp-btn"
-                      style={{ padding: "3px 8px", fontSize: "11px", height: "26px" }}
-                    >
-                      + Perícia
-                    </button>
-                  </form>
-                )}
-              </div>
-
-              {/* Seção Habilidades & Magias (Estilo Card-Jitsu) */}
+          {/* =========================================================================
+              ABA: SKILLS (Habilidades & Magias com Expansão e Ping, e Perícias)
+             ========================================================================= */}
+          {activeTab === "skills" && (
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "10px 14px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px"
+              }}
+            >
+              {/* Seção Habilidades & Magias */}
               <div>
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginBottom: "4px"
+                    marginBottom: "6px"
                   }}
                 >
                   <strong style={{ fontSize: "12px", color: "#003264", textTransform: "uppercase" }}>
@@ -2238,7 +2472,15 @@ export default function CharacterSheetModal({
                       type="button"
                       className="cp-btn cp-btn-green"
                       style={{ padding: "2px 8px", fontSize: "10px", height: "24px" }}
-                      onClick={() => setNewAbilityOpen((p) => !p)}
+                      onClick={() => {
+                        if (newAbilityOpen) {
+                          setNewAbilityOpen(false);
+                          resetAbilityForm();
+                        } else {
+                          resetAbilityForm();
+                          setNewAbilityOpen(true);
+                        }
+                      }}
                     >
                       + Habilidade
                     </button>
@@ -2253,7 +2495,7 @@ export default function CharacterSheetModal({
                       border: "2px solid #008be3",
                       borderRadius: "10px",
                       padding: "8px",
-                      marginBottom: "6px",
+                      marginBottom: "8px",
                       display: "grid",
                       gridTemplateColumns: "1fr 1fr",
                       gap: "6px"
@@ -2310,6 +2552,185 @@ export default function CharacterSheetModal({
                       onChange={(e) => setAbEffect(e.target.value)}
                       style={{ fontSize: "11px", padding: "3px 6px" }}
                     />
+                    <select
+                      className="cp-input"
+                      value={abTrigger}
+                      onChange={(e) => setAbTrigger(e.target.value)}
+                      style={{ fontSize: "11px", padding: "3px 6px" }}
+                    >
+                      {TRIGGER_TYPES.map((tr) => (
+                        <option key={tr.id} value={tr.id}>
+                          {tr.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="cp-input"
+                      value={abEffectType}
+                      onChange={(e) => setAbEffectType(e.target.value)}
+                      style={{ fontSize: "11px", padding: "3px 6px" }}
+                    >
+                      {EFFECT_TYPES.map((et) => (
+                        <option key={et.id} value={et.id}>
+                          {et.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div
+                      style={{
+                        gridColumn: "1 / -1",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        flexWrap: "wrap",
+                        background: "#f8fafc",
+                        padding: "4px 6px",
+                        borderRadius: "8px",
+                        border: "1px solid #cbd5e1"
+                      }}
+                    >
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 800, color: "#003264", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={abSaveEnabled}
+                          onChange={(e) => setAbSaveEnabled(e.target.checked)}
+                        />
+                        Resistência (CD)
+                      </label>
+                      {abSaveEnabled && (
+                        <>
+                          <input
+                            type="text"
+                            className="cp-input"
+                            placeholder="CD (ex: 14 ou 10+@forca)"
+                            value={abSaveDc}
+                            onChange={(e) => setAbSaveDc(e.target.value)}
+                            style={{ width: "110px", fontSize: "11px", padding: "2px 6px" }}
+                          />
+                          <select
+                            className="cp-input"
+                            value={abSaveAttr}
+                            onChange={(e) => setAbSaveAttr(e.target.value)}
+                            style={{ fontSize: "11px", padding: "2px 6px" }}
+                          >
+                            {SAVE_ATTRIBUTES.map((sa) => (
+                              <option key={sa.id} value={sa.id}>
+                                {sa.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            className="cp-input"
+                            placeholder="Efeito na falha (ex: Derrubado)"
+                            value={abSaveDesc}
+                            onChange={(e) => setAbSaveDesc(e.target.value)}
+                            style={{ flex: 1, minWidth: "120px", fontSize: "11px", padding: "2px 6px" }}
+                          />
+                        </>
+                      )}
+                    </div>
+
+                    {/* Linha de Alcance e Área de Efeito */}
+                    <div
+                      style={{
+                        gridColumn: "1 / -1",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        flexWrap: "wrap",
+                        background: "#f0fdf4",
+                        padding: "4px 6px",
+                        borderRadius: "8px",
+                        border: "1px solid #bbf7d0"
+                      }}
+                    >
+                      <span style={{ fontSize: "11px", fontWeight: 800, color: "#166534" }}>
+                        🎯 Alcance:
+                      </span>
+                      <select
+                        className="cp-input"
+                        value={abRangeType}
+                        onChange={(e) => setAbRangeType(e.target.value)}
+                        style={{ fontSize: "11px", padding: "2px 6px" }}
+                      >
+                        {SKILL_RANGE_TYPES.map((rt) => (
+                          <option key={rt.id} value={rt.id}>
+                            {rt.label}
+                          </option>
+                        ))}
+                      </select>
+                      {abRangeType === "ranged" && (
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                          <input
+                            type="number"
+                            className="cp-input"
+                            style={{ width: "50px", fontSize: "11px", padding: "2px 4px" }}
+                            min={0}
+                            value={abRangeDist}
+                            onChange={(e) => setAbRangeDist(e.target.value)}
+                          />
+                          <span style={{ fontSize: "10px", fontWeight: 700, color: "#166534" }}>m</span>
+                        </div>
+                      )}
+
+                      <span style={{ fontSize: "11px", fontWeight: 800, color: "#166534", marginLeft: "6px" }}>
+                        Área:
+                      </span>
+                      <select
+                        className="cp-input"
+                        value={abAoeType}
+                        onChange={(e) => setAbAoeType(e.target.value)}
+                        style={{ fontSize: "11px", padding: "2px 6px" }}
+                      >
+                        {SKILL_AOE_TYPES.map((at) => (
+                          <option key={at.id} value={at.id}>
+                            {at.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      {abAoeType === "circle" && (
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                          <span style={{ fontSize: "10px", fontWeight: 700, color: "#166534" }}>Raio:</span>
+                          <input
+                            type="number"
+                            className="cp-input"
+                            style={{ width: "50px", fontSize: "11px", padding: "2px 4px" }}
+                            min={1}
+                            value={abAoeRadius}
+                            onChange={(e) => setAbAoeRadius(e.target.value)}
+                          />
+                          <span style={{ fontSize: "10px", fontWeight: 700, color: "#166534" }}>m</span>
+                        </div>
+                      )}
+
+                      {abAoeType === "cone" && (
+                        <>
+                          <select
+                            className="cp-input"
+                            value={abAoeConeAngle}
+                            onChange={(e) => setAbAoeConeAngle(Number(e.target.value))}
+                            style={{ fontSize: "11px", padding: "2px 4px" }}
+                          >
+                            <option value={45}>Cone 45°</option>
+                            <option value={60}>Cone 60°</option>
+                          </select>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: "#166534" }}>Tam:</span>
+                            <input
+                              type="number"
+                              className="cp-input"
+                              style={{ width: "50px", fontSize: "11px", padding: "2px 4px" }}
+                              min={1}
+                              value={abAoeRadius}
+                              onChange={(e) => setAbAoeRadius(e.target.value)}
+                            />
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: "#166534" }}>m</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <input
                       type="text"
                       className="cp-input"
@@ -2318,111 +2739,585 @@ export default function CharacterSheetModal({
                       value={abDesc}
                       onChange={(e) => setAbDesc(e.target.value)}
                     />
-                    <button
-                      type="submit"
-                      className="cp-btn cp-btn-green"
-                      style={{ gridColumn: "1 / -1", padding: "3px", fontSize: "11px" }}
-                    >
-                      Salvar Habilidade
-                    </button>
+                    <div style={{ gridColumn: "1 / -1", display: "flex", gap: "6px" }}>
+                      {editingAbilityId && (
+                        <button
+                          type="button"
+                          className="cp-btn cp-btn-orange"
+                          style={{ padding: "3px 10px", fontSize: "11px" }}
+                          onClick={() => {
+                            resetAbilityForm();
+                            setNewAbilityOpen(false);
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                      <button
+                        type="submit"
+                        className="cp-btn cp-btn-green"
+                        style={{ flex: 1, padding: "3px", fontSize: "11px" }}
+                      >
+                        {editingAbilityId ? "Atualizar Habilidade" : "Salvar Habilidade"}
+                      </button>
+                    </div>
                   </form>
                 )}
 
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-                    gap: "6px"
+                    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+                    gap: "8px"
                   }}
                 >
-                  {abilities.map((ab) => (
-                    <div
-                      key={ab.id}
-                      style={{
-                        background: "#ffffff",
-                        border: `2.5px solid ${ab.elementColor || "#e53935"}`,
-                        borderRadius: "10px",
-                        padding: "8px",
-                        boxShadow: "0 2px 4px rgba(0,27,58,0.08)",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "space-between",
-                        gap: "4px"
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center"
-                          }}
-                        >
-                          <strong style={{ fontSize: "12px", color: "#1e293b" }}>
-                            {ab.name}
-                          </strong>
-                          {ab.cost?.amount > 0 && (
-                            <span
+                  {abilities.map((ab) => {
+                    const trigMeta = TRIGGER_TYPES.find((t) => t.id === (ab.trigger || "active"));
+                    const isExpanded = expandedSkillIds.has(ab.id);
+
+                    return (
+                      <div
+                        key={ab.id}
+                        style={{
+                          background: "#ffffff",
+                          border: `2.5px solid ${ab.elementColor || "#e53935"}`,
+                          borderRadius: "12px",
+                          padding: "8px 10px",
+                          boxShadow: "0 2px 5px rgba(0,27,58,0.06)",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "space-between",
+                          gap: "5px"
+                        }}
+                      >
+                        <div>
+                          {/* Cabeçalho da Skill com Setinha e Badges */}
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: "6px"
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandSkill(ab.id)}
+                                style={{
+                                  background: isExpanded ? "#002244" : "rgba(0, 34, 68, 0.08)",
+                                  color: isExpanded ? "#ffffff" : "#002447",
+                                  border: "1.5px solid rgba(0, 34, 68, 0.25)",
+                                  borderRadius: "6px",
+                                  width: "22px",
+                                  height: "22px",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  cursor: "pointer",
+                                  fontSize: "10px",
+                                  fontWeight: 900,
+                                  padding: 0,
+                                  flexShrink: 0
+                                }}
+                                title={isExpanded ? "Recolher" : "Expandir"}
+                              >
+                                {isExpanded ? "▼" : "▶"}
+                              </button>
+                              <strong
+                                onClick={() => toggleExpandSkill(ab.id)}
+                                style={{
+                                  fontSize: "13px",
+                                  color: "#1e293b",
+                                  cursor: "pointer",
+                                  userSelect: "none",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap"
+                                }}
+                              >
+                                {ab.name}
+                              </strong>
+                            </div>
+
+                            <div style={{ display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+                              {ab.range?.type && (
+                                <span
+                                  style={{
+                                    background: "#e0f2fe",
+                                    color: "#0369a1",
+                                    border: "1px solid #7dd3fc",
+                                    fontSize: "9px",
+                                    fontWeight: 800,
+                                    padding: "0px 4px",
+                                    borderRadius: "6px"
+                                  }}
+                                >
+                                  {ab.range.type === "self"
+                                    ? "🎯 Próprio"
+                                    : ab.range.type === "touch"
+                                    ? "🎯 Toque"
+                                    : `🎯 ${ab.range.distanceMeters || 9}m`}
+                                </span>
+                              )}
+                              {ab.aoe?.type && ab.aoe.type !== "single" && (
+                                <span
+                                  style={{
+                                    background: "#fef2f2",
+                                    color: "#b91c1c",
+                                    border: "1px solid #fca5a5",
+                                    fontSize: "9px",
+                                    fontWeight: 800,
+                                    padding: "0px 4px",
+                                    borderRadius: "6px"
+                                  }}
+                                >
+                                  {ab.aoe.type === "circle"
+                                    ? `⭕ Raio ${ab.aoe.radiusMeters || 6}m`
+                                    : `▲ Cone ${ab.aoe.radiusMeters || 9}m (${ab.aoe.coneAngleDeg || 45}°)`}
+                                </span>
+                              )}
+                              {ab.cost?.amount > 0 && (
+                                <span
+                                  style={{
+                                    background: "#02529c",
+                                    color: "#ffffff",
+                                    fontSize: "9px",
+                                    fontWeight: 800,
+                                    padding: "1px 5px",
+                                    borderRadius: "8px"
+                                  }}
+                                >
+                                  {ab.cost.amount} {(ab.cost.resource || "mp").toUpperCase()}
+                                </span>
+                              )}
+                              {ab.trigger && ab.trigger !== "active" && (
+                                <span
+                                  style={{
+                                    background: "#fef3c7",
+                                    color: "#92400e",
+                                    border: "1px solid #f59e0b",
+                                    fontSize: "9px",
+                                    fontWeight: 800,
+                                    padding: "0px 4px",
+                                    borderRadius: "6px"
+                                  }}
+                                >
+                                  {trigMeta?.label || ab.trigger}
+                                </span>
+                              )}
+                              {ab.savingThrow?.enabled && (
+                                <span
+                                  style={{
+                                    background: "#f3e8ff",
+                                    color: "#6b21a8",
+                                    border: "1px solid #a855f7",
+                                    fontSize: "9px",
+                                    fontWeight: 800,
+                                    padding: "0px 4px",
+                                    borderRadius: "6px"
+                                  }}
+                                >
+                                  CD {ab.savingThrow.dcFormula || 12}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Visualização Recolhida: Resumo Rápido */}
+                          {!isExpanded && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "2px", margin: "3px 0 1px 0" }}>
+                              {(ab.hitFormula || ab.effectFormula) && (
+                                <div style={{ display: "flex", gap: "8px", fontSize: "10px", flexWrap: "wrap" }}>
+                                  {ab.hitFormula && (
+                                    <span style={{ color: "#013567", fontWeight: 700 }}>
+                                      Acerto: {ab.hitFormula}
+                                    </span>
+                                  )}
+                                  {ab.effectFormula && (
+                                    <span style={{ color: "#b71c1c", fontWeight: 700 }}>
+                                      Efeito: {ab.effectFormula}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {ab.description && (
+                                <div
+                                  style={{
+                                    fontSize: "11px",
+                                    color: "#64748b",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap"
+                                  }}
+                                >
+                                  {ab.description}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Visualização Expandida: Descrição Completa e Macros Detalhados */}
+                          {isExpanded && (
+                            <div
                               style={{
-                                background: "#02529c",
-                                color: "#ffffff",
-                                fontSize: "9px",
-                                fontWeight: 800,
-                                padding: "1px 5px",
-                                borderRadius: "8px"
+                                marginTop: "6px",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "6px"
                               }}
                             >
-                              {ab.cost.amount} {(ab.cost.resource || "mp").toUpperCase()}
-                            </span>
+                              {ab.description && (
+                                <div
+                                  style={{
+                                    background: "#f8fafc",
+                                    border: "1.5px solid #e2e8f0",
+                                    borderRadius: "8px",
+                                    padding: "6px 8px",
+                                    fontSize: "12px",
+                                    lineHeight: "1.45",
+                                    color: "#1e293b",
+                                    whiteSpace: "pre-wrap"
+                                  }}
+                                >
+                                  {ab.description}
+                                </div>
+                              )}
+
+                              <div
+                                style={{
+                                  background: "#f1f5f9",
+                                  border: "1.5px solid #cbd5e1",
+                                  borderRadius: "8px",
+                                  padding: "6px 8px",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "3px",
+                                  fontSize: "11px"
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                  <strong style={{ color: "#013567" }}>Acerto (Macro):</strong>
+                                  <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{ab.hitFormula || "—"}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                  <strong style={{ color: "#b71c1c" }}>Dano / Efeito (Macro):</strong>
+                                  <span style={{ fontFamily: "monospace", fontWeight: 700 }}>
+                                    {ab.effectFormula || "—"} {ab.effectType ? `(${ab.effectType})` : ""}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                  <strong style={{ color: "#002447" }}>Gatilho:</strong>
+                                  <span style={{ fontWeight: 700 }}>{trigMeta?.label || ab.trigger || "Ação Ativa"}</span>
+                                </div>
+                                {ab.range?.type && (
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                    <strong style={{ color: "#0369a1" }}>Alcance:</strong>
+                                    <span style={{ fontWeight: 700, color: "#0284c7" }}>
+                                      {ab.range.type === "self"
+                                        ? "Próprio"
+                                        : ab.range.type === "touch"
+                                        ? "Toque"
+                                        : `${ab.range.distanceMeters || 9} metros`}
+                                    </span>
+                                  </div>
+                                )}
+                                {ab.aoe?.type && (
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                    <strong style={{ color: "#b91c1c" }}>Área de Efeito:</strong>
+                                    <span style={{ fontWeight: 700, color: "#dc2626" }}>
+                                      {ab.aoe.type === "single"
+                                        ? "Alvo Único"
+                                        : ab.aoe.type === "circle"
+                                        ? `Circular (Raio ${ab.aoe.radiusMeters || 6}m)`
+                                        : `Cônica (Cone ${ab.aoe.radiusMeters || 9}m / ${ab.aoe.coneAngleDeg || 45}°)`}
+                                    </span>
+                                  </div>
+                                )}
+                                {ab.savingThrow?.enabled && (
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                    <strong style={{ color: "#7e22ce" }}>Resistência:</strong>
+                                    <span style={{ fontWeight: 700, color: "#6b21a8" }}>
+                                      CD {ab.savingThrow.dcFormula || 12} ({ab.savingThrow.attribute || "Resistência"})
+                                      {ab.savingThrow.effectDescription ? ` — ${ab.savingThrow.effectDescription}` : ""}
+                                    </span>
+                                  </div>
+                                )}
+                                {ab.cost?.amount > 0 && (
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
+                                    <strong style={{ color: "#02529c" }}>Custo:</strong>
+                                    <span style={{ fontWeight: 700 }}>
+                                      {ab.cost.amount} {(ab.cost.resource || "mp").toUpperCase()}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
-                        {ab.hitFormula && (
-                          <div style={{ fontFamily: "var(--font-epf)", fontSize: "10px", color: "#013567" }}>
-                            Teste: {ab.hitFormula}
-                          </div>
-                        )}
-                        {ab.effectFormula && (
-                          <div style={{ fontFamily: "var(--font-epf)", fontSize: "10px", color: "#b71c1c" }}>
-                            Efeito: {ab.effectFormula}
-                          </div>
-                        )}
+
+                        {/* Botões de Ação da Habilidade */}
+                        <div style={{ display: "flex", gap: "4px", marginTop: "4px", alignItems: "center", flexWrap: "wrap" }}>
+                          {ab.aoe?.type && ab.aoe.type !== "single" && (
+                            <button
+                              type="button"
+                              className="cp-btn cp-btn-green"
+                              style={{ padding: "3px 8px", fontSize: "10px", height: "24px" }}
+                              onClick={() => handleDemarcateArea(ab)}
+                              title="Demarcar Área no Tabuleiro"
+                            >
+                              🎯 Demarcar Área
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="cp-btn cp-btn-epf"
+                            style={{ padding: "3px 8px", fontSize: "10px", height: "24px" }}
+                            onClick={() => handlePing(ab)}
+                            title="Pingar no Chat"
+                          >
+                            💬 Pingar
+                          </button>
+                          <button
+                            type="button"
+                            className="cp-btn cp-btn-gold"
+                            style={{ flex: 1, padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                            onClick={() =>
+                              triggerRoll({
+                                title: ab.name,
+                                categoryColor: ab.elementColor || "#e53935",
+                                description: ab.description || "",
+                                primaryFormula: ab.hitFormula || "",
+                                primaryLabel: ab.hitFormula ? "Acerto" : "Efeito",
+                                rollKind: ab.hitFormula ? "attack" : (ab.effectFormula ? "damage" : "check"),
+                                secondaryFormula: ab.effectFormula || "",
+                                secondaryLabel: "Dano / Efeito",
+                                cost: ab.cost,
+                                effectType: ab.effectType || (ab.effectFormula ? "damage" : null),
+                                savingThrow: ab.savingThrow || null,
+                                range: ab.range,
+                                aoe: ab.aoe,
+                                icon: ab.icon || ab.name
+                              })
+                            }
+                          >
+                            🎲 Rolar
+                          </button>
+                          {canEdit && (
+                            <>
+                              <button
+                                type="button"
+                                className="cp-btn"
+                                style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                                onClick={() => handleStartEditAbility(ab)}
+                                title="Editar Habilidade"
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                className="cp-btn"
+                                style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                                onClick={() =>
+                                  pinToRollGroup({
+                                    name: ab.name,
+                                    color: ab.elementColor || "#e53935",
+                                    icon: ab.icon || "sword",
+                                    hitFormula: ab.hitFormula || "",
+                                    effectFormula: ab.effectFormula || "",
+                                    effectType: ab.effectType || "damage",
+                                    savingThrow: ab.savingThrow || null,
+                                    costResource: ab.cost?.resource || "mp",
+                                    costAmount: ab.cost?.amount || 0
+                                  })
+                                }
+                                title="Fixar na Aba Rolagens"
+                              >
+                                ★
+                              </button>
+                              <button
+                                type="button"
+                                className="cp-btn cp-btn-orange"
+                                style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                                onClick={() => handleDeleteAbility(ab.id)}
+                                title="Excluir"
+                              >
+                                ×
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Seção Perícias */}
+              <div style={{ marginTop: "4px" }}>
+                <strong style={{ fontSize: "12px", color: "#003264", textTransform: "uppercase" }}>
+                  Perícias
+                </strong>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "4px",
+                    marginTop: "4px"
+                  }}
+                >
+                  {skills.map((sk) => (
+                    <div
+                      key={sk.id}
+                      style={{
+                        background: "#ffffff",
+                        border: "1.5px solid #cbd5e1",
+                        borderRadius: "8px",
+                        padding: "4px 8px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "6px"
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          flex: 1,
+                          minWidth: "120px"
+                        }}
+                      >
+                        <strong style={{ fontSize: "12px", color: "#1e293b" }}>{sk.name}</strong>
+                        <span style={{ fontSize: "10px", color: "#64748b" }}>
+                          ({sk.attribute})
+                        </span>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: "#003264" }}>
+                          +{sk.bonus}
+                        </span>
                       </div>
 
-                      <div style={{ display: "flex", gap: "3px", marginTop: "2px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <button
+                          type="button"
+                          className="cp-btn cp-btn-epf"
+                          style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                          onClick={() =>
+                            handlePing({
+                              name: sk.name,
+                              hitFormula: sk.formula || `1d20 + @${sk.attribute} + ${sk.bonus}`,
+                              attribute: sk.attribute,
+                              bonus: sk.bonus,
+                              description: `Perícia ${sk.name} (+${sk.bonus})`
+                            })
+                          }
+                          title="Pingar no Chat"
+                        >
+                          💬 Pingar
+                        </button>
                         <button
                           type="button"
                           className="cp-btn cp-btn-gold"
-                          style={{ flex: 1, padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                          style={{ padding: "3px 8px", fontSize: "10px", height: "24px" }}
                           onClick={() =>
                             triggerRoll({
-                              title: ab.name,
-                              categoryColor: ab.elementColor || "#e53935",
-                              description: ab.description || "",
-                              primaryFormula: ab.hitFormula || ab.effectFormula || "1d20",
-                              primaryLabel: ab.hitFormula ? "Acerto" : "Efeito",
-                              secondaryFormula: ab.hitFormula ? ab.effectFormula : "",
-                              secondaryLabel: "Dano / Efeito",
-                              cost: ab.cost,
-                              icon: ab.icon || ab.name
+                              title: `Perícia: ${sk.name}`,
+                              categoryColor: "#02529c",
+                              primaryFormula: sk.formula || `1d20 + @${sk.attribute} + ${sk.bonus}`,
+                              primaryLabel: sk.name,
+                              icon: sk.icon || sk.name
                             })
                           }
                         >
                           🎲 Rolar
                         </button>
                         {canEdit && (
-                          <button
-                            type="button"
-                            className="cp-btn cp-btn-orange"
-                            style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
-                            onClick={() => handleDeleteAbility(ab.id)}
-                          >
-                            ×
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="cp-btn"
+                              style={{ padding: "3px 6px", fontSize: "10px", height: "24px" }}
+                              onClick={() =>
+                                pinToRollGroup({
+                                  name: `Perícia ${sk.name}`,
+                                  color: "#02529c",
+                                  hitFormula: sk.formula || `1d20 + @${sk.attribute} + ${sk.bonus}`
+                                })
+                              }
+                              title="Fixar na Aba Rolagens"
+                            >
+                              ★
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSkill(sk.id)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#ef5350",
+                                fontSize: "14px",
+                                fontWeight: 900,
+                                cursor: "pointer",
+                                padding: "0 4px"
+                              }}
+                              title="Excluir Perícia"
+                            >
+                              ×
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {canEdit && (
+                  <form
+                    onSubmit={handleAddSkill}
+                    style={{
+                      display: "flex",
+                      gap: "4px",
+                      marginTop: "6px",
+                      flexWrap: "wrap"
+                    }}
+                  >
+                    <input
+                      type="text"
+                      className="cp-input"
+                      style={{ width: "130px", padding: "3px 6px", fontSize: "11px", height: "26px" }}
+                      placeholder="Nova Perícia..."
+                      value={newSkillName}
+                      onChange={(e) => setNewSkillName(e.target.value)}
+                    />
+                    <select
+                      className="cp-input"
+                      style={{ width: "100px", padding: "3px 6px", fontSize: "11px", height: "26px" }}
+                      value={newSkillAttr}
+                      onChange={(e) => setNewSkillAttr(e.target.value)}
+                    >
+                      {attributes.map((a) => (
+                        <option key={a.key} value={a.key}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      className="cp-input"
+                      style={{ width: "50px", padding: "3px 4px", fontSize: "11px", height: "26px" }}
+                      value={newSkillBonus}
+                      onChange={(e) => setNewSkillBonus(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      className="cp-btn"
+                      style={{ padding: "3px 8px", fontSize: "11px", height: "26px" }}
+                    >
+                      + Perícia
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
           )}
@@ -2678,8 +3573,10 @@ export default function CharacterSheetModal({
                                       name: ab.name,
                                       color: ab.elementColor || "#e53935",
                                       icon: ab.icon || ab.name,
-                                      hitFormula: ab.hitFormula || "1d20",
+                                      hitFormula: ab.hitFormula ?? "",
                                       effectFormula: ab.effectFormula || "",
+                                      effectType: ab.effectType || "damage",
+                                      savingThrow: ab.savingThrow || null,
                                       costResource: ab.cost?.resource || "mp",
                                       costAmount: Number(ab.cost?.amount) || 0
                                     },
@@ -2810,6 +3707,18 @@ export default function CharacterSheetModal({
                       onChange={(e) => setCrCostAmt(Number(e.target.value) || 0)}
                       style={{ fontSize: "11px", padding: "2px 4px", width: "50px" }}
                     />
+                    <select
+                      className="cp-input"
+                      value={crEffectType}
+                      onChange={(e) => setCrEffectType(e.target.value)}
+                      style={{ fontSize: "11px", padding: "2px", flex: 1 }}
+                    >
+                      {EFFECT_TYPES.map((et) => (
+                        <option key={et.id} value={et.id}>
+                          {et.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <button
                     type="submit"
@@ -2912,19 +3821,24 @@ export default function CharacterSheetModal({
                               type="button"
                               className="cp-btn cp-btn-gold"
                               style={{ flex: 1, padding: "3px", fontSize: "10px", height: "24px" }}
-                              onClick={() =>
+                              onClick={() => {
+                                const costAmt = Number(r.costAmount) || 0;
                                 triggerRoll({
                                   title: r.name,
                                   categoryColor: r.color || "#3090f0",
-                                  primaryFormula: r.hitFormula || "1d20",
-                                  primaryLabel: "Rolagem",
+                                  primaryFormula: r.hitFormula ?? "1d20",
+                                  primaryLabel: r.effectFormula ? "Acerto" : "Rolagem",
+                                  rollKind: "attack",
                                   secondaryFormula: r.effectFormula || "",
                                   secondaryLabel: "Efeito / Dano",
+                                  cost: costAmt > 0 ? { resource: r.costResource || "mp", amount: costAmt } : null,
                                   costResource: r.costResource,
                                   costAmount: r.costAmount,
+                                  effectType: r.effectType || (r.effectFormula ? "damage" : null),
+                                  savingThrow: r.savingThrow || null,
                                   icon: r.icon || r.name
-                                })
-                              }
+                                });
+                              }}
                             >
                               🎲 Rolar
                             </button>

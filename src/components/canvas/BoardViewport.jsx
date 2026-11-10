@@ -7,6 +7,7 @@ import { useBoardInteractive } from "../../hooks/useBoardInteractive";
 import TokenSprite from "./TokenSprite";
 import FogOfWarCanvas from "./FogOfWarCanvas";
 import TokenModal from "./TokenModal";
+import { isTokenInsideCircle, isTokenInsideCone, saveStoredTargetedTokens } from "../../engines/combatEngine";
 
 const DRAW_COLORS = [
   "#ffcc00",
@@ -120,6 +121,13 @@ export default function BoardViewport({
   onUpdateSceneGrid,
   onOpenScenesManager,
   onSelectedTokenChange,
+  targetedToken = null,
+  targetedTokens = [],
+  onTargetedTokenChange,
+  onTargetedTokensChange,
+  aoeDemarcateConfig = null,
+  onCloseAoeDemarcate,
+  onTokensSync,
   snowballAimActive = false,
   onDeactivateSnowballAim
 }) {
@@ -172,6 +180,14 @@ export default function BoardViewport({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [leftToolbarCollapsed, setLeftToolbarCollapsed] = useState(false);
 
+  const widthPx = activeScene?.mapImage?.widthPx || 1920;
+  const heightPx = activeScene?.mapImage?.heightPx || 1080;
+  const grid = {
+    ...DEFAULT_GRID_CONFIG,
+    ...(activeScene?.grid || {})
+  };
+  const cellSizePx = Math.max(16, Number(grid.cellSizePx) || 64);
+
   // Ferramenta ativa:
   // 'move' | 'measure' | 'draw_pencil' | 'draw_select' | 'draw_text' | 'draw_circle' | 'draw_rect' | 'fog_reveal' | 'fog_hide'
   const [toolMode, setToolMode] = useState("move");
@@ -203,8 +219,10 @@ export default function BoardViewport({
   const isRotatingRef = useRef(false);
   const rotationStartRef = useRef({ cx: 0, cy: 0, startAngle: 0 });
 
-  // Medidor de distância (Régua 1 quadrado = 1,5m)
+  // Medidor de distância (Régua: Linha, Cone 45°/60°, Círculo | 1 quadrado = 1,5m)
   const [measureLine, setMeasureLine] = useState(null); // { startX, startY, endX, endY }
+  const [measureShape, setMeasureShape] = useState("line"); // 'line' | 'cone' | 'circle'
+  const [coneAngle, setConeAngle] = useState(45); // 45 | 60
 
   // Câmera Pan & Ping (em modo 'move')
   const [panningCamera, setPanningCamera] = useState(false);
@@ -225,6 +243,222 @@ export default function BoardViewport({
   const [draggingToken, setDraggingToken] = useState(null);
   const [draggingTokensDelta, setDraggingTokensDelta] = useState(null);
 
+  // Estado e refs para Targetar Tokens com tecla T
+  const hoveredTokenRef = useRef(null);
+  const lastClickedTokenRef = useRef(null);
+  const tKeyHeldRef = useRef(false);
+
+  const effectiveTargetList = useMemo(() => {
+    if (Array.isArray(targetedTokens) && targetedTokens.length > 0) return targetedTokens;
+    if (targetedToken) return [targetedToken];
+    return [];
+  }, [targetedTokens, targetedToken]);
+
+  const isTokenTargeted = (tok) =>
+    effectiveTargetList.some((t) => (t.id || t.tokenId) === tok.id);
+
+  const toggleTargetToken = (tok) => {
+    if (!tok) return;
+    const exists = effectiveTargetList.some((t) => (t.id || t.tokenId) === tok.id);
+    const nextList = exists
+      ? effectiveTargetList.filter((t) => (t.id || t.tokenId) !== tok.id)
+      : [...effectiveTargetList, { ...tok, sceneId }];
+
+    onTargetedTokensChange?.(nextList);
+    onTargetedTokenChange?.(nextList[0] || null);
+    saveStoredTargetedTokens(campaignId, nextList);
+  };
+
+  const handleHoverToken = (tok) => {
+    hoveredTokenRef.current = tok || null;
+  };
+
+  const handleTokenClickForTarget = (tok, e) => {
+    lastClickedTokenRef.current = tok || null;
+    if (tKeyHeldRef.current && e.button === 0) {
+      toggleTargetToken(tok);
+      return true;
+    }
+    return false;
+  };
+
+  // Estado e cálculos para Demarcação Interativa de Área (AoE) de Habilidades
+  const [aoeMousePos, setAoeMousePos] = useState(null);
+
+  const aoeCasterToken = useMemo(() => {
+    if (!aoeDemarcateConfig) return null;
+    if (aoeDemarcateConfig.sourceCharacterId) {
+      const found = tokens.find((t) => t.characterId === aoeDemarcateConfig.sourceCharacterId);
+      if (found) return found;
+    }
+    if (selectedTokenIds.length > 0) {
+      const found = tokens.find((t) => t.id === selectedTokenIds[0]);
+      if (found) return found;
+    }
+    if (activeCharacter?.id) {
+      const found = tokens.find((t) => t.characterId === activeCharacter.id);
+      if (found) return found;
+    }
+    return tokens.find((t) => isGM || canControlToken(t)) || null;
+  }, [aoeDemarcateConfig, tokens, selectedTokenIds, activeCharacter, isGM, canControlToken]);
+
+  const aoeCasterCenter = useMemo(() => {
+    if (!aoeCasterToken) return null;
+    const sizePx = (Number(aoeCasterToken.sizeInCells) || 1) * cellSizePx;
+    return {
+      x: Number(aoeCasterToken.x) + sizePx / 2,
+      y: Number(aoeCasterToken.y) + sizePx / 2
+    };
+  }, [aoeCasterToken, cellSizePx]);
+
+  const aoePreview = useMemo(() => {
+    if (!aoeDemarcateConfig || !aoeMousePos) return null;
+    const origin = aoeCasterCenter || aoeMousePos;
+    const aoeType = aoeDemarcateConfig.aoeType || "circle";
+    const rangeMeters = Number(aoeDemarcateConfig.rangeMeters) || 9;
+    const aoeRadiusMeters = Number(aoeDemarcateConfig.aoeRadiusMeters) || 6;
+    const coneAngleDeg = Number(aoeDemarcateConfig.aoeConeAngleDeg) === 60 ? 60 : 45;
+
+    const aoeRadiusPx = (aoeRadiusMeters / 1.5) * cellSizePx;
+    const maxRangePx = (rangeMeters / 1.5) * cellSizePx;
+
+    if (aoeType === "cone") {
+      const centerAngleRad = Math.atan2(aoeMousePos.y - origin.y, aoeMousePos.x - origin.x);
+      const halfAngleRad = (coneAngleDeg * Math.PI) / 360;
+      const x1 = origin.x + aoeRadiusPx * Math.cos(centerAngleRad - halfAngleRad);
+      const y1 = origin.y + aoeRadiusPx * Math.sin(centerAngleRad - halfAngleRad);
+      const x2 = origin.x + aoeRadiusPx * Math.cos(centerAngleRad + halfAngleRad);
+      const y2 = origin.y + aoeRadiusPx * Math.sin(centerAngleRad + halfAngleRad);
+
+      const tokensInside = tokens.filter((tok) =>
+        isTokenInsideCone({
+          token: tok,
+          cellSizePx,
+          coneOrigin: origin,
+          radiusPx: aoeRadiusPx,
+          centerAngleRad,
+          coneAngleDeg
+        })
+      );
+
+      return {
+        type: "cone",
+        origin,
+        radiusPx: aoeRadiusPx,
+        radiusMeters: aoeRadiusMeters,
+        centerAngleRad,
+        coneAngleDeg,
+        x1,
+        y1,
+        x2,
+        y2,
+        tokensInside
+      };
+    }
+
+    // Circle mode
+    const dx = aoeMousePos.x - origin.x;
+    const dy = aoeMousePos.y - origin.y;
+    const dist = Math.hypot(dx, dy);
+    let circleCenter = { ...aoeMousePos };
+    if (dist > maxRangePx && maxRangePx > 0) {
+      circleCenter = {
+        x: origin.x + (dx / dist) * maxRangePx,
+        y: origin.y + (dy / dist) * maxRangePx
+      };
+    }
+
+    const tokensInside = tokens.filter((tok) =>
+      isTokenInsideCircle({
+        token: tok,
+        cellSizePx,
+        circleCenter,
+        radiusPx: aoeRadiusPx
+      })
+    );
+
+    return {
+      type: "circle",
+      origin,
+      circleCenter,
+      radiusPx: aoeRadiusPx,
+      radiusMeters: aoeRadiusMeters,
+      maxRangePx,
+      rangeMeters,
+      tokensInside
+    };
+  }, [aoeDemarcateConfig, aoeMousePos, aoeCasterCenter, cellSizePx, tokens]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) {
+        return;
+      }
+      if (e.key === "Escape" && aoeDemarcateConfig) {
+        onCloseAoeDemarcate?.();
+        return;
+      }
+      if (e.key === "t" || e.key === "T") {
+        tKeyHeldRef.current = true;
+        if (!e.repeat) {
+          const candidate = hoveredTokenRef.current || lastClickedTokenRef.current;
+          if (candidate) {
+            toggleTargetToken(candidate);
+          }
+        }
+      }
+    };
+    const handleKeyUp = (e) => {
+      if (e.key === "t" || e.key === "T") {
+        tKeyHeldRef.current = false;
+      }
+    };
+    const handleWindowBlur = () => {
+      tKeyHeldRef.current = false;
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [effectiveTargetList, sceneId, onTargetedTokensChange, onTargetedTokenChange, aoeDemarcateConfig, onCloseAoeDemarcate]);
+
+  // Sincroniza lista de tokens e mantém alvos atualizados com dados do RTDB
+  useEffect(() => {
+    onTokensSync?.({ tokens, updateToken, sceneId });
+    if (effectiveTargetList.length > 0 && tokens.length > 0) {
+      let changed = false;
+      const nextList = [];
+      for (const target of effectiveTargetList) {
+        if (target.sceneId && target.sceneId !== sceneId) {
+          nextList.push(target);
+          continue;
+        }
+        const fresh = tokens.find((t) => t.id === (target.id || target.tokenId));
+        if (fresh) {
+          nextList.push({ ...target, ...fresh, sceneId });
+          if (
+            fresh.name !== target.name ||
+            fresh.hpCurrent !== target.hpCurrent ||
+            fresh.hpMax !== target.hpMax ||
+            fresh.defense !== target.defense ||
+            fresh.characterId !== target.characterId
+          ) {
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        onTargetedTokensChange?.(nextList);
+        onTargetedTokenChange?.(nextList[0] || null);
+      }
+    }
+  }, [tokens, sceneId, targetedToken, onTargetedTokenChange, onTokensSync, updateToken]);
+
   // Notifica o componente pai sobre o token prioritário selecionado
   useEffect(() => {
     if (!onSelectedTokenChange) return;
@@ -244,14 +478,6 @@ export default function BoardViewport({
     open: false,
     editingToken: null
   });
-
-  const widthPx = activeScene?.mapImage?.widthPx || 1920;
-  const heightPx = activeScene?.mapImage?.heightPx || 1080;
-  const grid = {
-    ...DEFAULT_GRID_CONFIG,
-    ...(activeScene?.grid || {})
-  };
-  const cellSizePx = Math.max(16, Number(grid.cellSizePx) || 64);
 
   // Atalho Delete / Backspace para apagar riscos, formas, textos e tokens selecionados
   useEffect(() => {
@@ -305,6 +531,27 @@ export default function BoardViewport({
       window.removeEventListener("contextmenu", handleContextMenu);
     };
   }, [snowballAimActive, onDeactivateSnowballAim]);
+
+  // Atalhos na régua de medição (C alterna 45°/60° ou ativa cone; L ativa linha; O ativa círculo)
+  useEffect(() => {
+    if (toolMode !== "measure") return;
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === "c" || e.key === "C" || e.key === "2") {
+        setMeasureShape((prev) => {
+          if (prev !== "cone") return "cone";
+          setConeAngle((a) => (a === 45 ? 60 : 45));
+          return "cone";
+        });
+      } else if (e.key === "l" || e.key === "L" || e.key === "1") {
+        setMeasureShape("line");
+      } else if (e.key === "o" || e.key === "O" || e.key === "3") {
+        setMeasureShape("circle");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toolMode]);
 
   // Obtém o centro do token ativo ou selecionado para a origem da bola de neve
   const getSelectedTokenCenter = () => {
@@ -363,6 +610,21 @@ export default function BoardViewport({
       const origin = getSelectedTokenCenter();
       triggerPing(pt.x, pt.y, getPingColor(), origin);
       onDeactivateSnowballAim?.();
+      return;
+    }
+
+    // Demarcação Interativa de Área (AoE) de Habilidades
+    if (aoeDemarcateConfig && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      const tokensToAdd = aoePreview?.tokensInside || [];
+      const existingIds = new Set(effectiveTargetList.map((t) => t.id || t.tokenId));
+      const newTokens = tokensToAdd.filter((t) => !existingIds.has(t.id));
+      const merged = [...effectiveTargetList, ...newTokens.map((t) => ({ ...t, sceneId }))];
+      onTargetedTokensChange?.(merged);
+      onTargetedTokenChange?.(merged[0] || null);
+      saveStoredTargetedTokens(campaignId, merged);
+      onCloseAoeDemarcate?.();
       return;
     }
 
@@ -576,6 +838,21 @@ export default function BoardViewport({
       return;
     }
 
+    // Demarcação Interativa de Área (AoE) de Habilidades
+    if (aoeDemarcateConfig && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      const tokensToAdd = aoePreview?.tokensInside || [];
+      const existingIds = new Set(effectiveTargetList.map((t) => t.id || t.tokenId));
+      const newTokens = tokensToAdd.filter((t) => !existingIds.has(t.id));
+      const merged = [...effectiveTargetList, ...newTokens.map((t) => ({ ...t, sceneId }))];
+      onTargetedTokensChange?.(merged);
+      onTargetedTokenChange?.(merged[0] || null);
+      saveStoredTargetedTokens(campaignId, merged);
+      onCloseAoeDemarcate?.();
+      return;
+    }
+
     // 1. Modo Medir (Régua 1,5m por quadrado)
     if (toolMode === "measure" && e.button === 0) {
       setMeasureLine({
@@ -758,6 +1035,10 @@ export default function BoardViewport({
 
   const handleBoardMouseMove = (e) => {
     const pt = clientToBoardCoords(e.clientX, e.clientY);
+
+    if (aoeDemarcateConfig) {
+      setAoeMousePos(pt);
+    }
 
     // 1. Rotacionando riscos e textos selecionados pelo mouse
     if (isRotatingRef.current) {
@@ -1593,7 +1874,7 @@ export default function BoardViewport({
     );
   };
 
-  // Cálculo da distância da régua (1 quadrado = 1,5m)
+  // Cálculo da distância da régua (Linha, Cone 45°/60°, Círculo | 1 quadrado = 1,5m)
   const measureStats = measureLine
     ? (() => {
         const dx = measureLine.endX - measureLine.startX;
@@ -1601,14 +1882,97 @@ export default function BoardViewport({
         const distPx = Math.hypot(dx, dy);
         const squares = distPx / cellSizePx;
         const meters = squares * 1.5;
+        const metersText = `${meters.toFixed(1).replace(".", ",")} m`;
+        const squaresText = `${squares.toFixed(1).replace(".", ",")} q`;
+
+        if (measureShape === "cone") {
+          const centerAngleRad = Math.atan2(dy, dx);
+          const halfAngleRad = (coneAngle * Math.PI) / 360;
+          const angle1 = centerAngleRad - halfAngleRad;
+          const angle2 = centerAngleRad + halfAngleRad;
+          const x1 = measureLine.startX + distPx * Math.cos(angle1);
+          const y1 = measureLine.startY + distPx * Math.sin(angle1);
+          const x2 = measureLine.startX + distPx * Math.cos(angle2);
+          const y2 = measureLine.startY + distPx * Math.sin(angle2);
+
+          const badgeDist = Math.max(30, distPx * 0.6);
+          const badgeX = measureLine.startX + badgeDist * Math.cos(centerAngleRad);
+          const badgeY = measureLine.startY + badgeDist * Math.sin(centerAngleRad);
+
+          return {
+            shape: "cone",
+            distPx,
+            meters,
+            squares,
+            metersText,
+            squaresText,
+            centerAngleRad,
+            coneAngle,
+            x1,
+            y1,
+            x2,
+            y2,
+            midX: badgeX,
+            midY: badgeY,
+            label: `📐 Cone ${coneAngle}°: ${metersText} (${squaresText})`
+          };
+        }
+
+        if (measureShape === "circle") {
+          return {
+            shape: "circle",
+            radiusPx: distPx,
+            meters,
+            squares,
+            metersText,
+            squaresText,
+            diameterMeters: meters * 2,
+            midX: distPx < 30 ? measureLine.startX : (measureLine.startX + measureLine.endX) / 2,
+            midY: distPx < 30 ? measureLine.startY - 30 : (measureLine.startY + measureLine.endY) / 2 - 20,
+            label: `⭕ Raio: ${metersText} (${squaresText}) | Diâm: ${(meters * 2).toFixed(1).replace(".", ",")} m`
+          };
+        }
+
         return {
-          metersText: `${meters.toFixed(1).replace(".", ",")} m`,
-          squaresText: `${squares.toFixed(1).replace(".", ",")} q`,
+          shape: "line",
+          distPx,
+          meters,
+          squares,
+          metersText,
+          squaresText,
           midX: (measureLine.startX + measureLine.endX) / 2,
-          midY: (measureLine.startY + measureLine.endY) / 2
+          midY: (measureLine.startY + measureLine.endY) / 2,
+          label: `${metersText} (${squaresText})`
         };
       })()
     : null;
+
+  const tokensInsideMeasure = useMemo(() => {
+    if (!measureLine || !measureStats) return [];
+    if (measureShape === "cone") {
+      return tokens.filter((tok) =>
+        isTokenInsideCone({
+          token: tok,
+          cellSizePx,
+          coneOrigin: { x: measureLine.startX, y: measureLine.startY },
+          radiusPx: measureStats.distPx,
+          centerAngleRad: measureStats.centerAngleRad,
+          coneAngleDeg: coneAngle
+        })
+      );
+    }
+    if (measureShape === "circle") {
+      return tokens.filter((tok) =>
+        isTokenInsideCircle({
+          token: tok,
+          cellSizePx,
+          circleCenter: { x: measureLine.startX, y: measureLine.startY },
+          radiusPx: measureStats.radiusPx
+        })
+      );
+    }
+    return [];
+  }, [measureLine, measureStats, measureShape, tokens, cellSizePx, coneAngle]);
 
   const isDrawToolActive =
     toolMode === "draw_pencil" ||
@@ -1687,7 +2051,7 @@ export default function BoardViewport({
               </button>
             </div>
 
-            {/* 2. Ferramenta Medir (Régua 1,5m) */}
+            {/* 2. Ferramenta Medir (Régua Linha, Cone e Círculo) */}
             <div className="vtt-tool-group">
               <button
                 type="button"
@@ -1696,12 +2060,107 @@ export default function BoardViewport({
                 }`}
                 onClick={() => {
                   setToolMode("measure");
-                  setOpenFlyout(null);
+                  setOpenFlyout((prev) => (prev === "measure" ? null : "measure"));
                 }}
               >
-                <span>📏</span>
+                <span>
+                  {measureShape === "cone"
+                    ? "📐"
+                    : measureShape === "circle"
+                      ? "⭕"
+                      : "📏"}
+                </span>
                 <span className="vtt-tool-label">Medir</span>
               </button>
+
+              {openFlyout === "measure" && (
+                <div
+                  className="vtt-tool-flyout"
+                  style={{ minWidth: "185px" }}
+                  onWheel={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className={`cp-btn ${
+                      measureShape === "line" ? "cp-btn-gold" : ""
+                    }`}
+                    style={{
+                      width: "100%",
+                      justifyContent: "flex-start",
+                      padding: "6px 10px",
+                      fontSize: "12px"
+                    }}
+                    onClick={() => {
+                      setMeasureShape("line");
+                      setToolMode("measure");
+                      setOpenFlyout(null);
+                    }}
+                  >
+                    📏 Linha Reta
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`cp-btn ${
+                      measureShape === "cone" ? "cp-btn-gold" : ""
+                    }`}
+                    style={{
+                      width: "100%",
+                      justifyContent: "flex-start",
+                      padding: "6px 10px",
+                      fontSize: "12px"
+                    }}
+                    onClick={() => {
+                      setMeasureShape("cone");
+                      setToolMode("measure");
+                    }}
+                  >
+                    📐 Cone ({coneAngle}°)
+                  </button>
+
+                  {measureShape === "cone" && (
+                    <div style={{ display: "flex", gap: "4px", padding: "2px 4px" }}>
+                      <button
+                        type="button"
+                        className={`cp-btn ${coneAngle === 45 ? "cp-btn-gold" : ""}`}
+                        style={{ flex: 1, padding: "4px 8px", fontSize: "11px" }}
+                        onClick={() => setConeAngle(45)}
+                      >
+                        45°
+                      </button>
+                      <button
+                        type="button"
+                        className={`cp-btn ${coneAngle === 60 ? "cp-btn-gold" : ""}`}
+                        style={{ flex: 1, padding: "4px 8px", fontSize: "11px" }}
+                        onClick={() => setConeAngle(60)}
+                      >
+                        60°
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className={`cp-btn ${
+                      measureShape === "circle" ? "cp-btn-gold" : ""
+                    }`}
+                    style={{
+                      width: "100%",
+                      justifyContent: "flex-start",
+                      padding: "6px 10px",
+                      fontSize: "12px"
+                    }}
+                    onClick={() => {
+                      setMeasureShape("circle");
+                      setToolMode("measure");
+                      setOpenFlyout(null);
+                    }}
+                  >
+                    ⭕ Círculo (Raio)
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* 3. Ferramenta Desenhar (Lápis, Círculo, Quadrado, Selecionar, Texto) */}
@@ -2286,68 +2745,6 @@ export default function BoardViewport({
         )}
       </aside>
 
-      {/* Barra Flutuante de Ação para Itens Selecionados (Riscos, Formas, Textos, Tokens) */}
-      {(selectedStrokeIds.length > 0 || selectedTokenIds.length > 0) && (
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            top: "14px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 28,
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            background: "rgba(1, 27, 58, 0.94)",
-            border: "2.5px solid var(--cp-blue-border)",
-            borderRadius: "999px",
-            padding: "6px 14px",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.5)"
-          }}
-        >
-          <span
-            className="cp-title"
-            style={{ fontSize: "13px", marginRight: "4px" }}
-          >
-            {selectedStrokeIds.length + selectedTokenIds.length} item(ns) selecionado(s)
-          </span>
-          <button
-            type="button"
-            className="cp-btn cp-btn-orange"
-            style={{ padding: "4px 10px", fontSize: "12px" }}
-            onClick={async () => {
-              if (selectedStrokeIds.length > 0) {
-                await deleteStrokes(selectedStrokeIds);
-                setSelectedStrokeIds([]);
-              }
-              if (selectedTokenIds.length > 0) {
-                for (const tokId of selectedTokenIds) {
-                  const tok = tokens.find((t) => t.id === tokId);
-                  if (tok && (isGM || canControlToken(tok))) {
-                    await removeToken(tokId);
-                  }
-                }
-                setSelectedTokenIds([]);
-              }
-            }}
-          >
-            Deletar Selecionados
-          </button>
-          <button
-            type="button"
-            className="cp-btn"
-            style={{ padding: "4px 10px", fontSize: "12px" }}
-            onClick={() => {
-              setSelectedStrokeIds([]);
-              setSelectedTokenIds([]);
-            }}
-          >
-            Limpar Seleção
-          </button>
-        </div>
-      )}
-
       {/* Superfície Transformável do Tabuleiro (3 Camadas + Grid + Névoa + Pings + Régua) */}
       <div
         ref={boardSurfaceRef}
@@ -2408,10 +2805,14 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "map" && isGM
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            isTargeted={isTokenTargeted(token)}
+            isAoeHighlighted={Boolean(aoePreview?.tokensInside?.some((t) => t.id === token.id))}
             speechBubble={getTokenSpeech(token)}
             snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
+            onHoverToken={handleHoverToken}
+            onTokenClickForTarget={handleTokenClickForTarget}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
@@ -2472,10 +2873,14 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "objects" && isGM
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            isTargeted={isTokenTargeted(token)}
+            isAoeHighlighted={Boolean(aoePreview?.tokensInside?.some((t) => t.id === token.id))}
             speechBubble={getTokenSpeech(token)}
             snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
+            onHoverToken={handleHoverToken}
+            onTokenClickForTarget={handleTokenClickForTarget}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
@@ -2504,10 +2909,14 @@ export default function BoardViewport({
               toolMode === "move" && effectiveLayer === "tokens"
             }
             isSelected={selectedTokenIds.includes(token.id)}
+            isTargeted={isTokenTargeted(token)}
+            isAoeHighlighted={Boolean(aoePreview?.tokensInside?.some((t) => t.id === token.id))}
             speechBubble={getTokenSpeech(token)}
             snowballAimActive={snowballAimActive}
             onStartDrag={handleStartTokenDrag}
             onSelect={(tokId, e) => handleItemClick(e, tokId, "token")}
+            onHoverToken={handleHoverToken}
+            onTokenClickForTarget={handleTokenClickForTarget}
             onQuickToggleVisibility={handleQuickToggleTokenVisibility}
             onQuickToggleName={handleQuickToggleTokenName}
             onQuickAdjustHp={handleQuickAdjustHp}
@@ -2526,6 +2935,90 @@ export default function BoardViewport({
           isGM={isGM}
           draftRect={draftFogRect}
         />
+
+        {/* TEMPLATE VISUAL DE DEMARCAÇÃO DE ÁREA (AoE) */}
+        {aoeDemarcateConfig && aoePreview && (
+          <svg
+            width={widthPx}
+            height={heightPx}
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              zIndex: 18
+            }}
+          >
+            {aoePreview.type === "cone" ? (
+              <g>
+                {aoePreview.radiusPx > 2 && (
+                  <>
+                    <path
+                      d={`M ${aoePreview.origin.x} ${aoePreview.origin.y} L ${aoePreview.x1} ${aoePreview.y1} A ${aoePreview.radiusPx} ${aoePreview.radiusPx} 0 0 1 ${aoePreview.x2} ${aoePreview.y2} Z`}
+                      fill="rgba(239, 68, 68, 0.28)"
+                      stroke="#ef4444"
+                      strokeWidth="2.5"
+                    />
+                    <circle
+                      cx={aoePreview.origin.x}
+                      cy={aoePreview.origin.y}
+                      r={5}
+                      fill="#ef4444"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                    />
+                  </>
+                )}
+              </g>
+            ) : (
+              <g>
+                {aoePreview.maxRangePx > 0 && (
+                  <circle
+                    cx={aoePreview.origin.x}
+                    cy={aoePreview.origin.y}
+                    r={aoePreview.maxRangePx}
+                    fill="none"
+                    stroke="rgba(56, 189, 248, 0.55)"
+                    strokeWidth="1.5"
+                    strokeDasharray="6 6"
+                  />
+                )}
+                <line
+                  x1={aoePreview.origin.x}
+                  y1={aoePreview.origin.y}
+                  x2={aoePreview.circleCenter.x}
+                  y2={aoePreview.circleCenter.y}
+                  stroke="#38bdf8"
+                  strokeWidth="2"
+                  strokeDasharray="4 4"
+                />
+                <circle
+                  cx={aoePreview.circleCenter.x}
+                  cy={aoePreview.circleCenter.y}
+                  r={aoePreview.radiusPx}
+                  fill="rgba(239, 68, 68, 0.28)"
+                  stroke="#ef4444"
+                  strokeWidth="2.5"
+                />
+                <circle
+                  cx={aoePreview.circleCenter.x}
+                  cy={aoePreview.circleCenter.y}
+                  r={5}
+                  fill="#ef4444"
+                  stroke="#ffffff"
+                  strokeWidth="2"
+                />
+                <circle
+                  cx={aoePreview.origin.x}
+                  cy={aoePreview.origin.y}
+                  r={4}
+                  fill="#38bdf8"
+                  stroke="#ffffff"
+                  strokeWidth="1.5"
+                />
+              </g>
+            )}
+          </svg>
+        )}
 
         {/* PINGS E BOLAS DE NEVE EM VOO */}
         {activePings.map((ping) => {
@@ -2672,44 +3165,169 @@ export default function BoardViewport({
             );
           })()}
 
-          {/* Régua de Medição (1 quadrado = 1,5m) */}
-          {measureLine && (
-            <g>
-              <line
-                x1={measureLine.startX}
-                y1={measureLine.startY}
-                x2={measureLine.endX}
-                y2={measureLine.endY}
-                stroke="#001b3a"
-                strokeWidth="6"
-                strokeLinecap="round"
-              />
-              <line
-                x1={measureLine.startX}
-                y1={measureLine.startY}
-                x2={measureLine.endX}
-                y2={measureLine.endY}
-                stroke="#ffcc00"
-                strokeWidth="3.5"
-                strokeDasharray="10 6"
-                strokeLinecap="round"
-              />
-              <circle
-                cx={measureLine.startX}
-                cy={measureLine.startY}
-                r="6"
-                fill="#ffcc00"
-                stroke="#001b3a"
-                strokeWidth="2"
-              />
-              <circle
-                cx={measureLine.endX}
-                cy={measureLine.endY}
-                r="7"
-                fill="#00f0ff"
-                stroke="#001b3a"
-                strokeWidth="2"
-              />
+          {/* Régua de Medição (Linha, Cone 45°/60°, Círculo | 1 quadrado = 1,5m) */}
+          {measureLine && measureStats && (
+            <g pointerEvents="none">
+              {measureShape === "cone" ? (
+                <>
+                  {/* Setor do Cone */}
+                  {measureStats.distPx > 2 && (
+                    <>
+                      <path
+                        d={`M ${measureLine.startX} ${measureLine.startY} L ${measureStats.x1} ${measureStats.y1} A ${measureStats.distPx} ${measureStats.distPx} 0 0 1 ${measureStats.x2} ${measureStats.y2} Z`}
+                        fill="rgba(255, 204, 0, 0.22)"
+                        stroke="#001b3a"
+                        strokeWidth="5"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d={`M ${measureLine.startX} ${measureLine.startY} L ${measureStats.x1} ${measureStats.y1} A ${measureStats.distPx} ${measureStats.distPx} 0 0 1 ${measureStats.x2} ${measureStats.y2} Z`}
+                        fill="none"
+                        stroke="#ffcc00"
+                        strokeWidth="2.5"
+                        strokeLinejoin="round"
+                      />
+                    </>
+                  )}
+                  {/* Linha guia central pontilhada */}
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#001b3a"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#00f0ff"
+                    strokeWidth="2"
+                    strokeDasharray="8 5"
+                    strokeLinecap="round"
+                  />
+                  {/* Origem e Alvo */}
+                  <circle
+                    cx={measureLine.startX}
+                    cy={measureLine.startY}
+                    r="6"
+                    fill="#ffcc00"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx={measureLine.endX}
+                    cy={measureLine.endY}
+                    r="6"
+                    fill="#00f0ff"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                </>
+              ) : measureShape === "circle" ? (
+                <>
+                  {/* Círculo */}
+                  {measureStats.radiusPx > 2 && (
+                    <>
+                      <circle
+                        cx={measureLine.startX}
+                        cy={measureLine.startY}
+                        r={measureStats.radiusPx}
+                        fill="rgba(255, 204, 0, 0.22)"
+                        stroke="#001b3a"
+                        strokeWidth="5"
+                      />
+                      <circle
+                        cx={measureLine.startX}
+                        cy={measureLine.startY}
+                        r={measureStats.radiusPx}
+                        fill="none"
+                        stroke="#ffcc00"
+                        strokeWidth="2.5"
+                      />
+                    </>
+                  )}
+                  {/* Linha do Raio */}
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#001b3a"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#00f0ff"
+                    strokeWidth="2"
+                    strokeDasharray="8 5"
+                    strokeLinecap="round"
+                  />
+                  {/* Centro e Perímetro */}
+                  <circle
+                    cx={measureLine.startX}
+                    cy={measureLine.startY}
+                    r="6"
+                    fill="#ffcc00"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx={measureLine.endX}
+                    cy={measureLine.endY}
+                    r="6"
+                    fill="#00f0ff"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Linha Reta Padrão */}
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#001b3a"
+                    strokeWidth="6"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={measureLine.startX}
+                    y1={measureLine.startY}
+                    x2={measureLine.endX}
+                    y2={measureLine.endY}
+                    stroke="#ffcc00"
+                    strokeWidth="3.5"
+                    strokeDasharray="10 6"
+                    strokeLinecap="round"
+                  />
+                  <circle
+                    cx={measureLine.startX}
+                    cy={measureLine.startY}
+                    r="6"
+                    fill="#ffcc00"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx={measureLine.endX}
+                    cy={measureLine.endY}
+                    r="7"
+                    fill="#00f0ff"
+                    stroke="#001b3a"
+                    strokeWidth="2"
+                  />
+                </>
+              )}
             </g>
           )}
         </svg>
@@ -2833,22 +3451,122 @@ export default function BoardViewport({
               transform: "translate(-50%, -100%)",
               background: "rgba(1, 27, 58, 0.95)",
               border: "2.5px solid #ffcc00",
-              borderRadius: "999px",
+              borderRadius: "14px",
               padding: "4px 12px",
               color: "#ffffff",
               fontFamily: "var(--font-display)",
-              fontSize: "15px",
+              fontSize: "14px",
               fontWeight: 800,
               whiteSpace: "nowrap",
-              pointerEvents: "none",
+              pointerEvents: "auto",
               boxShadow: "0 4px 12px rgba(0,0,0,0.65)",
-              zIndex: 24
+              zIndex: 24,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "4px"
             }}
           >
-            {measureStats.metersText} ({measureStats.squaresText})
+            <div>{measureStats.label}</div>
+            {tokensInsideMeasure.length > 0 && (
+              <button
+                type="button"
+                className="cp-btn cp-btn-green"
+                style={{ padding: "2px 8px", fontSize: "10px", borderRadius: "999px" }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  const existingIds = new Set(effectiveTargetList.map((t) => t.id || t.tokenId));
+                  const newTokens = tokensInsideMeasure.filter((t) => !existingIds.has(t.id));
+                  const merged = [...effectiveTargetList, ...newTokens.map((t) => ({ ...t, sceneId }))];
+                  onTargetedTokensChange?.(merged);
+                  onTargetedTokenChange?.(merged[0] || null);
+                  saveStoredTargetedTokens(campaignId, merged);
+                }}
+              >
+                🎯 Capturar {tokensInsideMeasure.length} Alvo{tokensInsideMeasure.length !== 1 ? "s" : ""}
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {/* Barra Rápida Flutuante da Régua (Linha, Cone 45°/60°, Círculo) */}
+      {toolMode === "measure" && (
+        <div
+          style={{
+            position: "absolute",
+            top: "14px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "linear-gradient(180deg, #02529c 0%, #012b54 100%)",
+            border: "2.5px solid var(--cp-blue-border)",
+            borderRadius: "999px",
+            padding: "4px 8px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            boxShadow: "0 4px 14px rgba(0, 0, 0, 0.5)",
+            zIndex: 25,
+            userSelect: "none"
+          }}
+        >
+          <button
+            type="button"
+            className={`cp-btn ${measureShape === "line" ? "cp-btn-gold" : ""}`}
+            style={{ padding: "3px 10px", fontSize: "11px", height: "26px", borderRadius: "999px" }}
+            onClick={() => setMeasureShape("line")}
+          >
+            📏 Linha
+          </button>
+
+          <button
+            type="button"
+            className={`cp-btn ${measureShape === "cone" ? "cp-btn-gold" : ""}`}
+            style={{ padding: "3px 10px", fontSize: "11px", height: "26px", borderRadius: "999px" }}
+            onClick={() => setMeasureShape("cone")}
+          >
+            📐 Cone ({coneAngle}°)
+          </button>
+
+          {measureShape === "cone" && (
+            <div
+              style={{
+                display: "flex",
+                gap: "2px",
+                background: "rgba(0, 27, 58, 0.6)",
+                padding: "2px",
+                borderRadius: "999px"
+              }}
+            >
+              <button
+                type="button"
+                className={`cp-btn ${coneAngle === 45 ? "cp-btn-gold" : ""}`}
+                style={{ padding: "2px 8px", fontSize: "10px", height: "22px", borderRadius: "999px" }}
+                onClick={() => setConeAngle(45)}
+              >
+                45°
+              </button>
+              <button
+                type="button"
+                className={`cp-btn ${coneAngle === 60 ? "cp-btn-gold" : ""}`}
+                style={{ padding: "2px 8px", fontSize: "10px", height: "22px", borderRadius: "999px" }}
+                onClick={() => setConeAngle(60)}
+              >
+                60°
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className={`cp-btn ${measureShape === "circle" ? "cp-btn-gold" : ""}`}
+            style={{ padding: "3px 10px", fontSize: "11px", height: "26px", borderRadius: "999px" }}
+            onClick={() => setMeasureShape("circle")}
+          >
+            ⭕ Círculo
+          </button>
+        </div>
+      )}
 
       {tokenModalState.open && (
         <TokenModal
@@ -2863,6 +3581,211 @@ export default function BoardViewport({
           }
         />
       )}
+
+      {/* HUD Superior Central: Demarcação AoE, Alvos e Itens Selecionados */}
+      <div
+        style={{
+          position: "absolute",
+          top: "12px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 48,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "8px",
+          pointerEvents: "none",
+          maxWidth: "92vw"
+        }}
+      >
+        {/* Banner Flutuante durante Demarcação AoE */}
+        {aoeDemarcateConfig && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              pointerEvents: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "rgba(185, 28, 28, 0.95)",
+              border: "2px solid #fca5a5",
+              borderRadius: "999px",
+              padding: "5px 14px",
+              color: "#ffffff",
+              fontSize: "12px",
+              fontWeight: 800,
+              boxShadow: "0 6px 20px rgba(0,0,0,0.6)"
+            }}
+          >
+            <span>🎯 Demarcando: {aoeDemarcateConfig.skillName || "Área"}</span>
+            <span style={{ fontSize: "11px", opacity: 0.85 }}>
+              ({aoePreview?.tokensInside?.length || 0} alvo{(aoePreview?.tokensInside?.length || 0) !== 1 ? "s" : ""} na área)
+            </span>
+            <button
+              type="button"
+              className="cp-btn cp-btn-orange"
+              style={{ padding: "2px 8px", fontSize: "10px", height: "22px" }}
+              onClick={onCloseAoeDemarcate}
+            >
+              ✕ Cancelar (ESC)
+            </button>
+          </div>
+        )}
+
+        {/* Indicador Flutuante dos Alvos Atuais (Multi-Alvo com Remoção Individual) */}
+        {effectiveTargetList.length > 0 && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              pointerEvents: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: "rgba(136, 19, 55, 0.94)",
+              border: "2px solid #fb7185",
+              borderRadius: "999px",
+              padding: "4px 10px",
+              color: "#ffffff",
+              fontSize: "12px",
+              fontWeight: 900,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.65)",
+              maxWidth: "100%",
+              overflowX: "auto"
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+              🎯 Alvo(s):
+            </span>
+            {effectiveTargetList.map((targetTok) => {
+              const targetKey = targetTok.id || targetTok.tokenId;
+              return (
+                <span
+                  key={targetKey}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    background: "rgba(0,0,0,0.35)",
+                    border: "1px solid rgba(251, 113, 133, 0.5)",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    fontSize: "11px",
+                    flexShrink: 0
+                  }}
+                >
+                  <span>{targetTok.name || "Alvo"}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = effectiveTargetList.filter(
+                        (t) => (t.id || t.tokenId) !== targetKey
+                      );
+                      onTargetedTokensChange?.(next);
+                      onTargetedTokenChange?.(next[0] || null);
+                      saveStoredTargetedTokens(campaignId, next);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#fecdd3",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                      fontSize: "11px",
+                      padding: 0,
+                      lineHeight: 1
+                    }}
+                    title="Remover alvo"
+                  >
+                    ✕
+                  </button>
+                </span>
+              );
+            })}
+            {effectiveTargetList.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTargetedTokensChange?.([]);
+                  onTargetedTokenChange?.(null);
+                  saveStoredTargetedTokens(campaignId, []);
+                }}
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  border: "1px solid #fda4af",
+                  color: "#ffffff",
+                  borderRadius: "999px",
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  marginLeft: "2px",
+                  flexShrink: 0
+                }}
+              >
+                Limpar Todos
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Barra Flutuante de Ação para Itens Selecionados (Riscos, Formas, Textos, Tokens) */}
+        {(selectedStrokeIds.length > 0 || selectedTokenIds.length > 0) && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              pointerEvents: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "rgba(1, 27, 58, 0.94)",
+              border: "2.5px solid var(--cp-blue-border)",
+              borderRadius: "999px",
+              padding: "6px 14px",
+              boxShadow: "0 4px 14px rgba(0,0,0,0.5)"
+            }}
+          >
+            <span
+              className="cp-title"
+              style={{ fontSize: "13px", marginRight: "4px" }}
+            >
+              {selectedStrokeIds.length + selectedTokenIds.length} item(ns) selecionado(s)
+            </span>
+            <button
+              type="button"
+              className="cp-btn cp-btn-orange"
+              style={{ padding: "4px 10px", fontSize: "12px" }}
+              onClick={async () => {
+                if (selectedStrokeIds.length > 0) {
+                  await deleteStrokes(selectedStrokeIds);
+                  setSelectedStrokeIds([]);
+                }
+                if (selectedTokenIds.length > 0) {
+                  for (const tokId of selectedTokenIds) {
+                    const tok = tokens.find((t) => t.id === tokId);
+                    if (tok && (isGM || canControlToken(tok))) {
+                      await removeToken(tokId);
+                    }
+                  }
+                  setSelectedTokenIds([]);
+                }
+              }}
+            >
+              Deletar Selecionados
+            </button>
+            <button
+              type="button"
+              className="cp-btn"
+              style={{ padding: "4px 10px", fontSize: "12px" }}
+              onClick={() => {
+                setSelectedStrokeIds([]);
+                setSelectedTokenIds([]);
+              }}
+            >
+              Limpar Seleção
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

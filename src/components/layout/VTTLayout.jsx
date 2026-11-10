@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { ref, set as rtdbSet } from "firebase/database";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ref, set as rtdbSet, update as rtdbUpdate } from "firebase/database";
 import { rtdb } from "../../services/firebase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
@@ -9,6 +9,17 @@ import { useCompendium } from "../../hooks/useCompendium";
 import { useChatRolls } from "../../hooks/useChatRolls";
 import { useJournalNotes } from "../../hooks/useJournalNotes";
 import { getNoteTypeMeta } from "../../engines/aliasEngine";
+import {
+  EFFECT_TYPES,
+  doubleDiceInFormula,
+  computeModifiedEffectValue,
+  isUserResponsibleForSavingThrow,
+  getTargetStorageKey,
+  saveStoredTargetedToken,
+  loadStoredTargetedToken,
+  saveStoredTargetedTokens,
+  loadStoredTargetedTokens
+} from "../../engines/combatEngine";
 import GMPanelModal from "../gm/GMPanelModal";
 import BoardViewport from "../canvas/BoardViewport";
 import ScenesManagerModal from "../scenes/ScenesManagerModal";
@@ -20,6 +31,8 @@ import JournalWorkspace from "../journal/JournalWorkspace";
 import PlayerProfileModal from "./PlayerProfileModal";
 import QuickActionsHotbar from "./QuickActionsHotbar";
 import EmotePickerMenu from "./EmotePickerMenu";
+import DamageRollModal from "../combat/DamageRollModal";
+import SavingThrowModal from "../combat/SavingThrowModal";
 
 export default function VTTLayout() {
   const { user, logout } = useAuth();
@@ -47,6 +60,7 @@ export default function VTTLayout() {
 
   const {
     characters,
+    allCharacters = [],
     folders: characterFolders,
     canEditCharacter,
     createCharacter,
@@ -72,7 +86,9 @@ export default function VTTLayout() {
     messages,
     sendTextMessage,
     sendEmoteMessage,
+    sendSkillPing,
     executeRoll,
+    updateMessageRollData,
     deleteMessage
   } = useChatRolls();
 
@@ -112,6 +128,83 @@ export default function VTTLayout() {
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [snowballAimActive, setSnowballAimActive] = useState(false);
   const [selectedTokenOnBoard, setSelectedTokenOnBoard] = useState(null);
+  const [targetedTokens, setTargetedTokensState] = useState(() =>
+    loadStoredTargetedTokens(campaignId)
+  );
+  const targetedTokensRef = useRef(targetedTokens);
+  const [targetedToken, setTargetedTokenState] = useState(() =>
+    loadStoredTargetedToken(campaignId)
+  );
+  const targetedTokenRef = useRef(targetedToken);
+
+  const setTargetedTokens = (nextListOrFn) => {
+    const current = targetedTokensRef.current || [];
+    const resolved = typeof nextListOrFn === "function" ? nextListOrFn(current) : nextListOrFn;
+    const arr = Array.isArray(resolved) ? resolved : resolved ? [resolved] : [];
+    targetedTokensRef.current = arr;
+    setTargetedTokensState(arr);
+    targetedTokenRef.current = arr[0] || null;
+    setTargetedTokenState(arr[0] || null);
+    saveStoredTargetedTokens(campaignId, arr);
+  };
+
+  const setTargetedToken = (nextTok) => {
+    const resolved =
+      typeof nextTok === "function" ? nextTok(targetedTokenRef.current) : nextTok;
+    if (!resolved) {
+      setTargetedTokens([]);
+    } else {
+      setTargetedTokens([resolved]);
+    }
+  };
+
+  const [aoeDemarcateConfig, setAoeDemarcateConfig] = useState(null);
+
+  const handleStartAoeDemarcate = (config) => {
+    setAoeDemarcateConfig(config || null);
+    try {
+      if (config) {
+        localStorage.setItem(`cp_vtt_aoe_demarcate_${campaignId || "default"}`, JSON.stringify(config));
+      } else {
+        localStorage.removeItem(`cp_vtt_aoe_demarcate_${campaignId || "default"}`);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    const initialList = loadStoredTargetedTokens(campaignId);
+    targetedTokensRef.current = initialList;
+    setTargetedTokensState(initialList);
+    targetedTokenRef.current = initialList[0] || null;
+    setTargetedTokenState(initialList[0] || null);
+
+    const storageKey = getTargetStorageKey(campaignId);
+    const aoeStorageKey = `cp_vtt_aoe_demarcate_${campaignId || "default"}`;
+    const handleStorage = (e) => {
+      if (e.key === storageKey) {
+        const updated = loadStoredTargetedTokens(campaignId);
+        targetedTokensRef.current = updated;
+        setTargetedTokensState(updated);
+        targetedTokenRef.current = updated[0] || null;
+        setTargetedTokenState(updated[0] || null);
+      }
+      if (e.key === aoeStorageKey) {
+        try {
+          const val = e.newValue ? JSON.parse(e.newValue) : null;
+          setAoeDemarcateConfig(val);
+        } catch {}
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [campaignId]);
+
+  const [damageModalMsg, setDamageModalMsg] = useState(null);
+  const [activeSavingThrowReq, setActiveSavingThrowReq] = useState(null);
+
+  const boardSyncRef = useRef({ tokens: [], updateToken: null, sceneId: null });
+  const dismissedSaveIdsRef = useRef(new Set());
+  const mountTimestampRef = useRef(Date.now());
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   const currentDisplayName =
@@ -163,14 +256,395 @@ export default function VTTLayout() {
   }, [characters, standaloneSheetId, openCharacterId]);
 
   const handleExecuteSheetRoll = async (rollParams) => {
+    const activeTargets =
+      (Array.isArray(rollParams.targetedTokens) && rollParams.targetedTokens.length > 0)
+        ? rollParams.targetedTokens
+        : (targetedTokensRef.current && targetedTokensRef.current.length > 0)
+        ? targetedTokensRef.current
+        : loadStoredTargetedTokens(campaignId);
+
+    const primaryTarget =
+      rollParams.targetedToken ??
+      activeTargets[0] ??
+      targetedToken ??
+      targetedTokenRef.current ??
+      loadStoredTargetedToken(campaignId);
+
     await executeRoll({
       ...rollParams,
+      targetedToken: primaryTarget,
+      targetedTokens: activeTargets.length > 0 ? activeTargets : (primaryTarget ? [primaryTarget] : []),
+      allCharacters,
       onDeductResource: updateCharacterResource
     });
     if (!standaloneSheetId) {
       setSidebarOpen(true);
       setActiveSidebarTab("chat");
     }
+  };
+
+  const handlePingSkill = async (pingParams) => {
+    await sendSkillPing({
+      character: pingParams.character || activeCharacter,
+      skill: pingParams.skill,
+      visibility: pingParams.visibility || rollVisibility
+    });
+    if (!standaloneSheetId) {
+      setSidebarOpen(true);
+      setActiveSidebarTab("chat");
+    }
+  };
+
+  // Detecta automaticamente novos pedidos de Teste de Resistência direcionados ao jogador / Mestre
+  useEffect(() => {
+    if (!user || !Array.isArray(messages) || messages.length === 0) return;
+
+    const answeredSaveIds = new Set(
+      messages
+        .map((m) => m.rollData?.respondedToSaveId)
+        .filter(Boolean)
+    );
+
+    // Procura do mais recente para o mais antigo por um pedido recente ainda não respondido
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      const req = m?.rollData?.savingThrowRequest;
+      if (!req || !req.id) continue;
+      if ((m.timestampMs || 0) < mountTimestampRef.current - 15000) continue;
+      if (answeredSaveIds.has(req.id) || dismissedSaveIdsRef.current.has(req.id)) continue;
+
+      if (
+        isUserResponsibleForSavingThrow({
+          user,
+          isGM,
+          savingThrowRequest: req,
+          campaignGMId: campaign?.gmId
+        })
+      ) {
+        setActiveSavingThrowReq((prev) => (prev?.id === req.id ? prev : req));
+        break;
+      }
+    }
+  }, [messages, user, isGM, campaign?.gmId]);
+
+  const handleExecuteDamageRoll = async ({
+    isCrit,
+    baseFormula,
+    critFormula,
+    extraDamage,
+    selectedTriggers = [],
+    attackMessage,
+    character
+  }) => {
+    const attacker =
+      character ||
+      allCharacters.find((c) => c.id === attackMessage?.characterId) ||
+      activeCharacter;
+
+    // 1. Deduz custos de recursos ou itens dos gatilhos selecionados
+    if (attacker) {
+      let nextMp = Number(attacker.resources?.mp?.current ?? 0);
+      let nextHp = Number(attacker.resources?.hp?.current ?? 0);
+      let mpChanged = false;
+      let hpChanged = false;
+      let nextInventory = Array.isArray(attacker.inventory)
+        ? [...attacker.inventory]
+        : [];
+      let invChanged = false;
+
+      for (const trig of selectedTriggers) {
+        if (trig.sourceType === "ability") {
+          if (trig.costMp > 0) {
+            nextMp = Math.max(0, nextMp - trig.costMp);
+            mpChanged = true;
+          }
+          if (trig.costHp > 0) {
+            nextHp = Math.max(0, nextHp - trig.costHp);
+            hpChanged = true;
+          }
+        } else if (trig.sourceType === "item" && trig.consumeOnUse) {
+          nextInventory = nextInventory
+            .map((it) =>
+              it.id === trig.id
+                ? { ...it, qty: Math.max(0, (Number(it.qty) || 1) - 1) }
+                : it
+            )
+            .filter((it) => (Number(it.qty) ?? 1) > 0);
+          invChanged = true;
+        }
+      }
+
+      if (mpChanged) await updateCharacterResource(attacker.id, "mp", nextMp);
+      if (hpChanged) await updateCharacterResource(attacker.id, "hp", nextHp);
+      if (invChanged) await updateCharacter(attacker.id, { inventory: nextInventory });
+    }
+
+    // 2. Fórmula final de dano (Normal vs Crítico + Extra + Gatilhos com dados dobrados no crítico)
+    const coreFormula = isCrit ? doubleDiceInFormula(baseFormula) : baseFormula;
+    const formattedExtra = isCrit && extraDamage
+      ? doubleDiceInFormula(extraDamage)
+      : extraDamage;
+    const triggerFormulas = selectedTriggers
+      .map((t) => (isCrit && t.formula ? doubleDiceInFormula(t.formula) : t.formula))
+      .filter(Boolean);
+    const parts = [coreFormula, formattedExtra, ...triggerFormulas].filter(Boolean);
+    const combinedFormula = parts.join(" + ") || "1d6";
+
+    // 3. Verifica se algum gatilho exige Teste de Resistência
+    const triggerWithSave = selectedTriggers.find(
+      (t) => t.savingThrow?.enabled
+    );
+    const saveToAttach =
+      triggerWithSave?.savingThrow ||
+      (!attackMessage?.rollData?.savingThrowRequest &&
+      attackMessage?.rollData?.damageConfig?.savingThrow?.enabled
+        ? attackMessage.rollData.damageConfig.savingThrow
+        : null);
+
+    const triggerNames = selectedTriggers.map((t) => t.name);
+    const baseTitle = attackMessage?.rollData?.title || "Ataque";
+    const rollTitle = `${baseTitle} — ${isCrit ? "Dano Crítico" : "Dano"}${
+      triggerNames.length > 0 ? ` (+ ${triggerNames.join(", ")})` : ""
+    }`;
+
+    const prevTargetInfo = attackMessage?.rollData?.targetInfo || null;
+
+    await executeRoll({
+      title: rollTitle,
+      categoryColor: isCrit
+        ? "#f59e0b"
+        : (attackMessage?.rollData?.categoryColor || "#e53935"),
+      description:
+        triggerNames.length > 0
+          ? `Gatilhos: ${triggerNames.join(", ")}`
+          : "",
+      character: attacker,
+      primaryFormula: combinedFormula,
+      primaryLabel: isCrit ? "Dano Crítico (2x)" : "Dano",
+      secondaryFormula: "",
+      visibility: attackMessage?.visibility || rollVisibility,
+      icon: attackMessage?.icon || attackMessage?.rollData?.icon || "sword",
+      targetedToken: null,
+      allCharacters,
+      effectType:
+        triggerWithSave?.effectType ||
+        attackMessage?.rollData?.damageConfig?.effectType ||
+        "damage",
+      savingThrow: saveToAttach,
+      rollKind: "damage",
+      deferSecondaryDamage: false,
+      targetInfoOverride: prevTargetInfo
+        ? {
+            tokenId: prevTargetInfo.tokenId,
+            sceneId: prevTargetInfo.sceneId,
+            characterId: prevTargetInfo.characterId,
+            name: prevTargetInfo.name,
+            imageUrl: prevTargetInfo.imageUrl,
+            isAttackRoll: false,
+            isHit: null
+          }
+        : null,
+      parentMessageId: attackMessage?.id || null
+    });
+
+    setSidebarOpen(true);
+    setActiveSidebarTab("chat");
+  };
+
+  const handleExecuteSavingThrow = async ({
+    savingThrowRequest,
+    attributeLabel,
+    formula,
+    selectedAssists = [],
+    defenderCharacter
+  }) => {
+    if (!savingThrowRequest) return;
+    dismissedSaveIdsRef.current.add(savingThrowRequest.id);
+
+    if (defenderCharacter) {
+      let nextMp = Number(defenderCharacter.resources?.mp?.current ?? 0);
+      let nextHp = Number(defenderCharacter.resources?.hp?.current ?? 0);
+      let mpChanged = false;
+      let hpChanged = false;
+      let nextInventory = Array.isArray(defenderCharacter.inventory)
+        ? [...defenderCharacter.inventory]
+        : [];
+      let invChanged = false;
+
+      for (const ast of selectedAssists) {
+        if (ast.sourceType === "ability") {
+          if (ast.costMp > 0) {
+            nextMp = Math.max(0, nextMp - ast.costMp);
+            mpChanged = true;
+          }
+          if (ast.costHp > 0) {
+            nextHp = Math.max(0, nextHp - ast.costHp);
+            hpChanged = true;
+          }
+        } else if (ast.sourceType === "item" && ast.consumeOnUse) {
+          nextInventory = nextInventory
+            .map((it) =>
+              it.id === ast.id
+                ? { ...it, qty: Math.max(0, (Number(it.qty) || 1) - 1) }
+                : it
+            )
+            .filter((it) => (Number(it.qty) ?? 1) > 0);
+          invChanged = true;
+        }
+      }
+
+      if (mpChanged) await updateCharacterResource(defenderCharacter.id, "mp", nextMp);
+      if (hpChanged) await updateCharacterResource(defenderCharacter.id, "hp", nextHp);
+      if (invChanged) await updateCharacter(defenderCharacter.id, { inventory: nextInventory });
+    }
+
+    const dc = Number(savingThrowRequest.dc) || 10;
+
+    await executeRoll({
+      title: `Resistência (${attributeLabel}) — ${savingThrowRequest.sourceRollName || "Teste"}`,
+      categoryColor: "#7e22ce",
+      description: savingThrowRequest.effectDescription || "",
+      character: defenderCharacter,
+      senderName:
+        savingThrowRequest.targetName ||
+        defenderCharacter?.name ||
+        currentDisplayName,
+      primaryFormula: formula,
+      primaryLabel: `${attributeLabel} (CD ${dc})`,
+      secondaryFormula: "",
+      visibility: rollVisibility,
+      icon: "shield",
+      rollKind: "saving_throw",
+      deferSecondaryDamage: false,
+      respondedToSaveId: savingThrowRequest.id,
+      parentMessageId: savingThrowRequest.parentMessageId || null,
+      savingThrowOutcome: {
+        dc,
+        attribute: attributeLabel,
+        effectDescription: savingThrowRequest.effectDescription || ""
+      }
+    });
+
+    setActiveSavingThrowReq(null);
+    setSidebarOpen(true);
+    setActiveSidebarTab("chat");
+  };
+
+  const handleApplyCombatEffect = async ({
+    msg,
+    baseValue,
+    scaleMode = "full",
+    customValue = null,
+    effectType = "damage",
+    manualModifiers = []
+  }) => {
+    if (!isGM || !msg) return;
+
+    const msgTarget = msg.rollData?.targetInfo || null;
+    const targetTokenId =
+      msgTarget?.tokenId || targetedToken?.id || selectedTokenOnBoard?.id || null;
+    const targetSceneId =
+      msgTarget?.sceneId ||
+      targetedToken?.sceneId ||
+      activeScene?.id ||
+      campaign?.activeSceneId ||
+      null;
+    const targetCharId =
+      msgTarget?.characterId ||
+      targetedToken?.characterId ||
+      selectedTokenOnBoard?.characterId ||
+      null;
+
+    const liveToken =
+      boardSyncRef.current.tokens?.find(
+        (t) => t.id === targetTokenId || (targetCharId && t.characterId === targetCharId)
+      ) ||
+      targetedToken ||
+      selectedTokenOnBoard ||
+      null;
+
+    const effectiveCharId = targetCharId || liveToken?.characterId || null;
+    const targetChar = effectiveCharId
+      ? allCharacters.find((c) => c.id === effectiveCharId) || null
+      : null;
+    const sourceChar = msg.characterId
+      ? allCharacters.find((c) => c.id === msg.characterId) || null
+      : null;
+
+    if (!targetChar && !liveToken && !targetTokenId) return;
+
+    const computed = computeModifiedEffectValue({
+      baseValue,
+      scaleMode,
+      customValue,
+      effectType,
+      sourceCharacter: sourceChar,
+      targetCharacter: targetChar,
+      targetToken: liveToken,
+      manualModifiers
+    });
+
+    const resKey = computed.resourceKey || "hp";
+    let syncedHpValue = null;
+
+    if (targetChar && resKey) {
+      const resObj = targetChar.resources?.[resKey] || { current: 20, max: 20 };
+      const maxVal = Number(resObj.max) || 9999;
+      const nextVal = Math.max(
+        0,
+        Math.min(maxVal, (Number(resObj.current) || 0) + computed.resourceDelta)
+      );
+      await updateCharacterResource(targetChar.id, resKey, nextVal);
+      if (resKey === "hp") {
+        syncedHpValue = nextVal;
+      }
+    }
+
+    const effectiveTokenId = liveToken?.id || targetTokenId;
+    const effectiveSceneId =
+      liveToken?.sceneId || targetSceneId || activeScene?.id || campaign?.activeSceneId;
+
+    if (resKey === "hp" && effectiveTokenId && effectiveSceneId && campaignId) {
+      const curTokHp = Number(liveToken?.hpCurrent ?? targetChar?.resources?.hp?.current ?? 20);
+      const maxTokHp = Number(liveToken?.hpMax ?? targetChar?.resources?.hp?.max ?? 9999) || 9999;
+      const nextTokHp =
+        syncedHpValue !== null
+          ? syncedHpValue
+          : Math.max(0, Math.min(maxTokHp, curTokHp + computed.resourceDelta));
+
+      const tokRef = ref(
+        rtdb,
+        `vtt_realtime/${campaignId}/tokens/${effectiveSceneId}/${effectiveTokenId}`
+      );
+      await rtdbUpdate(tokRef, {
+        hpCurrent: nextTokHp,
+        updatedBy: user?.uid || "gm",
+        updatedAt: Date.now()
+      });
+    }
+
+    const effMeta =
+      EFFECT_TYPES.find((e) => e.id === computed.effectType) || EFFECT_TYPES[0];
+    const targetDisplayName =
+      targetChar?.name || liveToken?.name || msgTarget?.name || "Alvo";
+
+    const prevApplied = Array.isArray(msg.rollData?.appliedEffects)
+      ? msg.rollData.appliedEffects
+      : [];
+
+    await updateMessageRollData(msg.id, {
+      appliedEffects: [
+        ...prevApplied,
+        {
+          effectType: computed.effectType,
+          label: effMeta.label,
+          scaleMode,
+          finalValue: computed.finalValue,
+          targetName: targetDisplayName,
+          timestampMs: Date.now()
+        }
+      ]
+    });
   };
 
   // Coloca o Token do Personagem diretamente no Mapa Ativo em Tempo Real
@@ -220,6 +694,9 @@ export default function VTTLayout() {
       controlledBy: Array.from(
         new Set([campaign?.gmId, char.ownerId].filter(Boolean))
       ),
+      ownerId: char.ownerId || null,
+      characterType: char.type || "pc",
+      defense: Number(char.defense ?? 12),
       hpCurrent: Number(char.resources?.hp?.current ?? 20),
       hpMax: Number(char.resources?.hp?.max ?? 20),
       showBarsToPlayers: true,
@@ -338,10 +815,12 @@ export default function VTTLayout() {
         onUpdateCharacter={updateCharacter}
         onUploadCharacterImage={uploadCharacterImage}
         onExecuteRoll={handleExecuteSheetRoll}
+        onPingSkill={handlePingSkill}
         onSpawnTokenOnMap={
           activeScene ? handleSpawnCharacterToken : null
         }
         isStandaloneWindow={true}
+        onStartAoeDemarcate={handleStartAoeDemarcate}
       />
     );
   }
@@ -488,6 +967,15 @@ export default function VTTLayout() {
               setScenesModalOpen(true);
             }}
             onSelectedTokenChange={setSelectedTokenOnBoard}
+            targetedToken={targetedToken}
+            targetedTokens={targetedTokens}
+            onTargetedTokenChange={setTargetedToken}
+            onTargetedTokensChange={setTargetedTokens}
+            aoeDemarcateConfig={aoeDemarcateConfig}
+            onCloseAoeDemarcate={() => handleStartAoeDemarcate(null)}
+            onTokensSync={(syncData) => {
+              boardSyncRef.current = syncData;
+            }}
             snowballAimActive={snowballAimActive}
             onDeactivateSnowballAim={() => setSnowballAimActive(false)}
           />
@@ -816,11 +1304,17 @@ export default function VTTLayout() {
               campaignId={campaignId}
               activeCharacter={activeCharacter}
               characters={characters}
+              allCharacters={allCharacters}
+              targetedToken={targetedToken}
+              targetedTokens={targetedTokens}
               canEditCharacter={canEditCharacter}
               rollVisibility={rollVisibility}
               onChangeRollVisibility={setRollVisibility}
               onSendText={sendTextMessage}
               onExecuteRoll={handleExecuteSheetRoll}
+              onOpenDamageModal={(msg) => setDamageModalMsg(msg)}
+              onOpenSavingThrowModal={(req) => setActiveSavingThrowReq(req)}
+              onApplyEffect={handleApplyCombatEffect}
               onDeleteMessage={deleteMessage}
               isGM={isGM}
             />
@@ -1005,12 +1499,47 @@ export default function VTTLayout() {
           onUpdateCharacter={updateCharacter}
           onUploadCharacterImage={uploadCharacterImage}
           onExecuteRoll={handleExecuteSheetRoll}
+          onPingSkill={handlePingSkill}
           onSpawnTokenOnMap={
             activeScene ? handleSpawnCharacterToken : null
           }
+          onStartAoeDemarcate={handleStartAoeDemarcate}
           onClose={() => setOpenCharacterId(null)}
         />
       )}
+
+      {/* Janela de Rolagem de Dano (Normal / Crítico / Extra / Gatilho) */}
+      <DamageRollModal
+        open={Boolean(damageModalMsg)}
+        onClose={() => setDamageModalMsg(null)}
+        attackMessage={damageModalMsg}
+        character={
+          (damageModalMsg?.characterId &&
+            allCharacters.find((c) => c.id === damageModalMsg.characterId)) ||
+          activeCharacter
+        }
+        onExecuteDamageRoll={handleExecuteDamageRoll}
+      />
+
+      {/* Pop-up de Teste de Resistência para o Alvo */}
+      <SavingThrowModal
+        open={Boolean(activeSavingThrowReq)}
+        onClose={() => {
+          if (activeSavingThrowReq?.id) {
+            dismissedSaveIdsRef.current.add(activeSavingThrowReq.id);
+          }
+          setActiveSavingThrowReq(null);
+        }}
+        savingThrowRequest={activeSavingThrowReq}
+        defenderCharacter={
+          (activeSavingThrowReq?.targetCharacterId &&
+            allCharacters.find(
+              (c) => c.id === activeSavingThrowReq.targetCharacterId
+            )) ||
+          activeCharacter
+        }
+        onExecuteSavingThrow={handleExecuteSavingThrow}
+      />
     </div>
   );
 }
