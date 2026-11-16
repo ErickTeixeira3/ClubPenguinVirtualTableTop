@@ -284,10 +284,18 @@ export default function VTTLayout() {
   useEffect(() => {
     if (!campaignId || !standaloneSheetId || !windowId) return;
     registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
+    // Revisão pós-6.8 (A20): renova o registro enquanto a ficha destacada estiver aberta. Sem isso,
+    // ele expirava em OPEN_SHEET_TTL_MS (30 min) e a janela principal deixava de ceder a vez,
+    // abrindo o pop-up por um instante antes de a ficha destacada assumi-lo.
+    const heartbeat = setInterval(
+      () => registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId),
+      5 * 60 * 1000
+    );
     const cleanup = () => unregisterOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
     window.addEventListener("pagehide", cleanup);
     window.addEventListener("beforeunload", cleanup);
     return () => {
+      clearInterval(heartbeat);
       window.removeEventListener("pagehide", cleanup);
       window.removeEventListener("beforeunload", cleanup);
       cleanup();

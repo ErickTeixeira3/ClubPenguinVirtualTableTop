@@ -1983,3 +1983,33 @@ Backups dos arquivos originais: scratchpad da sessão, `backups/pre-6.7/`.
 ### 12.3 Roteiro de verificação pós-deploy no navegador
 1. Como Mestre (`erickteixeiractt@gmail.com`), abrir cada cena da campanha após o deploy para concluir a migração automática `fog/{cena}/drawings -> drawings/{cena}` e `controlledBy` -> mapa `{ uid: true }`, encerrar o Modo de Turno (botão `■`) caso ativo, e verificar os 25 desenhos nas 3 cenas e `meta/gmId` no RTDB.
 2. Em sessão dupla (Mestre + Jogador, aba principal + ficha destacada), validar: pings e desenhos de jogador em `drawings/`/`pings/`, movimentação em token compartilhado com 6+ controladores, exclusão D-3 vs renomeação de pasta via `editableBy`, consultas `or` sem fallback no console, ataque a NPC usando Defesa do token (A22), Teste de Resistência único sem cobrança dupla, avatar externo + remoção de foto Google, flush ao fechar aba destacada e card somente leitura no Diário.
+
+## 13. Revisão Pós-6.8 e Ajuste do A20 (2026-11-16)
+
+### 13.1 Revisão do trabalho das Fases 6.3 a 6.8 (pedido do usuário)
+Verificações independentes (consultas ao Firebase de produção somente leitura, só com contagens agregadas):
+
+| Verificação | Resultado |
+| :--- | :--- |
+| Site publicado × código | O Hosting publicado em 2026-11-16 12:31 UTC serve `assets/index-CxmFyjdF.js`, o mesmo arquivo gerado por um build novo do commit `5ce68c0`. |
+| Regras publicadas × locais | Firestore (ruleset de 2026-11-16 12:30 UTC) e Realtime Database idênticos a `firestore.rules` e `database.rules.json`. |
+| Estáticas | `oxlint` padrão com 0 erros e 10 avisos; estrito com 0 erros e 8 avisos; `vite build` ok. |
+| Suíte `auditoria_refatoracao/validar-regressoes.mjs` | 20/20. |
+| Teste independente das regras do RTDB publicadas (emulador, token do jogador via `?auth=`) | **18/18**. O jogador cria, move e apaga os próprios desenhos e pings; desenho alheio, camada do mapa, `fog/` e `meta/gmId` são negados; mapa `controlledBy` funciona (inclusive com 6 controladores e com `ALL`); o Mestre delegado por `meta/gmId` escreve em `fog/`; o sequestro de `meta/gmId` é negado. |
+| Revisão de código (A20, A23, A30, A33, migração de desenhos) | Sem defeito funcional. Única melhoria: a renovação do registro da ficha destacada no A20 (13.2). |
+
+**Estado real dos dados em produção (corrige a tabela 12.2 nos itens A3 e A33)**:
+- os 25 desenhos estão íntegros: **3** já migrados para `drawings/` na cena ativa e **22** ainda em `fog/{cena}/drawings` em **2 cenas que o Mestre não abriu** desde o deploy;
+- **9 tokens** dessas 2 cenas ainda têm `controlledBy` no formato antigo (lista). As regras novas negam o movimento deles ao jogador até a migração.
+- **Ação pendente**: a migração (desenhos e `controlledBy`) só roda quando o Mestre real abre a cena, e não há pré-visualização de cena. O Mestre precisa **ativar** cada uma das 2 cenas. Atenção: ativar uma cena também a libera aos jogadores (`useScenes`). Faça isso sem jogadores online e oculte a cena de novo, se necessário.
+- O Modo de Turno está desligado e `meta/gmId` existe.
+
+### 13.2 Ajuste do A20 (renovação do registro da ficha destacada)
+- **Correção de diagnóstico**: na revisão, a primeira leitura indicou que a janela principal não tratava `SAVE_MODAL_CLAIMED`. Isso estava errado: `VTTLayout` trata `onSaveClaimReceived` e fecha o pop-up local quando uma janela de prioridade maior ou igual assume o pedido.
+- **Problema real (menor)**: `registerOpenStandaloneSheet` só gravava na abertura da ficha destacada, e o registro expira em `OPEN_SHEET_TTL_MS` (30 min). Depois disso, a janela principal deixava de ceder a vez (o atraso de 120 ms) e podia abrir o pop-up por um instante antes de a ficha destacada assumir. Não havia cobrança dupla: a trava `tryBeginSavingThrowSubmission` continuava valendo.
+- **Alteração**: `src/components/layout/VTTLayout.jsx`. O efeito que registra a ficha destacada passou a renovar o registro a cada 5 minutos (`setInterval`) e limpa o intervalo ao desmontar.
+- **Validação**: `oxlint` padrão com 0 erros e 10 avisos; estrito com 0 erros e 8 avisos; suíte 20/20; `npm run build` ok.
+
+### 13.3 Commit e deploy
+- **Autorização**: o usuário autorizou explicitamente, em 2026-11-16, o commit e o deploy desta correção ("faça a correção, commite e faça deploy").
+- **Escopo do deploy**: só Hosting (`firebase deploy --only hosting`). As regras não mudaram em relação às publicadas.
