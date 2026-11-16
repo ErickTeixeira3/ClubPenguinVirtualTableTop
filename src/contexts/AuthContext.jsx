@@ -9,6 +9,10 @@ import {
 } from "firebase/auth";
 import { auth, googleProvider } from "../services/firebase";
 import { checkIsEmailAuthorized } from "../constants/authorizedUsers";
+import {
+  clearPendingAvatarDataUrl,
+  savePendingAvatarDataUrl
+} from "../utils/stringUtils";
 
 const AuthContext = createContext(null);
 
@@ -45,12 +49,15 @@ export function AuthProvider({ children }) {
       if (currentUser?.email) {
         const isAuth = await checkIsEmailAuthorized(currentUser.email);
         if (!isAuth) {
+          clearPendingAvatarDataUrl();
           await signOut(auth);
           setUser(null);
           setAuthError("Acesso restrito: este e-mail não está autorizado nesta mesa.");
           setLoading(false);
           return;
         }
+      } else {
+        clearPendingAvatarDataUrl();
       }
       setUser(currentUser);
       setLoading(false);
@@ -60,10 +67,12 @@ export function AuthProvider({ children }) {
 
   const loginWithGoogle = async () => {
     setAuthError("");
+    clearPendingAvatarDataUrl();
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const isAuth = await checkIsEmailAuthorized(result.user.email);
       if (!isAuth) {
+        clearPendingAvatarDataUrl();
         await signOut(auth);
         const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
         setAuthError(err.message);
@@ -71,6 +80,7 @@ export function AuthProvider({ children }) {
       }
       return result.user;
     } catch (err) {
+      clearPendingAvatarDataUrl();
       const msg = formatAuthError(err);
       setAuthError(msg);
       throw err;
@@ -79,11 +89,13 @@ export function AuthProvider({ children }) {
 
   const loginWithEmail = async (email, password) => {
     setAuthError("");
+    clearPendingAvatarDataUrl();
     try {
       const cleanEmail = email.trim().toLowerCase();
       const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
       const isAuth = await checkIsEmailAuthorized(result.user.email);
       if (!isAuth) {
+        clearPendingAvatarDataUrl();
         await signOut(auth);
         const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
         setAuthError(err.message);
@@ -91,6 +103,7 @@ export function AuthProvider({ children }) {
       }
       return result.user;
     } catch (err) {
+      clearPendingAvatarDataUrl();
       const msg = formatAuthError(err);
       setAuthError(msg);
       throw err;
@@ -99,11 +112,13 @@ export function AuthProvider({ children }) {
 
   const registerWithEmail = async (email, password, displayName, photoURL = null) => {
     setAuthError("");
+    clearPendingAvatarDataUrl();
     try {
       const cleanEmail = email.trim().toLowerCase();
       const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
       const isAuth = await checkIsEmailAuthorized(result.user.email);
       if (!isAuth) {
+        clearPendingAvatarDataUrl();
         try {
           await result.user.delete();
         } catch {
@@ -113,19 +128,31 @@ export function AuthProvider({ children }) {
         setAuthError(err.message);
         throw err;
       }
-      if (displayName?.trim() || photoURL) {
+      const isDataUrlPhoto =
+        typeof photoURL === "string" && photoURL.startsWith("data:");
+      const isHttpPhoto =
+        typeof photoURL === "string" &&
+        /^https?:\/\//i.test(photoURL) &&
+        photoURL.length < 2000;
+
+      if (isDataUrlPhoto) {
+        savePendingAvatarDataUrl(result.user.uid, photoURL);
+      }
+
+      if (displayName?.trim() || isHttpPhoto) {
         await updateProfile(result.user, {
           ...(displayName?.trim() ? { displayName: displayName.trim() } : {}),
-          ...(photoURL ? { photoURL } : {})
+          ...(isHttpPhoto ? { photoURL } : {})
         });
         setUser({
           ...result.user,
           displayName: displayName?.trim() || result.user.displayName,
-          photoURL: photoURL || result.user.photoURL
+          photoURL: isHttpPhoto ? photoURL : result.user.photoURL
         });
       }
       return result.user;
     } catch (err) {
+      clearPendingAvatarDataUrl();
       const msg = formatAuthError(err);
       setAuthError(msg);
       throw err;
@@ -134,6 +161,7 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     setAuthError("");
+    clearPendingAvatarDataUrl();
     await signOut(auth);
   };
 

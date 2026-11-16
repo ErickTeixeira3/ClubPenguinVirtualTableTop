@@ -5,6 +5,7 @@ import {
 } from "../../engines/imageCompressor";
 import { DEFAULT_GRID_CONFIG } from "../../hooks/useScenes";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { Z_LAYERS } from "../../constants/zLayers";
 
 function SceneThumbnail({ scene, campaignId }) {
   const { url, loading } = useMediaUrl(
@@ -183,7 +184,9 @@ export default function ScenesManagerModal({
           alignItems: "center",
           justifyContent: "center",
           padding: "16px",
-          zIndex: 4000
+          // Fase 4: era 4000. Camada de modal principal, +1 para manter o visor de mapa acima da
+          // Ficha/Compêndio/Painel GM (renderizados depois no DOM), como antes da Fase 4.
+          zIndex: `calc(${Z_LAYERS.modalBase} + 1)`
         }}
       >
         {/* Botão de Alternar para Gerenciador de Cenas para o Mestre */}

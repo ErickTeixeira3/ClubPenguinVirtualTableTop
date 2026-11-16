@@ -93,58 +93,28 @@ export function evaluateDcFormula(dcFormula, sourceCharacter = null) {
   return Math.max(1, Math.round(Number(evaluated.total) || 10));
 }
 
-/**
- * Persiste e lê os tokens alvos ativos no localStorage para sincronizar entre a janela principal e fichas pop-out (?sheetId=...)
- */
-export function getTargetStorageKey(campaignId) {
-  return `cp_vtt_targeted_tokens_${campaignId || "default"}`;
-}
+export const ROLL_KINDS = {
+  ATTACK: "attack",
+  DAMAGE: "damage",
+  HEAL: "heal",
+  MP_DAMAGE: "mp_damage",
+  MP_HEAL: "mp_heal",
+  SAVING_THROW: "saving_throw",
+  CHECK: "check",
+  UTILITY: "utility",
+};
 
-export function saveStoredTargetedTokens(campaignId, tokens) {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  const key = getTargetStorageKey(campaignId);
-  try {
-    const arr = Array.isArray(tokens) ? tokens : tokens ? [tokens] : [];
-    if (arr.length === 0) {
-      window.localStorage.removeItem(key);
-      window.localStorage.removeItem(`cp_vtt_targeted_token_${campaignId || "default"}`);
-    } else {
-      window.localStorage.setItem(key, JSON.stringify(arr));
-      window.localStorage.setItem(`cp_vtt_targeted_token_${campaignId || "default"}`, JSON.stringify(arr[0]));
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
+export const METERS_PER_CELL = 1.5;
+export const DEFAULT_MOVEMENT_BUDGET_METERS = 9;
 
-export function loadStoredTargetedTokens(campaignId) {
-  if (typeof window === "undefined" || !window.localStorage) return [];
-  const key = getTargetStorageKey(campaignId);
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) {
-      const legacyRaw = window.localStorage.getItem(`cp_vtt_targeted_token_${campaignId || "default"}`);
-      if (!legacyRaw) return [];
-      const parsed = JSON.parse(legacyRaw);
-      return parsed && parsed.id ? [parsed] : [];
-    }
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((t) => t && t.id);
-    if (parsed && parsed.id) return [parsed];
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveStoredTargetedToken(campaignId, token) {
-  saveStoredTargetedTokens(campaignId, token ? [token] : []);
-}
-
-export function loadStoredTargetedToken(campaignId) {
-  const list = loadStoredTargetedTokens(campaignId);
-  return list[0] || null;
-}
+export const DEFAULT_COMBAT_STATE = {
+  active: false,
+  round: 1,
+  activeTurnIndex: 0,
+  lockMovementOutsideTurn: true,
+  lockActionsOutsideTurn: true,
+  turnOrder: [],
+};
 
 /**
  * Validação geométrica: verifica se um token está dentro de uma área circular
@@ -198,6 +168,58 @@ export function isTokenInsideCone({
 }
 
 /**
+ * Normaliza `controlledBy` aceitando o formato atual de mapa (`{ [uid]: true }` / `{ ALL: true }`)
+ * e o formato legado de array (`["ALL"]` / `["uid1", ...]`), incluindo objetos esparsos numericos do RTDB.
+ */
+export function normalizeControlledByList(controlledBy) {
+  if (Array.isArray(controlledBy)) {
+    return Array.from(
+      new Set(
+        controlledBy
+          .filter((id) => typeof id === "string" && id.trim())
+          .map((id) => id.trim())
+      )
+    );
+  }
+  if (controlledBy && typeof controlledBy === "object") {
+    const ids = [];
+    for (const [key, val] of Object.entries(controlledBy)) {
+      if (val === true && key.trim()) {
+        ids.push(key.trim());
+      } else if (/^\d+$/.test(key) && typeof val === "string" && val.trim()) {
+        ids.push(val.trim());
+      }
+    }
+    return Array.from(new Set(ids));
+  }
+  return [];
+}
+
+/**
+ * Converte uma lista ou mapa de controladores em mapa `{ [uid]: true }` para o RTDB (A33).
+ */
+export function toControlledByMap(controlledBy) {
+  const map = {};
+  for (const id of normalizeControlledByList(controlledBy)) {
+    map[id] = true;
+  }
+  return map;
+}
+
+/**
+ * Verifica se o usuario (`uid`) ou `"ALL"` possui controle no campo `controlledBy` (mapa ou array).
+ */
+export function hasControlledByAccess(controlledBy, uid) {
+  if (!controlledBy) return false;
+  if (!Array.isArray(controlledBy) && typeof controlledBy === "object") {
+    if (controlledBy.ALL === true) return true;
+    if (uid && controlledBy[uid] === true) return true;
+  }
+  const list = normalizeControlledByList(controlledBy);
+  return list.includes("ALL") || Boolean(uid && list.includes(uid));
+}
+
+/**
  * Resolve dados consolidados de um token alvo (incluindo vínculo com ficha de personagem)
  */
 export function resolveTokenTargetData({ targetedToken, allCharacters = [] }) {
@@ -211,10 +233,26 @@ export function resolveTokenTargetData({ targetedToken, allCharacters = [] }) {
       ) || null
     : null;
 
-  const defense =
-    linkedChar?.defense !== undefined && linkedChar?.defense !== null
-      ? Number(linkedChar.defense) || 0
-      : Number(targetedToken.defense ?? 10) || 10;
+  const isNpcOrGmInstance =
+    Boolean(targetedToken.isGmToken) ||
+    linkedChar?.type === "npc" ||
+    targetedToken.characterType === "npc";
+  const hasTokenDefense =
+    targetedToken.defense !== undefined &&
+    targetedToken.defense !== null &&
+    targetedToken.defense !== "";
+
+  // Fase 6.7 (A22): instâncias de NPC/Mestre têm a Defesa do token como fonte autoritativa em cena;
+  // PCs mantêm prioridade da ficha (sincronizada com o token quando visível).
+  const defense = isNpcOrGmInstance
+    ? hasTokenDefense
+      ? Number(targetedToken.defense) || 0
+      : Number(linkedChar?.defense ?? 10) || 0
+    : linkedChar?.defense !== undefined && linkedChar?.defense !== null
+    ? Number(linkedChar.defense) || 0
+    : hasTokenDefense
+    ? Number(targetedToken.defense) || 0
+    : 10;
 
   return {
     tokenId: targetedToken.id || targetedToken.tokenId,
@@ -234,9 +272,7 @@ export function resolveTokenTargetData({ targetedToken, allCharacters = [] }) {
       : Array.isArray(targetedToken.editableBy)
       ? targetedToken.editableBy
       : [],
-    controlledBy: Array.isArray(targetedToken.controlledBy)
-      ? targetedToken.controlledBy
-      : [],
+    controlledBy: normalizeControlledByList(targetedToken.controlledBy),
     characterType: linkedChar?.type || targetedToken.characterType || "npc",
   };
 }
@@ -272,8 +308,10 @@ export function buildTargetInfo({
   });
 
   const primary = resolvedTargets[0];
+  const hasAttackComparison =
+    Boolean(isAttackRoll) && resolvedTargets.some((t) => t.isHit !== null);
   const anyHit = resolvedTargets.some((t) => t.isHit === true);
-  const allHit = resolvedTargets.every((t) => t.isHit === true);
+  const allHit = hasAttackComparison && resolvedTargets.every((t) => t.isHit === true);
   const anyMiss = resolvedTargets.some((t) => t.isHit === false);
 
   return {
@@ -281,7 +319,7 @@ export function buildTargetInfo({
     targets: resolvedTargets,
     targetCount: resolvedTargets.length,
     isAttackRoll: Boolean(isAttackRoll),
-    isHit: resolvedTargets.length > 1 ? anyHit : primary.isHit,
+    isHit: !hasAttackComparison ? null : resolvedTargets.length > 1 ? anyHit : primary.isHit,
     anyHit,
     allHit,
     anyMiss,
@@ -327,8 +365,7 @@ export function canUserSeeTargetDefense({ user, isGM, targetInfo, accessibleChar
   }
   if (
     !targetInfo.characterId &&
-    Array.isArray(targetInfo.controlledBy) &&
-    (targetInfo.controlledBy.includes(uid) || targetInfo.controlledBy.includes("ALL"))
+    hasControlledByAccess(targetInfo.controlledBy, uid)
   ) {
     return true;
   }
@@ -566,6 +603,372 @@ export function computeModifiedEffectValue({
     resourceKey: effectMeta.resourceKey,
     resourceDelta,
     appliedModifiers,
+  };
+}
+
+// ============================================================================
+// BASE ESTRUTURAL DO MODO DE TURNO (combatState) - SELETORES E TRANSIÇÕES PURAS
+// ============================================================================
+
+export function normalizeCombatant(entry = {}, fallbackIndex = 0) {
+  const movementBudgetMeters = Number(entry.movementBudgetMeters ?? DEFAULT_MOVEMENT_BUDGET_METERS);
+  const movementUsedMeters = Math.max(0, Number(entry.movementUsedMeters ?? 0) || 0);
+  const actionsMax = Math.max(0, Number(entry.actionsMax ?? 1) || 1);
+  const actionsRemaining = Math.max(
+    0,
+    Number(entry.actionsRemaining !== undefined ? entry.actionsRemaining : actionsMax) || 0
+  );
+  const reactionsMax = Math.max(0, Number(entry.reactionsMax ?? 1) || 1);
+  const reactionsRemaining = Math.max(
+    0,
+    Number(entry.reactionsRemaining !== undefined ? entry.reactionsRemaining : reactionsMax) || 0
+  );
+
+  return {
+    combatantId: entry.combatantId || entry.tokenId || entry.characterId || `comb_${fallbackIndex}`,
+    tokenId: entry.tokenId || null,
+    characterId: entry.characterId || null,
+    ownerId: entry.ownerId || null,
+    name: entry.name || "Combatente",
+    initiative: Number(entry.initiative) || 0,
+    movementBudgetMeters: Number.isFinite(movementBudgetMeters)
+      ? Math.max(0, movementBudgetMeters)
+      : DEFAULT_MOVEMENT_BUDGET_METERS,
+    movementUsedMeters,
+    actionsMax,
+    actionsRemaining,
+    reactionsMax,
+    reactionsRemaining,
+  };
+}
+
+export function normalizeCombatState(rawCombatState = null) {
+  const src = rawCombatState && typeof rawCombatState === "object" ? rawCombatState : {};
+  const turnOrder = Array.isArray(src.turnOrder)
+    ? src.turnOrder.map((c, idx) => normalizeCombatant(c, idx))
+    : [];
+  const rawIdx = Number(src.activeTurnIndex) || 0;
+  const activeTurnIndex =
+    turnOrder.length > 0 ? Math.max(0, Math.min(turnOrder.length - 1, rawIdx)) : 0;
+
+  return {
+    active: Boolean(src.active),
+    round: Math.max(1, Number(src.round) || 1),
+    activeTurnIndex,
+    lockMovementOutsideTurn: src.lockMovementOutsideTurn !== false,
+    lockActionsOutsideTurn: src.lockActionsOutsideTurn !== false,
+    turnOrder,
+  };
+}
+
+export function getActiveCombatant(combatState) {
+  const state = normalizeCombatState(combatState);
+  if (!state.active || state.turnOrder.length === 0) return null;
+  return state.turnOrder[state.activeTurnIndex] || null;
+}
+
+function matchesCombatant(combatant, actorRef) {
+  if (!combatant || !actorRef) return false;
+  if (typeof actorRef === "string") {
+    return (
+      combatant.combatantId === actorRef ||
+      combatant.tokenId === actorRef ||
+      combatant.characterId === actorRef
+    );
+  }
+  const refTokenId = actorRef.tokenId || (actorRef.sceneId ? actorRef.id : null);
+  const refCharId = actorRef.characterId || (!actorRef.sceneId && actorRef.attributes ? actorRef.id : null);
+  if (actorRef.combatantId && combatant.combatantId === actorRef.combatantId) return true;
+  if (refTokenId && combatant.tokenId === refTokenId) return true;
+  if (refCharId && combatant.characterId === refCharId) return true;
+  if (actorRef.id && (combatant.combatantId === actorRef.id || combatant.tokenId === actorRef.id || combatant.characterId === actorRef.id)) {
+    return true;
+  }
+  return false;
+}
+
+export function findCombatantByActor(combatState, actorRef) {
+  const state = normalizeCombatState(combatState);
+  return state.turnOrder.find((c) => matchesCombatant(c, actorRef)) || null;
+}
+
+export function isActorTurn(combatState, actorRef) {
+  const state = normalizeCombatState(combatState);
+  if (!state.active) return true;
+  const active = getActiveCombatant(state);
+  return Boolean(active && matchesCombatant(active, actorRef));
+}
+
+export function computeMoveDistanceMeters({
+  fromX = 0,
+  fromY = 0,
+  toX = 0,
+  toY = 0,
+  cellSizePx = 64,
+  metersPerCell = METERS_PER_CELL,
+}) {
+  const safeCellPx = Math.max(8, Number(cellSizePx) || 64);
+  const distPx = Math.hypot((Number(toX) || 0) - (Number(fromX) || 0), (Number(toY) || 0) - (Number(fromY) || 0));
+  return Number(((distPx / safeCellPx) * metersPerCell).toFixed(2));
+}
+
+export function evaluateActorMove(combatState, actorIdOrRef, distanceMeters = 0, options = {}) {
+  const state = normalizeCombatState(combatState);
+  const isGM = Boolean(options.isGM);
+  const combatant = findCombatantByActor(state, actorIdOrRef);
+  const dist = Math.max(0, Number(distanceMeters) || 0);
+
+  if (!state.active || isGM) {
+    return {
+      allowed: true,
+      reason: null,
+      remainingMeters: combatant
+        ? Math.max(0, combatant.movementBudgetMeters - combatant.movementUsedMeters)
+        : DEFAULT_MOVEMENT_BUDGET_METERS,
+      nextMovementUsedMeters: combatant ? combatant.movementUsedMeters + dist : dist,
+      combatant,
+    };
+  }
+
+  const onTurn = isActorTurn(state, actorIdOrRef);
+  if (!onTurn && state.lockMovementOutsideTurn) {
+    return {
+      allowed: false,
+      reason: "Aguarde seu turno para mover este token.",
+      remainingMeters: 0,
+      nextMovementUsedMeters: combatant ? combatant.movementUsedMeters : 0,
+      combatant,
+    };
+  }
+
+  if (!combatant) {
+    return {
+      allowed: !state.lockMovementOutsideTurn,
+      reason: state.lockMovementOutsideTurn ? "Token fora da ordem de iniciativa." : null,
+      remainingMeters: 0,
+      nextMovementUsedMeters: 0,
+      combatant: null,
+    };
+  }
+
+  const remaining = Math.max(0, Number((combatant.movementBudgetMeters - combatant.movementUsedMeters).toFixed(2)));
+  if (dist > remaining + 0.05) {
+    return {
+      allowed: false,
+      reason: `Deslocamento insuficiente (${remaining.toFixed(1).replace(".", ",")}m restantes).`,
+      remainingMeters: remaining,
+      nextMovementUsedMeters: combatant.movementUsedMeters,
+      combatant,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: null,
+    remainingMeters: Number(Math.max(0, remaining - dist).toFixed(2)),
+    nextMovementUsedMeters: Number((combatant.movementUsedMeters + dist).toFixed(2)),
+    combatant,
+  };
+}
+
+export function canActorMove(combatState, actorIdOrRef, distanceMeters = 0, options = {}) {
+  return evaluateActorMove(combatState, actorIdOrRef, distanceMeters, options).allowed;
+}
+
+export function evaluateActorAct(combatState, actorIdOrRef, actionKind = "active", options = {}) {
+  const state = normalizeCombatState(combatState);
+  const isGM = Boolean(options.isGM);
+  const isFollowUp = Boolean(options.isFollowUp);
+  const combatant = findCombatantByActor(state, actorIdOrRef);
+
+  if (!state.active || isGM || isFollowUp || actionKind === "passive") {
+    return {
+      allowed: true,
+      reason: null,
+      budgetField: null,
+      remaining: Infinity,
+      combatant,
+    };
+  }
+
+  const kind = String(actionKind || "active").toLowerCase();
+  const isReaction = kind === "reaction" || kind === "on_save" || kind === "on_being_hit" || kind === "saving_throw";
+
+  if (isReaction) {
+    if (!combatant) {
+      return { allowed: true, reason: null, budgetField: "reactionsRemaining", remaining: 1, combatant: null };
+    }
+    const rem = combatant.reactionsRemaining;
+    return {
+      allowed: rem > 0,
+      reason: rem > 0 ? null : "Sem reações disponíveis nesta rodada.",
+      budgetField: "reactionsRemaining",
+      remaining: rem,
+      combatant,
+    };
+  }
+
+  if (kind === "check") {
+    return { allowed: true, reason: null, budgetField: null, remaining: Infinity, combatant };
+  }
+
+  const onTurn = isActorTurn(state, actorIdOrRef);
+  if (!onTurn && state.lockActionsOutsideTurn) {
+    return {
+      allowed: false,
+      reason: "Aguarde seu turno para realizar ações ativas.",
+      budgetField: "actionsRemaining",
+      remaining: 0,
+      combatant,
+    };
+  }
+
+  if (!combatant) {
+    return {
+      allowed: !state.lockActionsOutsideTurn,
+      reason: state.lockActionsOutsideTurn ? "Personagem fora da ordem de iniciativa." : null,
+      budgetField: "actionsRemaining",
+      remaining: 0,
+      combatant: null,
+    };
+  }
+
+  const rem = combatant.actionsRemaining;
+  return {
+    allowed: rem > 0,
+    reason: rem > 0 ? null : "Você já utilizou sua ação neste turno.",
+    budgetField: "actionsRemaining",
+    remaining: rem,
+    combatant,
+  };
+}
+
+export function canActorAct(combatState, actorIdOrRef, actionKind = "active", options = {}) {
+  return evaluateActorAct(combatState, actorIdOrRef, actionKind, options).allowed;
+}
+
+export function createCombatantEntry({ token = null, character = null, initiative = 0 }) {
+  const budget = Number(character?.movementBudgetMeters ?? token?.movementBudgetMeters ?? DEFAULT_MOVEMENT_BUDGET_METERS);
+  return normalizeCombatant({
+    combatantId: token?.id || character?.id || `comb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    tokenId: token?.id || null,
+    characterId: token?.characterId || character?.id || null,
+    ownerId: token?.ownerId || character?.ownerId || null,
+    name: token?.name || character?.name || "Combatente",
+    initiative: Number(initiative) || 0,
+    movementBudgetMeters: Number.isFinite(budget) ? budget : DEFAULT_MOVEMENT_BUDGET_METERS,
+    movementUsedMeters: 0,
+    actionsMax: 1,
+    actionsRemaining: 1,
+    reactionsMax: 1,
+    reactionsRemaining: 1,
+  });
+}
+
+export function sortTurnOrder(turnOrder = []) {
+  return [...(Array.isArray(turnOrder) ? turnOrder : [])]
+    .map((c, idx) => normalizeCombatant(c, idx))
+    .sort((a, b) => {
+      const diff = (Number(b.initiative) || 0) - (Number(a.initiative) || 0);
+      if (diff !== 0) return diff;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+}
+
+function resetCombatantTurnBudgets(combatant) {
+  return {
+    ...combatant,
+    movementUsedMeters: 0,
+    actionsRemaining: combatant.actionsMax ?? 1,
+    reactionsRemaining: combatant.reactionsMax ?? 1,
+  };
+}
+
+export function advanceTurnInState(combatState) {
+  const state = normalizeCombatState(combatState);
+  if (state.turnOrder.length === 0) return state;
+
+  const isWrapping = state.activeTurnIndex + 1 >= state.turnOrder.length;
+  const nextIndex = isWrapping ? 0 : state.activeTurnIndex + 1;
+  const nextRound = isWrapping ? state.round + 1 : state.round;
+  const nextTurnOrder = state.turnOrder.map((c, idx) =>
+    idx === nextIndex ? resetCombatantTurnBudgets(c) : c
+  );
+
+  return {
+    ...state,
+    active: true,
+    round: nextRound,
+    activeTurnIndex: nextIndex,
+    turnOrder: nextTurnOrder,
+  };
+}
+
+export function regressTurnInState(combatState) {
+  const state = normalizeCombatState(combatState);
+  if (state.turnOrder.length === 0) return state;
+
+  const isAtStart = state.activeTurnIndex === 0;
+  if (isAtStart && state.round <= 1) {
+    return state;
+  }
+
+  const nextIndex = isAtStart ? state.turnOrder.length - 1 : state.activeTurnIndex - 1;
+  const nextRound = isAtStart ? Math.max(1, state.round - 1) : state.round;
+
+  return {
+    ...state,
+    active: true,
+    round: nextRound,
+    activeTurnIndex: nextIndex,
+  };
+}
+
+export function consumeMovementInState(combatState, actorIdOrRef, distanceMeters = 0) {
+  const state = normalizeCombatState(combatState);
+  if (!state.active) return state;
+  const dist = Math.max(0, Number(distanceMeters) || 0);
+  if (dist <= 0) return state;
+
+  return {
+    ...state,
+    turnOrder: state.turnOrder.map((c) => {
+      if (!matchesCombatant(c, actorIdOrRef)) return c;
+      const nextUsed = Math.min(
+        c.movementBudgetMeters,
+        Number((c.movementUsedMeters + dist).toFixed(2))
+      );
+      return {
+        ...c,
+        movementUsedMeters: nextUsed,
+      };
+    }),
+  };
+}
+
+export function consumeActionInState(combatState, actorIdOrRef, actionKind = "active") {
+  const state = normalizeCombatState(combatState);
+  if (!state.active) return state;
+  const kind = String(actionKind || "active").toLowerCase();
+  if (kind === "passive" || kind === "check") return state;
+
+  const isReaction = kind === "reaction" || kind === "on_save" || kind === "on_being_hit" || kind === "saving_throw";
+
+  return {
+    ...state,
+    turnOrder: state.turnOrder.map((c) => {
+      if (!matchesCombatant(c, actorIdOrRef)) return c;
+      if (isReaction) {
+        return {
+          ...c,
+          reactionsRemaining: Math.max(0, c.reactionsRemaining - 1),
+        };
+      }
+      return {
+        ...c,
+        actionsRemaining: Math.max(0, c.actionsRemaining - 1),
+      };
+    }),
   };
 }
 

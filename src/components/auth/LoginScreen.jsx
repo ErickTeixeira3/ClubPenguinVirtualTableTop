@@ -20,7 +20,6 @@ export default function LoginScreen() {
   const [penguinNameOrEmail, setPenguinNameOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(false);
 
   // Estados de Cadastro (Criar Pinguim)
   const [registerDisplayName, setRegisterDisplayName] = useState("");
@@ -34,18 +33,14 @@ export default function LoginScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [resetSent, setResetSent] = useState(false);
 
-  // Carrega credenciais salvas se "Lembrar de mim" ou "Lembrar senha" estiverem marcados
+  // Carrega usuário salvo se "Lembrar de mim" estiver marcado e limpa senhas legadas do localStorage
   useEffect(() => {
     try {
+      localStorage.removeItem("cp_remember_pwd");
       const savedUser = localStorage.getItem("cp_remember_penguin");
       if (savedUser) {
         setPenguinNameOrEmail(savedUser);
         setRememberMe(true);
-      }
-      const savedPwd = localStorage.getItem("cp_remember_pwd");
-      if (savedPwd) {
-        setPassword(atob(savedPwd));
-        setRememberPassword(true);
       }
     } catch {
       // Ignora falhas de parse
@@ -79,18 +74,13 @@ export default function LoginScreen() {
     try {
       await loginWithEmail(targetEmail, password);
 
-      // Salva ou remove preferências nos checkboxes
+      // Salva ou remove preferência de usuário no checkbox
       if (rememberMe) {
         localStorage.setItem("cp_remember_penguin", penguinNameOrEmail.trim());
       } else {
         localStorage.removeItem("cp_remember_penguin");
       }
-
-      if (rememberPassword) {
-        localStorage.setItem("cp_remember_pwd", btoa(password));
-      } else {
-        localStorage.removeItem("cp_remember_pwd");
-      }
+      localStorage.removeItem("cp_remember_pwd");
     } catch {
       // Erro registrado no AuthContext
     } finally {
@@ -398,36 +388,6 @@ export default function LoginScreen() {
                     }}
                   />
                   Lembrar de mim neste computador
-                </label>
-
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    fontFamily: "'Nunito', sans-serif",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#000a20",
-                    cursor: "pointer",
-                    userSelect: "none"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={rememberPassword}
-                    onChange={(e) => setRememberPassword(e.target.checked)}
-                    style={{
-                      width: "15px",
-                      height: "15px",
-                      background: "#ffffff",
-                      border: "2px solid #000c24",
-                      borderRadius: "2px",
-                      cursor: "pointer",
-                      margin: 0
-                    }}
-                  />
-                  Lembrar da minha senha
                 </label>
               </div>
             </div>

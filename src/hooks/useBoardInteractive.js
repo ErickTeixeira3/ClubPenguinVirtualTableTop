@@ -2,83 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ref,
   onValue,
+  get as rtdbGet,
   set as rtdbSet,
-  update as rtdbUpdate
+  update as rtdbUpdate,
+  remove as rtdbRemove
 } from "firebase/database";
 import { rtdb } from "../services/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
+import { resolveSpeakerIdentity } from "../services/rollService";
+import { IS_SPLIT_RTDB_LAYOUT, drawingsPath, pingsPath } from "../services/rtdbPaths";
 
 const PING_LIFETIME_MS = 2200;
 
-export function sliceStrokeByEraser(stroke, px, py, eraserRadius) {
-  const points = stroke.points || [];
-  if (points.length === 0) return [];
-  const threshold = eraserRadius + (Number(stroke.width) || 4) / 2;
-
-  // 1. Densifica os pontos do traço se a distância for maior que 4px para um corte limpo
-  const densified = [];
-  for (let i = 0; i < points.length; i++) {
-    const cur = points[i];
-    if (i === 0) {
-      densified.push(cur);
-    } else {
-      const prev = densified[densified.length - 1];
-      const dist = Math.hypot(cur.x - prev.x, cur.y - prev.y);
-      if (dist > 4) {
-        const steps = Math.ceil(dist / 4);
-        for (let s = 1; s <= steps; s++) {
-          densified.push({
-            x: Math.round(prev.x + (cur.x - prev.x) * (s / steps)),
-            y: Math.round(prev.y + (cur.y - prev.y) * (s / steps))
-          });
-        }
-      } else {
-        densified.push(cur);
-      }
-    }
-  }
-
-  // 2. Separa os trechos contíguos que NÃO foram atingidos pela borracha
-  const runs = [];
-  let currentRun = [];
-  for (const pt of densified) {
-    const inRange = Math.hypot(pt.x - px, pt.y - py) <= threshold;
-    if (!inRange) {
-      currentRun.push(pt);
-    } else {
-      if (currentRun.length > 0) {
-        runs.push(currentRun);
-        currentRun = [];
-      }
-    }
-  }
-  if (currentRun.length > 0) {
-    runs.push(currentRun);
-  }
-
-  // 3. Suaviza/filtra pontos colineares para não inchar o traço
-  const cleanRuns = runs
-    .map((run) => {
-      if (run.length <= 2) return run;
-      const simplified = [run[0]];
-      for (let i = 1; i < run.length - 1; i++) {
-        const prev = simplified[simplified.length - 1];
-        if (Math.hypot(run[i].x - prev.x, run[i].y - prev.y) >= 3) {
-          simplified.push(run[i]);
-        }
-      }
-      simplified.push(run[run.length - 1]);
-      return simplified;
-    })
-    .filter((run) => run.length >= 1);
-
-  return cleanRuns;
-}
-
 export function useBoardInteractive(sceneId) {
   const { user } = useAuth();
-  const { campaignId, isGM } = useCampaign();
+  const { campaignId, isGM, isRealGM, myPlayerProfile } = useCampaign();
 
   const [drawingsState, setDrawingsState] = useState({
     sceneKey: null,
@@ -87,18 +26,19 @@ export function useBoardInteractive(sceneId) {
   const [pingsMap, setPingsMap] = useState({});
   const [nowTick, setNowTick] = useState(() => Date.now());
 
-  // Buffer de atualizações de borracha para sincronização fluida
-  const pendingRtdbUpdatesRef = useRef({});
-  const rtdbFlushTimerRef = useRef(null);
+  // Fase 3.1 (V-06): cenas cuja migração legada CONCLUIU com sucesso nesta sessão
+  // e cenas com migração em andamento (evita execução concorrente).
+  const migratedScenesRef = useRef(new Set());
+  const migratingScenesRef = useRef(new Set());
 
-  // Subscreve aos desenhos e textos da cena ativa no RTDB
+  // Subscreve aos desenhos e textos da cena ativa no nó dedicado drawings/{sceneId}
   useEffect(() => {
     if (!user || !campaignId || !sceneId) return;
 
     const currentSceneKey = `${campaignId}:${sceneId}`;
     const drawingsRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
+      drawingsPath(campaignId, sceneId)
     );
 
     const unsubscribe = onValue(
@@ -120,13 +60,87 @@ export function useBoardInteractive(sceneId) {
     return () => unsubscribe();
   }, [user, campaignId, sceneId]);
 
-  // Subscreve aos Pings em tempo real
+  // Migração automática única de desenhos legados de fog/{sceneId}/drawings -> drawings/{sceneId}
+  // Fase 6.1: só roda no layout "split" (após o deploy das regras novas). No layout "legacy",
+  // fog/{sceneId}/drawings É o local oficial dos desenhos e nada deve ser movido.
+  useEffect(() => {
+    if (!IS_SPLIT_RTDB_LAYOUT) return;
+    if (!user || !isRealGM || !campaignId || !sceneId) return;
+
+    const currentSceneKey = `${campaignId}:${sceneId}`;
+    if (
+      migratedScenesRef.current.has(currentSceneKey) ||
+      migratingScenesRef.current.has(currentSceneKey)
+    ) {
+      return;
+    }
+    migratingScenesRef.current.add(currentSceneKey);
+
+    const legacyDrawingsRef = ref(
+      rtdb,
+      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
+    );
+    const legacyPingsRef = ref(
+      rtdb,
+      `vtt_realtime/${campaignId}/fog/${sceneId}/pings`
+    );
+    const targetDrawingsRef = ref(
+      rtdb,
+      drawingsPath(campaignId, sceneId)
+    );
+
+    // A migração é idempotente e não altera estado React: roda até o fim mesmo que o efeito
+    // seja desmontado (StrictMode em dev, troca rápida de cena ou de isRealGM). A cena só é
+    // marcada como migrada após sucesso; em falha, poderá ser retentada numa próxima montagem.
+    (async () => {
+      try {
+        const legacySnap = await rtdbGet(legacyDrawingsRef);
+
+        if (legacySnap.exists()) {
+          const legacyMap = legacySnap.val() || {};
+          const targetSnap = await rtdbGet(targetDrawingsRef);
+
+          const existingTargetMap = targetSnap.val() || {};
+          const updates = {};
+
+          Object.entries(legacyMap).forEach(([itemId, itemVal]) => {
+            if (!itemVal || existingTargetMap[itemId]) return;
+            updates[itemId] = {
+              ...itemVal,
+              id: itemVal.id || itemId,
+              campaignId: itemVal.campaignId || campaignId,
+              sceneId: itemVal.sceneId || sceneId,
+              authorId: itemVal.authorId || itemVal.createdBy || user.uid
+            };
+          });
+
+          if (Object.keys(updates).length > 0) {
+            await rtdbUpdate(targetDrawingsRef, updates);
+          }
+
+          await rtdbRemove(legacyDrawingsRef);
+        }
+
+        const legacyPingsSnap = await rtdbGet(legacyPingsRef);
+        if (legacyPingsSnap.exists()) {
+          await rtdbRemove(legacyPingsRef);
+        }
+        migratedScenesRef.current.add(currentSceneKey);
+      } catch (err) {
+        console.warn("Aviso na migração legada de desenhos RTDB:", err);
+      } finally {
+        migratingScenesRef.current.delete(currentSceneKey);
+      }
+    })();
+  }, [user, isRealGM, campaignId, sceneId]);
+
+  // Subscreve aos Pings em tempo real no nó dedicado pings/{sceneId}
   useEffect(() => {
     if (!user || !campaignId || !sceneId) return;
 
     const pingsRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/pings`
+      pingsPath(campaignId, sceneId)
     );
 
     const unsubscribe = onValue(
@@ -208,47 +222,40 @@ export function useBoardInteractive(sceneId) {
     );
   }, [pingsMap, nowTick]);
 
-  const flushPendingUpdates = () => {
-    if (!user || !campaignId || !sceneId) return;
-    if (Object.keys(pendingRtdbUpdatesRef.current).length === 0) return;
-
-    const payload = { ...pendingRtdbUpdatesRef.current };
-    pendingRtdbUpdatesRef.current = {};
-
-    const drawingsRef = ref(
-      rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
-    );
-    rtdbUpdate(drawingsRef, payload).catch((err) => {
-      console.error("Erro ao sincronizar borracha:", err);
-    });
+  const canEditDrawing = (item) => {
+    if (!user || !item) return false;
+    if (isGM) return true;
+    const owner = item.authorId || item.createdBy;
+    return owner === user.uid;
   };
 
-  const scheduleFlushUpdates = () => {
-    if (rtdbFlushTimerRef.current) return;
-    rtdbFlushTimerRef.current = setTimeout(() => {
-      rtdbFlushTimerRef.current = null;
-      flushPendingUpdates();
-    }, 70);
-  };
+  // Fase 3.1 (errata Fase 3 §4.2): autor resolvido pelo ponto único resolveSpeakerIdentity
+  const getAuthorName = () =>
+    resolveSpeakerIdentity({ user, myPlayerProfile }).senderName;
 
   const triggerPing = async (x, y, color = "#00f0ff", origin = null) => {
     if (!user || !campaignId || !sceneId) return;
     const pingId = `ping_${user.uid}_${Date.now()}`;
     const pingRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/pings/${pingId}`
+      `${pingsPath(campaignId, sceneId)}/${pingId}`
     );
 
+    const authorName = getAuthorName();
+    const now = Date.now();
     const payload = {
       id: pingId,
+      campaignId,
+      sceneId,
       x: Math.round(x),
       y: Math.round(y),
       color,
+      authorId: user.uid,
+      authorName,
       senderId: user.uid,
-      senderName:
-        user.displayName || user.email?.split("@")[0] || "Pinguim",
-      timestamp: Date.now()
+      senderName: authorName,
+      createdAt: now,
+      timestamp: now
     };
 
     if (origin && typeof origin.x === "number" && typeof origin.y === "number") {
@@ -258,10 +265,7 @@ export function useBoardInteractive(sceneId) {
 
     await rtdbSet(pingRef, payload);
     setTimeout(() => {
-      rtdbUpdate(
-        ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}/pings`),
-        { [pingId]: null }
-      ).catch(() => {});
+      rtdbRemove(pingRef).catch(() => {});
     }, PING_LIFETIME_MS + 300);
   };
 
@@ -277,7 +281,7 @@ export function useBoardInteractive(sceneId) {
     const strokeId = `drw_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const strokeRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings/${strokeId}`
+      `${drawingsPath(campaignId, sceneId)}/${strokeId}`
     );
 
     const cleanPoints = points.map((pt) => ({
@@ -287,11 +291,15 @@ export function useBoardInteractive(sceneId) {
 
     const newStroke = {
       id: strokeId,
+      campaignId,
+      sceneId,
       type: "stroke",
       layer: finalLayer,
       color,
       width: Number(width) || 4,
       points: cleanPoints,
+      authorId: user.uid,
+      authorName: getAuthorName(),
       createdBy: user.uid,
       createdAt: Date.now()
     };
@@ -319,11 +327,13 @@ export function useBoardInteractive(sceneId) {
     const shapeId = `shp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const shapeRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings/${shapeId}`
+      `${drawingsPath(campaignId, sceneId)}/${shapeId}`
     );
 
     const newShape = {
       id: shapeId,
+      campaignId,
+      sceneId,
       type: shapeType, // 'circle' ou 'rect'
       shapeType, // compatibilidade com verificações diretas
       layer: finalLayer,
@@ -336,6 +346,8 @@ export function useBoardInteractive(sceneId) {
       w: Math.round(Math.abs(w)),
       h: Math.round(Math.abs(h)),
       rotation: Math.round(rotation) || 0,
+      authorId: user.uid,
+      authorName: getAuthorName(),
       createdBy: user.uid,
       createdAt: Date.now()
     };
@@ -359,11 +371,13 @@ export function useBoardInteractive(sceneId) {
     const textId = `txt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const textRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings/${textId}`
+      `${drawingsPath(campaignId, sceneId)}/${textId}`
     );
 
     const newTextItem = {
       id: textId,
+      campaignId,
+      sceneId,
       type: "text",
       layer: finalLayer,
       text: text.trim(),
@@ -373,6 +387,8 @@ export function useBoardInteractive(sceneId) {
       x: Math.round(x),
       y: Math.round(y),
       rotation: Math.round(rotation) || 0,
+      authorId: user.uid,
+      authorName: getAuthorName(),
       createdBy: user.uid,
       createdAt: Date.now()
     };
@@ -383,128 +399,49 @@ export function useBoardInteractive(sceneId) {
 
   const updateTextItem = async (textId, updates = {}) => {
     if (!user || !campaignId || !sceneId || !textId) return;
+    const existing = drawingsState.map?.[textId];
+    if (!existing || !canEditDrawing(existing)) return;
+
+    const sanitizedUpdates = { ...updates };
+    if (!isGM) {
+      delete sanitizedUpdates.id;
+      delete sanitizedUpdates.campaignId;
+      delete sanitizedUpdates.sceneId;
+      delete sanitizedUpdates.layer;
+      delete sanitizedUpdates.authorId;
+      delete sanitizedUpdates.authorName;
+      delete sanitizedUpdates.createdBy;
+      delete sanitizedUpdates.createdAt;
+    }
+
     const textRef = ref(
       rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings/${textId}`
+      `${drawingsPath(campaignId, sceneId)}/${textId}`
     );
     await rtdbUpdate(textRef, {
-      ...updates,
+      ...sanitizedUpdates,
+      updatedBy: user.uid,
       updatedAt: Date.now()
     });
   };
 
   const deleteDrawingItems = async (itemIds = []) => {
     if (!user || !campaignId || !sceneId || itemIds.length === 0) return;
-    const updates = {};
-    itemIds.forEach((id) => {
-      updates[id] = null;
-    });
-    const drawingsRef = ref(
-      rtdb,
-      `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
+    const allowedIds = itemIds.filter((id) =>
+      canEditDrawing(drawingsState.map?.[id])
     );
-    await rtdbUpdate(drawingsRef, updates);
-  };
+    if (allowedIds.length === 0) return;
 
-  // Apaga parcialmente os traços atingidos pelo mouse (ou deleta caixas de texto atingidas)
-  const erasePortionAt = (px, py, radius = 18, layer = "tokens") => {
-    if (!user || !campaignId || !sceneId) return;
-
-    const localUpdates = {};
-    let hasChanges = false;
-
-    // 1. Processa traços da camada ativa
-    strokes
-      .filter((s) => (s.layer || "tokens") === layer)
-      .forEach((s) => {
-        const threshold = radius + (Number(s.width) || 4) / 2;
-        const pts = s.points || [];
-        const isNear = pts.some(
-          (p) => Math.hypot(p.x - px, p.y - py) <= threshold + 10
-        );
-        if (!isNear) return;
-
-        const cleanRuns = sliceStrokeByEraser(s, px, py, radius);
-        if (cleanRuns.length === 0) {
-          // Traço completamente apagado
-          localUpdates[s.id] = null;
-          pendingRtdbUpdatesRef.current[s.id] = null;
-          hasChanges = true;
-        } else if (cleanRuns.length === 1) {
-          // Traço modificado (encurtado ou furado na ponta)
-          if (cleanRuns[0].length !== s.points.length) {
-            const updatedStroke = { ...s, points: cleanRuns[0] };
-            localUpdates[s.id] = updatedStroke;
-            pendingRtdbUpdatesRef.current[`${s.id}/points`] = cleanRuns[0];
-            hasChanges = true;
-          }
-        } else {
-          // Traço dividido em múltiplos sub-traços
-          const firstStroke = { ...s, points: cleanRuns[0] };
-          localUpdates[s.id] = firstStroke;
-          pendingRtdbUpdatesRef.current[`${s.id}/points`] = cleanRuns[0];
-
-          for (let k = 1; k < cleanRuns.length; k++) {
-            const subId = `drw_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-            const subStroke = {
-              ...s,
-              id: subId,
-              points: cleanRuns[k],
-              createdAt: Date.now()
-            };
-            localUpdates[subId] = subStroke;
-            pendingRtdbUpdatesRef.current[subId] = subStroke;
-          }
-          hasChanges = true;
-        }
-      });
-
-    // 2. Apaga caixas de texto e formas atingidas diretamente pelo cursor da borracha
-    allDrawings
-      .filter(
-        (t) =>
-          (t.layer || "tokens") === layer &&
-          (t.type === "text" ||
-            t.type === "circle" ||
-            t.type === "rect" ||
-            t.shapeType === "circle" ||
-            t.shapeType === "rect")
+    await Promise.all(
+      allowedIds.map((id) =>
+        rtdbRemove(
+          ref(rtdb, `${drawingsPath(campaignId, sceneId)}/${id}`)
+        )
       )
-      .forEach((t) => {
-        const isShape =
-          t.type === "circle" ||
-          t.type === "rect" ||
-          t.shapeType === "circle" ||
-          t.shapeType === "rect";
-        const cx = isShape ? t.x + (t.w || 0) / 2 : t.x;
-        const cy = isShape ? t.y + (t.h || 0) / 2 : t.y;
-        const sizeRadius = Math.max(16, Math.min(60, ((t.w || 40) + (t.h || 40)) / 4));
-        const isTouch = Math.hypot(cx - px, cy - py) <= radius + sizeRadius;
-        if (isTouch) {
-          localUpdates[t.id] = null;
-          pendingRtdbUpdatesRef.current[t.id] = null;
-          hasChanges = true;
-        }
-      });
-
-    if (hasChanges) {
-      // Atualiza estado local imediatamente para fluidez visual a 60fps
-      setDrawingsState((prev) => {
-        const nextMap = { ...(prev.map || {}) };
-        Object.entries(localUpdates).forEach(([id, val]) => {
-          if (val === null) {
-            delete nextMap[id];
-          } else {
-            nextMap[id] = val;
-          }
-        });
-        return { ...prev, map: nextMap };
-      });
-      scheduleFlushUpdates();
-    }
+    );
   };
 
-  // Move traços e caixas de texto selecionados juntos
+  // Move traços, formas e caixas de texto selecionados juntos (granular por $drawingId)
   const moveDrawingItems = async (itemIds = [], dx = 0, dy = 0) => {
     if (
       !user ||
@@ -516,37 +453,58 @@ export function useBoardInteractive(sceneId) {
       return;
     }
 
-    const updates = {};
+    const perItemUpdates = [];
+    const now = Date.now();
+
     itemIds.forEach((id) => {
       const existing = drawingsState.map?.[id];
-      if (!existing) return;
+      if (!existing || !canEditDrawing(existing)) return;
 
       if (
         existing.type === "text" ||
         typeof existing.text === "string" ||
         existing.type === "circle" ||
-        existing.type === "rect"
+        existing.type === "rect" ||
+        existing.shapeType === "circle" ||
+        existing.shapeType === "rect"
       ) {
-        updates[`${id}/x`] = Math.round((existing.x || 0) + dx);
-        updates[`${id}/y`] = Math.round((existing.y || 0) + dy);
+        perItemUpdates.push({
+          id,
+          data: {
+            x: Math.round((existing.x || 0) + dx),
+            y: Math.round((existing.y || 0) + dy),
+            updatedBy: user.uid,
+            updatedAt: now
+          }
+        });
       } else if (Array.isArray(existing.points)) {
-        updates[`${id}/points`] = existing.points.map((pt) => ({
-          x: Math.round(pt.x + dx),
-          y: Math.round(pt.y + dy)
-        }));
+        perItemUpdates.push({
+          id,
+          data: {
+            points: existing.points.map((pt) => ({
+              x: Math.round(pt.x + dx),
+              y: Math.round(pt.y + dy)
+            })),
+            updatedBy: user.uid,
+            updatedAt: now
+          }
+        });
       }
     });
 
-    if (Object.keys(updates).length > 0) {
-      const drawingsRef = ref(
-        rtdb,
-        `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
+    if (perItemUpdates.length > 0) {
+      await Promise.all(
+        perItemUpdates.map(({ id, data }) =>
+          rtdbUpdate(
+            ref(rtdb, `${drawingsPath(campaignId, sceneId)}/${id}`),
+            data
+          )
+        )
       );
-      await rtdbUpdate(drawingsRef, updates);
     }
   };
 
-  // Rotaciona traços e caixas de texto selecionados juntos ao redor do centro (cx, cy)
+  // Rotaciona traços, formas e caixas de texto selecionados juntos ao redor do centro (cx, cy)
   const rotateDrawingItems = async (itemIds = [], cx, cy, deltaAngleRad) => {
     if (
       !user ||
@@ -561,11 +519,13 @@ export function useBoardInteractive(sceneId) {
     const cos = Math.cos(deltaAngleRad);
     const sin = Math.sin(deltaAngleRad);
     const deltaDeg = Math.round(deltaAngleRad * (180 / Math.PI));
+    const now = Date.now();
 
-    const updates = {};
+    const perItemUpdates = [];
+
     itemIds.forEach((id) => {
       const existing = drawingsState.map?.[id];
-      if (!existing) return;
+      if (!existing || !canEditDrawing(existing)) return;
 
       const isShape =
         existing.type === "circle" ||
@@ -589,29 +549,44 @@ export function useBoardInteractive(sceneId) {
         const rx = cx + ox * cos - oy * sin;
         const ry = cy + ox * sin + oy * cos;
 
-        updates[`${id}/x`] = Math.round(rx - itemCenterOffsetX);
-        updates[`${id}/y`] = Math.round(ry - itemCenterOffsetY);
-        updates[`${id}/rotation`] = Math.round(
-          ((existing.rotation || 0) + deltaDeg) % 360
-        );
+        perItemUpdates.push({
+          id,
+          data: {
+            x: Math.round(rx - itemCenterOffsetX),
+            y: Math.round(ry - itemCenterOffsetY),
+            rotation: Math.round(((existing.rotation || 0) + deltaDeg) % 360),
+            updatedBy: user.uid,
+            updatedAt: now
+          }
+        });
       } else if (Array.isArray(existing.points)) {
-        updates[`${id}/points`] = existing.points.map((pt) => {
-          const ox = pt.x - cx;
-          const oy = pt.y - cy;
-          return {
-            x: Math.round(cx + ox * cos - oy * sin),
-            y: Math.round(cy + ox * sin + oy * cos)
-          };
+        perItemUpdates.push({
+          id,
+          data: {
+            points: existing.points.map((pt) => {
+              const ox = pt.x - cx;
+              const oy = pt.y - cy;
+              return {
+                x: Math.round(cx + ox * cos - oy * sin),
+                y: Math.round(cy + ox * sin + oy * cos)
+              };
+            }),
+            updatedBy: user.uid,
+            updatedAt: now
+          }
         });
       }
     });
 
-    if (Object.keys(updates).length > 0) {
-      const drawingsRef = ref(
-        rtdb,
-        `vtt_realtime/${campaignId}/fog/${sceneId}/drawings`
+    if (perItemUpdates.length > 0) {
+      await Promise.all(
+        perItemUpdates.map(({ id, data }) =>
+          rtdbUpdate(
+            ref(rtdb, `${drawingsPath(campaignId, sceneId)}/${id}`),
+            data
+          )
+        )
       );
-      await rtdbUpdate(drawingsRef, updates);
     }
   };
 
@@ -621,6 +596,7 @@ export function useBoardInteractive(sceneId) {
     textItems,
     allItems: allDrawings,
     activePings,
+    canEditDrawing,
     triggerPing,
     addStroke,
     addShape,
@@ -628,8 +604,6 @@ export function useBoardInteractive(sceneId) {
     updateTextItem,
     deleteDrawingItems,
     deleteStrokes: deleteDrawingItems,
-    erasePortionAt,
-    flushPendingUpdates,
     moveDrawingItems,
     moveStrokes: moveDrawingItems,
     rotateDrawingItems

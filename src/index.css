@@ -46,6 +46,25 @@
   --font-display: 'Burbank Big Condensed', 'Fredoka', system-ui, sans-serif;
   --font-body: 'Nunito', system-ui, -apple-system, sans-serif;
   --font-epf: 'Share Tech Mono', ui-monospace, Consolas, monospace;
+
+  /* 7. Escala Oficial de Camadas (DIRETRIZES §7.2) — Fase 4
+     Camadas GLOBAIS (shell, HUD, popovers, modais e portais). Valores locais dentro de um mesmo
+     contexto de empilhamento (ex.: superfície transformada do tabuleiro) continuam numéricos.
+     Em JSX, use as referências de src/constants/zLayers.js. */
+  --z-board-canvas: 1;          /* Mapa, Grid, Desenhos, Tokens e Fog of War */
+  --z-workspace-journal: 12;    /* Workspace do Diário quando aberto sobre o canvas */
+  --z-board-ui: 20;             /* Toolbar lateral do mapa, controles de mídia e régua */
+  --z-hud-bars: 40;             /* Barra superior, Sidebar direita e Dock inferior */
+  --z-hud-popovers: 120;        /* Menu de Emotes, Hotbar de Bolas de Neve e Flyouts da Toolbar */
+  --z-modal-base: 1000;         /* Modais principais (Ficha, Cena, Compêndio, Painel GM) */
+  --z-modal-nested: 1250;       /* Submodais da Ficha (Seletor de Ícone, Slots da Hotbar, Pastas) */
+  --z-modal-combat: 3500;       /* Modais prioritários de Combate (DamageRollModal, SavingThrowModal) */
+  --z-modal-note-editor: 5000;  /* Editor de Card do Diário e submodal de vínculo */
+  --z-portal-tooltip: 9000;     /* Popovers em Portal (LinkedCardSpan, Menu de Contexto) */
+
+  /* 8. Cursores (Fase 4): a mira da bola de neve recebe a URL resolvida com BASE_URL em runtime
+     (VTTLayout define --cp-snowball-cursor no .vtt-shell); fallback para a mira padrão. */
+  --cp-snowball-cursor: crosshair;
 }
 
 *,

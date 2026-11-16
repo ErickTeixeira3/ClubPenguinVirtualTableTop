@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   doc,
   onSnapshot,
@@ -17,24 +17,176 @@ import { updateProfile } from "firebase/auth";
 import { auth, db, rtdb, DEFAULT_CAMPAIGN_ID } from "../services/firebase";
 import { useAuth } from "./AuthContext";
 import { DEFAULT_AUTHORIZED_USERS } from "../constants/authorizedUsers";
+import {
+  getCachedMediaSync,
+  getMediaDataUrl,
+  uploadDataUrlMedia
+} from "../services/mediaService";
+import { runCampaignMigrations } from "../services/migrationService";
+import {
+  DEFAULT_COMBAT_STATE,
+  normalizeCombatState
+} from "../engines/combatEngine";
+import { persistCombatState } from "../services/combatService";
+import { IS_SPLIT_RTDB_LAYOUT, gmMetaPath } from "../services/rtdbPaths";
+import { isPlayerAvatarRemoved } from "../services/rollService";
+import {
+  readPendingAvatarDataUrl,
+  clearPendingAvatarDataUrl
+} from "../utils/stringUtils";
 
 const CampaignContext = createContext(null);
 
+/**
+ * Fase 3.1 (V-15): migra a foto pendente do cadastro (ou DataURL legado) para media/{mediaId}
+ * no máximo UMA vez por sessão/usuário/campanha, mesmo que o onSnapshot dispare várias vezes
+ * durante o upload. Em falha, a chave pendente é descartada (sem retentativa a cada snapshot).
+ */
+async function migrateAvatarOnce({ attemptsRef, attemptKey, dataUrl, campaignId, uploadedBy }) {
+  if (!dataUrl || attemptsRef.current.has(attemptKey)) return null;
+  attemptsRef.current.add(attemptKey);
+  try {
+    const uploaded = await uploadDataUrlMedia({
+      dataUrl,
+      category: "avatar",
+      campaignId,
+      uploadedBy
+    });
+    return uploaded?.mediaId || null;
+  } catch (err) {
+    console.warn("Falha ao migrar avatar para media/:", err);
+    return null;
+  } finally {
+    clearPendingAvatarDataUrl();
+  }
+}
+
+function resolveInitialCampaignId() {
+  if (typeof window === "undefined") return DEFAULT_CAMPAIGN_ID;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("campaignId")?.trim();
+    if (fromQuery) return fromQuery;
+    const fromStorage = localStorage.getItem("cp_active_campaign_id")?.trim();
+    if (fromStorage) return fromStorage;
+  } catch {
+    // Fallback
+  }
+  return DEFAULT_CAMPAIGN_ID;
+}
+
 export function CampaignProvider({ children }) {
   const { user, logout } = useAuth();
+  const [campaignId, setCampaignIdState] = useState(resolveInitialCampaignId);
   const [campaignData, setCampaignData] = useState(null);
   const [loadedUid, setLoadedUid] = useState(null);
   const [firestoreError, setFirestoreError] = useState("");
   const [rtdbConnected, setRtdbConnected] = useState(false);
   const [onlineUsersData, setOnlineUsersData] = useState({});
   const [viewAsPlayer, setViewAsPlayer] = useState(false);
+  const [resolvedAvatars, setResolvedAvatars] = useState({});
+  const avatarMigrationAttemptsRef = useRef(new Set());
 
-  const campaignId = DEFAULT_CAMPAIGN_ID;
-  const campaign = user ? campaignData : null;
+  const switchCampaign = (nextCampaignId) => {
+    const cleanId = String(nextCampaignId || DEFAULT_CAMPAIGN_ID).trim();
+    if (!cleanId) return;
+    setCampaignIdState(cleanId);
+    try {
+      localStorage.setItem("cp_active_campaign_id", cleanId);
+    } catch {
+      // Ignore
+    }
+  };
+
+  // Resolve avatarMediaId de todos os jogadores e usuários online no cache IndexedDB
+  useEffect(() => {
+    if (!user || !campaignId) return;
+    const mediaIds = new Set();
+
+    Object.values(campaignData?.players || {}).forEach((p) => {
+      if (p?.avatarMediaId) mediaIds.add(p.avatarMediaId);
+    });
+    Object.values(onlineUsersData || {}).forEach((u) => {
+      if (u?.avatarMediaId) mediaIds.add(u.avatarMediaId);
+    });
+
+    mediaIds.forEach((mediaId) => {
+      if (resolvedAvatars[mediaId]) return;
+      const syncUrl = getCachedMediaSync(mediaId, campaignId);
+      if (syncUrl) {
+        setResolvedAvatars((prev) =>
+          prev[mediaId] === syncUrl ? prev : { ...prev, [mediaId]: syncUrl }
+        );
+        return;
+      }
+      getMediaDataUrl(mediaId, campaignId)
+        .then((dataUrl) => {
+          if (dataUrl) {
+            setResolvedAvatars((prev) => ({ ...prev, [mediaId]: dataUrl }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [user, campaignId, campaignData?.players, onlineUsersData, resolvedAvatars]);
+
+  const campaign = useMemo(() => {
+    if (!user || !campaignData) return null;
+    const enrichedPlayers = {};
+    Object.entries(campaignData.players || {}).forEach(([uid, p]) => {
+      const resolvedUrl =
+        (p?.avatarMediaId &&
+          (resolvedAvatars[p.avatarMediaId] ||
+            getCachedMediaSync(p.avatarMediaId, campaignId))) ||
+        p?.photoURL ||
+        null;
+      enrichedPlayers[uid] = {
+        ...p,
+        photoURL: resolvedUrl
+      };
+    });
+    return {
+      ...campaignData,
+      combatState: normalizeCombatState(campaignData.combatState),
+      players: enrichedPlayers
+    };
+  }, [user, campaignData, resolvedAvatars, campaignId]);
+
   const campaignLoading = Boolean(user && loadedUid !== user.uid);
-  const onlineUsers = user && campaign ? onlineUsersData : {};
+
+  const onlineUsers = useMemo(() => {
+    if (!user || !campaign) return {};
+    const enriched = {};
+    Object.entries(onlineUsersData || {}).forEach(([uid, u]) => {
+      const playerRecord = campaign.players?.[uid];
+      const avatarRemoved =
+        isPlayerAvatarRemoved(playerRecord) || u?.avatarRemoved === true;
+      const avatarMediaId = avatarRemoved
+        ? null
+        : u?.avatarMediaId || playerRecord?.avatarMediaId || null;
+      const resolvedUrl = avatarRemoved
+        ? null
+        : (avatarMediaId &&
+            (resolvedAvatars[avatarMediaId] ||
+              getCachedMediaSync(avatarMediaId, campaignId))) ||
+          u?.photoURL ||
+          playerRecord?.photoURL ||
+          null;
+      enriched[uid] = {
+        ...u,
+        avatarMediaId,
+        photoURL: resolvedUrl
+      };
+    });
+    return enriched;
+  }, [user, campaign, onlineUsersData, resolvedAvatars, campaignId]);
+
   const gmId = campaign?.gmId || null;
 
+  const isAuthorizedGmByEmail = DEFAULT_AUTHORIZED_USERS.some(
+    (u) =>
+      u.role === "gm" &&
+      u.email.toLowerCase() === (user?.email || "").trim().toLowerCase()
+  );
   const isRealGM = Boolean(user && gmId && gmId === user.uid);
   const isGM = isRealGM && !viewAsPlayer;
   const myPlayerProfile = (user && campaign?.players?.[user.uid]) || null;
@@ -67,8 +219,22 @@ export function CampaignProvider({ children }) {
             userEmail.split("@")[0] ||
             "Pinguim";
 
+          const initialPhotoURL =
+            user.photoURL && !user.photoURL.startsWith("data:")
+              ? user.photoURL
+              : null;
+
+          const initialAvatarMediaId = await migrateAvatarOnce({
+            attemptsRef: avatarMigrationAttemptsRef,
+            attemptKey: `${campaignId}:${currentUid}`,
+            dataUrl: readPendingAvatarDataUrl(currentUid),
+            campaignId,
+            uploadedBy: currentUid
+          });
+
           const initialCampaign = {
             id: campaignId,
+            campaignId,
             name: "Operação Ilha Gelada",
             gmId: isUserAuthorizedGM ? currentUid : null,
             activeSceneId: null,
@@ -77,18 +243,15 @@ export function CampaignProvider({ children }) {
               [currentUid]: {
                 uid: currentUid,
                 displayName: initialDisplayName,
-                photoURL: user.photoURL || null,
+                avatarMediaId: initialAvatarMediaId,
+                photoURL: initialPhotoURL,
                 email: userEmail,
                 role: matchedAuth?.role || "player",
                 activeCharacterId: null,
                 joinedAt: new Date().toISOString()
               }
             },
-            combatState: {
-              active: false,
-              round: 1,
-              turnOrder: []
-            },
+            combatState: DEFAULT_COMBAT_STATE,
             updatedAt: serverTimestamp()
           };
 
@@ -134,41 +297,100 @@ export function CampaignProvider({ children }) {
           user.displayName ||
           userEmail.split("@")[0] ||
           "Pinguim";
-        const resolvedPhotoURL =
-          existingPlayer?.photoURL || user.photoURL || null;
+
+        let resolvedAvatarMediaId = existingPlayer?.avatarMediaId || null;
+        let resolvedPhotoURL =
+          existingPlayer?.photoURL ||
+          (isPlayerAvatarRemoved(existingPlayer) ? null : user.photoURL) ||
+          null;
+        let migratedInlineAvatar = false;
+
+        // Se houver dataUrl pendente do cadastro ou dataUrl legado salvo direto em photoURL, migra para media/{mediaId}
+        const pendingDataUrl = readPendingAvatarDataUrl(currentUid);
+        const dataUrlToMigrate =
+          pendingDataUrl ||
+          (typeof resolvedPhotoURL === "string" &&
+          resolvedPhotoURL.startsWith("data:")
+            ? resolvedPhotoURL
+            : null);
+
+        if (dataUrlToMigrate) {
+          const migratedMediaId = await migrateAvatarOnce({
+            attemptsRef: avatarMigrationAttemptsRef,
+            attemptKey: `${campaignId}:${currentUid}`,
+            dataUrl: dataUrlToMigrate,
+            campaignId,
+            uploadedBy: currentUid
+          });
+          if (migratedMediaId) {
+            resolvedAvatarMediaId = migratedMediaId;
+            resolvedPhotoURL = null;
+            migratedInlineAvatar = true;
+          }
+        }
+
+        const isCampaignGM = expectedRole === "gm" || data.gmId === currentUid;
 
         const needsPlayerSync =
           !existingPlayer ||
           existingPlayer.role !== expectedRole ||
           !existingPlayer.displayName ||
-          !data.authorizedUsers;
+          migratedInlineAvatar;
 
         const needsGmSync = expectedRole === "gm" && data.gmId !== currentUid;
 
-        if (needsPlayerSync || needsGmSync) {
-          const updates = {};
+        // Fase 3.1 (V-21): backfill de campos da raiz da campanha (campaignId, authorizedUsers, gmId)
+        // é feito somente pelo Mestre e em escrita separada. O jogador grava apenas players.{uid},
+        // que é o único caminho permitido a ele pelo firestore.rules.
+        if (isCampaignGM) {
+          const rootUpdates = {};
+          if (data.campaignId !== campaignId) {
+            rootUpdates.campaignId = campaignId;
+          }
           if (!data.authorizedUsers) {
-            updates.authorizedUsers = DEFAULT_AUTHORIZED_USERS;
+            rootUpdates.authorizedUsers = DEFAULT_AUTHORIZED_USERS;
           }
           if (needsGmSync) {
-            updates.gmId = currentUid;
+            rootUpdates.gmId = currentUid;
           }
-          if (needsPlayerSync) {
-            updates[`players.${currentUid}`] = {
-              uid: currentUid,
-              displayName: resolvedDisplayName,
-              photoURL: resolvedPhotoURL,
-              email: userEmail,
-              role: expectedRole,
-              activeCharacterId: existingPlayer?.activeCharacterId || null,
-              joinedAt: existingPlayer?.joinedAt || new Date().toISOString()
-            };
+          if (Object.keys(rootUpdates).length > 0) {
+            try {
+              await updateDoc(campaignRef, rootUpdates);
+            } catch (err) {
+              console.warn("Falha no backfill da campanha:", err);
+            }
           }
+        }
+
+        if (needsPlayerSync) {
           try {
-            await updateDoc(campaignRef, updates);
-          } catch {
-            // Ignora falha silenciosa de permissão caso regras restrinjam
+            await updateDoc(campaignRef, {
+              [`players.${currentUid}`]: {
+                uid: currentUid,
+                displayName: resolvedDisplayName,
+                avatarMediaId: resolvedAvatarMediaId,
+                photoURL:
+                  resolvedPhotoURL && !resolvedPhotoURL.startsWith("data:")
+                    ? resolvedPhotoURL
+                    : null,
+                email: userEmail,
+                role: expectedRole,
+                activeCharacterId: existingPlayer?.activeCharacterId || null,
+                joinedAt: existingPlayer?.joinedAt || new Date().toISOString()
+              },
+              updatedAt: serverTimestamp()
+            });
+          } catch (err) {
+            console.warn("Falha ao registrar jogador na campanha:", err);
           }
+        }
+
+        // Se for o Mestre da mesa, executa migração idempotente da campanha em segundo plano
+        if (expectedRole === "gm" || data.gmId === currentUid) {
+          runCampaignMigrations({
+            campaignId,
+            gmUid: data.gmId || currentUid
+          });
         }
       },
       (err) => {
@@ -184,17 +406,25 @@ export function CampaignProvider({ children }) {
 
   // 2. Sincronização de Presença em Tempo Real via Realtime Database (RTDB)
   useEffect(() => {
-    if (!user || !campaign) return;
+    if (!user || !campaignData) return;
 
-    const currentPlayer = campaign.players?.[user.uid];
+    const currentPlayer = campaignData.players?.[user.uid];
     const displayName =
       currentPlayer?.displayName ||
       user.displayName ||
       user.email?.split("@")[0] ||
       "Pinguim";
-    const photoURL = currentPlayer?.photoURL || user.photoURL || null;
+    const avatarMediaId = currentPlayer?.avatarMediaId || null;
+    const rawPhotoURL =
+      currentPlayer?.photoURL ||
+      (isPlayerAvatarRemoved(currentPlayer) ? null : user.photoURL) ||
+      null;
+    const safePhotoURL =
+      typeof rawPhotoURL === "string" && !rawPhotoURL.startsWith("data:")
+        ? rawPhotoURL
+        : null;
     const role =
-      currentPlayer?.role || (campaign.gmId === user.uid ? "gm" : "player");
+      currentPlayer?.role || (campaignData.gmId === user.uid ? "gm" : "player");
 
     const userPresenceRef = ref(
       rtdb,
@@ -208,8 +438,10 @@ export function CampaignProvider({ children }) {
 
     rtdbSet(userPresenceRef, {
       uid: user.uid,
+      campaignId,
       displayName,
-      photoURL,
+      avatarMediaId,
+      photoURL: safePhotoURL,
       role,
       online: true,
       updatedAt: rtdbTimestamp()
@@ -232,24 +464,90 @@ export function CampaignProvider({ children }) {
       unsubscribePresence();
       rtdbSet(userPresenceRef, null).catch(() => {});
     };
-  }, [user, campaign, campaignId]);
+  }, [user, campaignData, campaignId]);
 
-  // 3. Atualizar perfil do jogador (Nome e Foto próprios)
-  const updatePlayerProfile = async ({ displayName, photoURL }) => {
-    if (!user || !campaign) return;
+  // 2.1 Fase 3.1 (V-20) / Fase 6.7 (A32): espelha o gmId da campanha no RTDB (vtt_realtime/{campaignId}/meta/gmId)
+  // para que database.rules.json reconheça o Mestre definido por gmId (e não apenas pelo e-mail).
+  // Permite também que o Mestre por e-mail inicialize meta/gmId com campaignData.gmId mesmo após delegação.
+  useEffect(() => {
+    if (!IS_SPLIT_RTDB_LAYOUT || !user || !campaignId || !campaignData?.gmId) return;
+    if (!isRealGM && !isAuthorizedGmByEmail) return;
+    rtdbSet(ref(rtdb, gmMetaPath(campaignId)), campaignData.gmId).catch((err) => {
+      console.warn("Falha ao espelhar gmId no RTDB:", err);
+    });
+  }, [user, campaignId, campaignData?.gmId, isRealGM, isAuthorizedGmByEmail]);
+
+  // 3. Atualizar perfil do jogador (Nome e Foto próprios via media/{mediaId})
+  const updatePlayerProfile = async ({
+    displayName,
+    photoURL,
+    avatarMediaId
+  }) => {
+    if (!user || !campaignData) return;
     const campaignRef = doc(db, "campaigns", campaignId);
-    const current = campaign.players?.[user.uid] || {};
+    const current = campaignData.players?.[user.uid] || {};
 
     const cleanName = displayName?.trim() || current.displayName || "Pinguim";
-    const cleanPhoto =
-      photoURL !== undefined ? photoURL : current.photoURL || null;
+
+    // Fase 3.1 (V-02): a foto só é alterada quando o chamador informa explicitamente uma ação:
+    // - photoURL === null/"" (ou avatarMediaId === null) => remover a foto;
+    // - photoURL "data:..." => foto NOVA escolhida pelo usuário (upload único para media/);
+    // - photoURL HTTP => URL externa;
+    // - photoURL undefined => mantém exatamente o avatar atual (somente renomear).
+    // O valor de `current` vem de campaignData (bruto do Firestore), nunca do perfil enriquecido.
+    let finalAvatarMediaId = current.avatarMediaId || null;
+    let finalPhotoURL =
+      typeof current.photoURL === "string" && !current.photoURL.startsWith("data:")
+        ? current.photoURL
+        : null;
+    let photoChanged = false;
+
+    if (photoURL === null || photoURL === "" || avatarMediaId === null) {
+      finalAvatarMediaId = null;
+      finalPhotoURL = null;
+      photoChanged = true;
+    } else if (typeof photoURL === "string" && photoURL.startsWith("data:")) {
+      const uploaded = await uploadDataUrlMedia({
+        dataUrl: photoURL,
+        category: "avatar",
+        campaignId,
+        uploadedBy: user.uid
+      });
+      if (!uploaded?.mediaId) {
+        throw new Error("Não foi possível enviar a nova foto.");
+      }
+      finalAvatarMediaId = uploaded.mediaId;
+      finalPhotoURL = null;
+      photoChanged = true;
+      setResolvedAvatars((prev) => ({
+        ...prev,
+        [uploaded.mediaId]: uploaded.dataUrl
+      }));
+    } else if (typeof photoURL === "string" && /^https?:\/\//i.test(photoURL)) {
+      finalAvatarMediaId = null;
+      finalPhotoURL = photoURL;
+      photoChanged = true;
+    } else if (typeof avatarMediaId === "string" && avatarMediaId) {
+      finalAvatarMediaId = avatarMediaId;
+      finalPhotoURL = null;
+      photoChanged = true;
+    }
+
+    const finalAvatarRemoved = photoChanged
+      ? !finalAvatarMediaId && !finalPhotoURL
+      : Boolean(current.avatarRemoved);
 
     // 1. Firestore
-    await updateDoc(campaignRef, {
+    const profileUpdates = {
       [`players.${user.uid}.displayName`]: cleanName,
-      [`players.${user.uid}.photoURL`]: cleanPhoto,
       updatedAt: serverTimestamp()
-    });
+    };
+    if (photoChanged) {
+      profileUpdates[`players.${user.uid}.avatarMediaId`] = finalAvatarMediaId;
+      profileUpdates[`players.${user.uid}.photoURL`] = finalPhotoURL;
+      profileUpdates[`players.${user.uid}.avatarRemoved`] = finalAvatarRemoved;
+    }
+    await updateDoc(campaignRef, profileUpdates);
 
     // 2. RTDB presença imediata
     try {
@@ -259,21 +557,31 @@ export function CampaignProvider({ children }) {
       );
       await rtdbSet(userPresenceRef, {
         uid: user.uid,
+        campaignId,
         displayName: cleanName,
-        photoURL: cleanPhoto,
-        role: current.role || (campaign.gmId === user.uid ? "gm" : "player"),
+        avatarMediaId: finalAvatarMediaId,
+        photoURL: finalPhotoURL,
+        avatarRemoved: finalAvatarRemoved,
+        role: current.role || (campaignData.gmId === user.uid ? "gm" : "player"),
         online: true,
         updatedAt: rtdbTimestamp()
       });
     } catch {}
 
-    // 3. Firebase Auth Profile
+    // 3. Firebase Auth Profile (somente URL HTTP curta, nunca Base64)
     try {
       if (auth.currentUser) {
-        await updateProfile(auth.currentUser, {
-          displayName: cleanName,
-          photoURL: cleanPhoto || ""
-        });
+        const authProfileUpdates = { displayName: cleanName };
+        if (
+          typeof finalPhotoURL === "string" &&
+          /^https?:\/\//i.test(finalPhotoURL) &&
+          finalPhotoURL.length < 2000
+        ) {
+          authProfileUpdates.photoURL = finalPhotoURL;
+        } else if (photoChanged && !finalPhotoURL) {
+          authProfileUpdates.photoURL = "";
+        }
+        await updateProfile(auth.currentUser, authProfileUpdates);
       }
     } catch {}
   };
@@ -337,22 +645,33 @@ export function CampaignProvider({ children }) {
   };
 
   const assignGM = async (targetUid) => {
-    if (!user || !campaign) return;
+    if (!user || !campaignData || !targetUid) return;
+    if (!isRealGM && !isAuthorizedGmByEmail) return;
     const campaignRef = doc(db, "campaigns", campaignId);
-    const updatedPlayers = { ...(campaign.players || {}) };
 
-    Object.keys(updatedPlayers).forEach((uid) => {
-      updatedPlayers[uid] = {
-        ...updatedPlayers[uid],
-        role: uid === targetUid ? "gm" : "player"
-      };
+    // Fase 3.1 (V-01): grava somente o campo `role` de cada jogador (caminho pontilhado),
+    // a partir de campaignData (bruto). Nunca regrava o mapa `players` inteiro a partir do
+    // objeto enriquecido `campaign.players`, cujo photoURL é a DataURL resolvida do avatar.
+    const roleUpdates = {};
+    Object.keys(campaignData.players || {}).forEach((uid) => {
+      roleUpdates[`players.${uid}.role`] = uid === targetUid ? "gm" : "player";
     });
 
     await updateDoc(campaignRef, {
       gmId: targetUid,
-      players: updatedPlayers,
+      ...roleUpdates,
       updatedAt: serverTimestamp()
     });
+
+    // Fase 3.1 (V-20): espelha o novo Mestre no RTDB para as database.rules reconhecerem o gmId.
+    // Fase 6.1: só no layout "split" (as regras publicadas não têm o nó meta/).
+    if (IS_SPLIT_RTDB_LAYOUT) {
+      try {
+        await rtdbSet(ref(rtdb, gmMetaPath(campaignId)), targetUid);
+      } catch (err) {
+        console.warn("Falha ao espelhar gmId no RTDB:", err);
+      }
+    }
   };
 
   const updateCampaignName = async (newName) => {
@@ -373,10 +692,18 @@ export function CampaignProvider({ children }) {
     });
   };
 
+  const updateCombatState = async (nextCombatState) => {
+    if (!isRealGM || !campaignId) return null;
+    return persistCombatState(campaignId, nextCombatState);
+  };
+
+  const combatState = campaign?.combatState || DEFAULT_COMBAT_STATE;
+
   return (
     <CampaignContext.Provider
       value={{
         campaignId,
+        switchCampaign,
         campaign,
         campaignLoading,
         firestoreError,
@@ -388,6 +715,8 @@ export function CampaignProvider({ children }) {
         setViewAsPlayer,
         myPlayerProfile,
         authorizedUsers,
+        combatState,
+        updateCombatState,
         updatePlayerProfile,
         addAuthorizedUser,
         removeAuthorizedUser,

@@ -1,0 +1,269 @@
+[
+  {
+    "id": "A1-A3",
+    "description": "RTDB layout split ativo com caminhos unificados e rules permitindo pings/drawings do autor",
+    "passed": true,
+    "evidence": {
+      "layout": "split",
+      "drawings": "vtt_realtime/c/drawings/s",
+      "pings": "vtt_realtime/c/pings/s"
+    }
+  },
+  {
+    "id": "A4",
+    "description": "createFolder grava scope='player' e firestore.rules permite renomeação por editableBy mantendo D-3",
+    "passed": true,
+    "evidence": {
+      "scope": "player"
+    }
+  },
+  {
+    "id": "A7-A8",
+    "description": "Transferência inclui novo dono em visibleTo/editableBy e remover ALL mantém Mestre e dono",
+    "passed": true,
+    "evidence": {
+      "mergedTransfer": {
+        "ownerId": "player2",
+        "visibleTo": [
+          "gm1",
+          "player2"
+        ],
+        "editableBy": [
+          "gm1",
+          "player2"
+        ]
+      },
+      "removedAll": {
+        "visibleTo": [
+          "gm1",
+          "player1"
+        ],
+        "editableBy": [
+          "player1",
+          "gm1"
+        ]
+      }
+    }
+  },
+  {
+    "id": "A9",
+    "description": "Revogar ALL de card preserva [Mestre, dono] em visibleTo",
+    "passed": true,
+    "evidence": {
+      "updatedAtMs": 1794832186911,
+      "updatedAt": "__SERVER_TIMESTAMP__",
+      "visibleTo": [
+        "gm1",
+        "player1"
+      ],
+      "scope": "player"
+    }
+  },
+  {
+    "id": "A5-A6",
+    "description": "Migração repara visibleTo vazio em fichas/pastas/notas e alinha cenas/compêndio a visibleToPlayers",
+    "passed": true,
+    "evidence": {
+      "sceneMig": {
+        "campaignId": "main-table",
+        "isDeleted": false,
+        "visibleTo": [
+          "ALL"
+        ]
+      },
+      "compMig": {
+        "campaignId": "main-table",
+        "isDeleted": false,
+        "visibleTo": [
+          "gm1"
+        ]
+      },
+      "charMig": {
+        "campaignId": "main-table",
+        "isDeleted": false,
+        "visibleTo": [
+          "ALL",
+          "gm1",
+          "player1"
+        ]
+      }
+    }
+  },
+  {
+    "id": "A10",
+    "description": "Visão Player do Mestre real oculta cena secreta com visibleToPlayers=false",
+    "passed": true,
+    "evidence": [
+      "s_pub"
+    ]
+  },
+  {
+    "id": "A11",
+    "description": "CharactersSidebarList exibe fichas próprias/compartilhadas e oculta ficha alheia apenas com ALL",
+    "passed": true,
+    "evidence": {
+      "hasOwn": true,
+      "hasShared": true,
+      "hasOther": false
+    }
+  },
+  {
+    "id": "A12-A13",
+    "description": "useCrossWindowSync sincroniza múltiplos alvos e redução via fallback localStorage/storage",
+    "passed": true,
+    "evidence": {
+      "syncedThree": "t1,t2,t3",
+      "syncedTwo": "t1,t3"
+    }
+  },
+  {
+    "id": "A14",
+    "description": "/r com alvos anexa targetInfo mantendo isAttackRoll=false e isHit=null",
+    "passed": true,
+    "evidence": {
+      "targetCount": 2,
+      "isHit": null
+    }
+  },
+  {
+    "id": "A15-A18-A19",
+    "description": "Seletor Ataque/Teste em SheetRollsTab, nome 'Perícia Luta' preservado e rollId preservado em resolveHotbarSlot",
+    "passed": true,
+    "evidence": {
+      "attackWhenTargeted": true,
+      "skillName": "Perícia Luta",
+      "rollId": "r_disp"
+    }
+  },
+  {
+    "id": "A16-A17",
+    "description": "Atalho legado com fórmula divergente permanece custom e atalho de atributo preserva ícone personalizado",
+    "passed": true,
+    "evidence": {
+      "rajadaSource": "custom",
+      "attrCustomIcon": true
+    }
+  },
+  {
+    "id": "A20",
+    "description": "Coordenação entre janelas impede abertura/submissão duplicada de Teste de Resistência",
+    "passed": true,
+    "evidence": {
+      "win2Claim": {
+        "claimed": true,
+        "ownerWindowId": "w2",
+        "priority": 2,
+        "status": "open"
+      },
+      "win1Claim": {
+        "claimed": false,
+        "ownerWindowId": "w2",
+        "priority": 2,
+        "status": "open"
+      },
+      "submit1": {
+        "allowed": true,
+        "reason": null
+      },
+      "submit2": {
+        "allowed": false,
+        "reason": "already_submitting"
+      }
+    }
+  },
+  {
+    "id": "A21",
+    "description": "Matriz NPC sem token selecionado não desconta nem grava costPaid falso no card",
+    "passed": true,
+    "evidence": {
+      "costPaid": null
+    }
+  },
+  {
+    "id": "A22",
+    "description": "Defesa do token é autoritativa para instâncias de NPC em cena",
+    "passed": true,
+    "evidence": {
+      "resolvedDefense": 18
+    }
+  },
+  {
+    "id": "A23",
+    "description": "Modo de Turno bloqueia ação fora da vez e SheetInventoryTab só consome quando triggerRoll é aceito",
+    "passed": true,
+    "evidence": {
+      "allowed": false,
+      "awaitsRollAccepted": true
+    }
+  },
+  {
+    "id": "A24-A27",
+    "description": "Avatar externo na ficha, identidade de jogador, bloqueio pós-remoção Google e isolamento de pending avatar por uid",
+    "passed": true,
+    "evidence": {
+      "charPhoto": "https://example.invalid/p.png",
+      "playerPhoto": null,
+      "playerMed": "med_p1",
+      "crossUserRead": null
+    }
+  },
+  {
+    "id": "A28-A30",
+    "description": "DebouncedField realinha draft após commit, cancela timer em alteração externa, dá flush em pagehide/beforeunload e usa dot-paths",
+    "passed": true,
+    "evidence": {
+      "realignedVal": 1,
+      "valAfterCancel": 20,
+      "flushedEvents": [
+        "p1",
+        "b1"
+      ],
+      "dotPatch": {
+        "resources.hp.current": 18
+      },
+      "tabDotPatch": {
+        "resources.hp.max": 40
+      }
+    }
+  },
+  {
+    "id": "A31",
+    "description": "updateJournalNote sinaliza erro de permissão e NoteEditorModal bloqueia edição/mantém aberto em falha",
+    "passed": true,
+    "evidence": {
+      "updDenied": {
+        "ok": false,
+        "reason": "permission-denied",
+        "error": "Você não tem permissão para editar este card."
+      },
+      "modalClosed": 0,
+      "alertText": "Erro no servidor",
+      "hasFechar": true
+    }
+  },
+  {
+    "id": "A32",
+    "description": "Jogador comum não cria meta/gmId; Mestre por e-mail delega e gm_delegated herda autoridade no RTDB",
+    "passed": true,
+    "evidence": {}
+  },
+  {
+    "id": "A33",
+    "description": "RTDB aceita mapa controlledBy com 6º/10º controlador, nega false/estranho e migra arrays legados",
+    "passed": true,
+    "evidence": {
+      "migratedControlledBy": {
+        "u0": true,
+        "u1": true,
+        "u2": true,
+        "u3": true,
+        "u4": true,
+        "u5": true
+      },
+      "spawnedControlledBy": {
+        "gm1": true,
+        "owner1": true
+      }
+    }
+  }
+]

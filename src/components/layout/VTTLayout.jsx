@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ref, set as rtdbSet, update as rtdbUpdate } from "firebase/database";
-import { rtdb } from "../../services/firebase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
 import { useScenes } from "../../hooks/useScenes";
@@ -8,18 +6,41 @@ import { useCharacters } from "../../hooks/useCharacters";
 import { useCompendium } from "../../hooks/useCompendium";
 import { useChatRolls } from "../../hooks/useChatRolls";
 import { useJournalNotes } from "../../hooks/useJournalNotes";
+import { useCrossWindowSync } from "../../hooks/useCrossWindowSync";
+import { useRealtimeTokens } from "../../hooks/useRealtimeTokens";
+import BoardTokensProvider from "../../contexts/BoardTokensProvider";
 import { getNoteTypeMeta } from "../../engines/aliasEngine";
 import {
-  EFFECT_TYPES,
+  ROLL_KINDS,
   doubleDiceInFormula,
-  computeModifiedEffectValue,
-  isUserResponsibleForSavingThrow,
-  getTargetStorageKey,
-  saveStoredTargetedToken,
-  loadStoredTargetedToken,
-  saveStoredTargetedTokens,
-  loadStoredTargetedTokens
+  evaluateActorAct,
+  getActiveCombatant,
+  hasControlledByAccess,
+  isUserResponsibleForSavingThrow
 } from "../../engines/combatEngine";
+import {
+  advanceCampaignTurn,
+  applyCombatEffectToTarget,
+  consumeCampaignTurnAction,
+  consumeCampaignTurnMovement,
+  consumeCombatCosts,
+  deductActorResources,
+  hasOpenStandaloneSheet,
+  isSavingThrowAnswered,
+  markSavingThrowAnswered,
+  registerOpenStandaloneSheet,
+  regressCampaignTurn,
+  rollbackSavingThrowSubmission,
+  spawnCharacterTokenToScene,
+  startTurnCombat,
+  stopTurnCombat,
+  syncTokenUpdatesToCharacter,
+  tryBeginSavingThrowSubmission,
+  tryClaimSavingThrowModal,
+  unregisterOpenStandaloneSheet
+} from "../../services/combatService";
+import { resolveSpeakerIdentity } from "../../services/rollService";
+import { getAssetUrl } from "../../utils/stringUtils";
 import GMPanelModal from "../gm/GMPanelModal";
 import BoardViewport from "../canvas/BoardViewport";
 import ScenesManagerModal from "../scenes/ScenesManagerModal";
@@ -31,14 +52,34 @@ import JournalWorkspace from "../journal/JournalWorkspace";
 import PlayerProfileModal from "./PlayerProfileModal";
 import QuickActionsHotbar from "./QuickActionsHotbar";
 import EmotePickerMenu from "./EmotePickerMenu";
-import DamageRollModal from "../combat/DamageRollModal";
-import SavingThrowModal from "../combat/SavingThrowModal";
+import CombatModals from "../combat/CombatModals";
+import StandaloneSheetView from "./StandaloneSheetView";
+
+// Fase 4: cursor da mira da bola de neve com a URL resolvida via BASE_URL (consumido em App.css
+// por `.cp-snowball-aiming { cursor: var(--cp-snowball-cursor) }`).
+const SNOWBALL_CURSOR_STYLE = {
+  "--cp-snowball-cursor": `url("${getAssetUrl("icones/iconeMiraBolaDeNeve.png")}") 32 32, crosshair`
+};
+
+function buildTargetSelectionState(listOrToken) {
+  const raw = Array.isArray(listOrToken) ? listOrToken : listOrToken ? [listOrToken] : [];
+  const tokenIds = [];
+  const tokensById = {};
+  for (const tok of raw) {
+    const id = tok?.id || tok?.tokenId;
+    if (!id || tokensById[id]) continue;
+    tokenIds.push(id);
+    tokensById[id] = tok;
+  }
+  return { tokenIds, tokensById };
+}
 
 export default function VTTLayout() {
   const { user, logout } = useAuth();
   const {
     campaignId,
     campaign,
+    combatState,
     onlineUsers,
     isRealGM,
     isGM,
@@ -63,6 +104,7 @@ export default function VTTLayout() {
     allCharacters = [],
     folders: characterFolders,
     canEditCharacter,
+    canEditFolder: canEditCharacterFolder,
     createCharacter,
     updateCharacter,
     updateCharacterResource,
@@ -128,98 +170,145 @@ export default function VTTLayout() {
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [snowballAimActive, setSnowballAimActive] = useState(false);
   const [selectedTokenOnBoard, setSelectedTokenOnBoard] = useState(null);
-  const [targetedTokens, setTargetedTokensState] = useState(() =>
-    loadStoredTargetedTokens(campaignId)
-  );
-  const targetedTokensRef = useRef(targetedTokens);
-  const [targetedToken, setTargetedTokenState] = useState(() =>
-    loadStoredTargetedToken(campaignId)
-  );
-  const targetedTokenRef = useRef(targetedToken);
+  const [targetSelection, setTargetSelection] = useState({ tokenIds: [], tokensById: {} });
+  const targetSelectionRef = useRef(targetSelection);
 
-  const setTargetedTokens = (nextListOrFn) => {
-    const current = targetedTokensRef.current || [];
-    const resolved = typeof nextListOrFn === "function" ? nextListOrFn(current) : nextListOrFn;
-    const arr = Array.isArray(resolved) ? resolved : resolved ? [resolved] : [];
-    targetedTokensRef.current = arr;
-    setTargetedTokensState(arr);
-    targetedTokenRef.current = arr[0] || null;
-    setTargetedTokenState(arr[0] || null);
-    saveStoredTargetedTokens(campaignId, arr);
-  };
+  useEffect(() => {
+    targetSelectionRef.current = targetSelection;
+  }, [targetSelection]);
 
-  const setTargetedToken = (nextTok) => {
-    const resolved =
-      typeof nextTok === "function" ? nextTok(targetedTokenRef.current) : nextTok;
-    if (!resolved) {
-      setTargetedTokens([]);
-    } else {
-      setTargetedTokens([resolved]);
-    }
-  };
+  const targetedTokens = useMemo(
+    () => targetSelection.tokenIds.map((id) => targetSelection.tokensById[id]).filter(Boolean),
+    [targetSelection]
+  );
+  const targetedToken = targetedTokens[0] || null;
 
   const [aoeDemarcateConfig, setAoeDemarcateConfig] = useState(null);
+  const [actionBlockNotice, setActionBlockNotice] = useState(null);
+  const actionNoticeTimerRef = useRef(null);
 
-  const handleStartAoeDemarcate = (config) => {
-    setAoeDemarcateConfig(config || null);
-    try {
-      if (config) {
-        localStorage.setItem(`cp_vtt_aoe_demarcate_${campaignId || "default"}`, JSON.stringify(config));
-      } else {
-        localStorage.removeItem(`cp_vtt_aoe_demarcate_${campaignId || "default"}`);
-      }
-    } catch {}
+  const showActionBlockNotice = (msg) => {
+    if (!msg) return;
+    setActionBlockNotice(msg);
+    if (actionNoticeTimerRef.current) clearTimeout(actionNoticeTimerRef.current);
+    actionNoticeTimerRef.current = setTimeout(() => setActionBlockNotice(null), 2600);
   };
 
   useEffect(() => {
-    const initialList = loadStoredTargetedTokens(campaignId);
-    targetedTokensRef.current = initialList;
-    setTargetedTokensState(initialList);
-    targetedTokenRef.current = initialList[0] || null;
-    setTargetedTokenState(initialList[0] || null);
-
-    const storageKey = getTargetStorageKey(campaignId);
-    const aoeStorageKey = `cp_vtt_aoe_demarcate_${campaignId || "default"}`;
-    const handleStorage = (e) => {
-      if (e.key === storageKey) {
-        const updated = loadStoredTargetedTokens(campaignId);
-        targetedTokensRef.current = updated;
-        setTargetedTokensState(updated);
-        targetedTokenRef.current = updated[0] || null;
-        setTargetedTokenState(updated[0] || null);
-      }
-      if (e.key === aoeStorageKey) {
-        try {
-          const val = e.newValue ? JSON.parse(e.newValue) : null;
-          setAoeDemarcateConfig(val);
-        } catch {}
-      }
+    return () => {
+      if (actionNoticeTimerRef.current) clearTimeout(actionNoticeTimerRef.current);
     };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [campaignId]);
+  }, []);
+
+  const {
+    windowId,
+    broadcastTargets,
+    broadcastAoeDemarcate,
+    broadcastSaveClaimed,
+    broadcastSaveAnswered
+  } = useCrossWindowSync({
+    campaignId,
+    targetedTokens,
+    aoeDemarcateConfig,
+    onTargetsReceived: ({ targetedTokens: received }) => {
+      const nextState = buildTargetSelectionState(received);
+      targetSelectionRef.current = nextState;
+      setTargetSelection(nextState);
+    },
+    onAoeDemarcateReceived: (config) => {
+      setAoeDemarcateConfig(config || null);
+    },
+    onSaveClaimReceived: ({ saveId, ownerWindowId, priority = 1 }) => {
+      if (!saveId || !ownerWindowId) return;
+      setActiveSavingThrowReq((prev) => {
+        if (prev?.id !== saveId) return prev;
+        const myPriority =
+          standaloneSheetId && prev.targetCharacterId === standaloneSheetId ? 2 : 1;
+        return priority >= myPriority ? null : prev;
+      });
+    },
+    onSaveAnsweredReceived: ({ saveId }) => {
+      if (!saveId) return;
+      dismissedSaveIdsRef.current.add(saveId);
+      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
+    }
+  });
+
+  const setTargetedTokens = (nextListOrFn) => {
+    const currentList = targetSelectionRef.current.tokenIds
+      .map((id) => targetSelectionRef.current.tokensById[id])
+      .filter(Boolean);
+    const resolved = typeof nextListOrFn === "function" ? nextListOrFn(currentList) : nextListOrFn;
+    const nextState = buildTargetSelectionState(resolved);
+    targetSelectionRef.current = nextState;
+    setTargetSelection(nextState);
+    broadcastTargets(nextState.tokenIds.map((id) => nextState.tokensById[id]));
+  };
+
+  // Fase 6.3 (A12): definir o alvo principal não descarta os demais alvos. Só limpa tudo
+  // quando recebe null; um token já presente vira o primeiro da lista, sem reenviar lista menor.
+  const setTargetedToken = (nextTok) => {
+    const currentList = targetSelectionRef.current.tokenIds
+      .map((id) => targetSelectionRef.current.tokensById[id])
+      .filter(Boolean);
+    const resolved = typeof nextTok === "function" ? nextTok(currentList[0] || null) : nextTok;
+    if (!resolved) {
+      setTargetedTokens([]);
+      return;
+    }
+    const resolvedId = resolved.id || resolved.tokenId;
+    setTargetedTokens([
+      resolved,
+      ...currentList.filter((t) => (t.id || t.tokenId) !== resolvedId)
+    ]);
+  };
+
+  const handleStartAoeDemarcate = (config) => {
+    const next = config || null;
+    setAoeDemarcateConfig(next);
+    broadcastAoeDemarcate(next);
+  };
 
   const [damageModalMsg, setDamageModalMsg] = useState(null);
   const [activeSavingThrowReq, setActiveSavingThrowReq] = useState(null);
 
-  const boardSyncRef = useRef({ tokens: [], updateToken: null, sceneId: null });
+  // Fase 5: tokens da cena ativa assinados aqui e compartilhados com o BoardViewport via
+  // BoardTokensContext (substitui o boardSyncRef alimentado pelo filho via onTokensSync).
+  const boardTokensApi = useRealtimeTokens(activeScene?.id || null);
+  const boardTokensValue = { ...boardTokensApi, sceneId: activeScene?.id || null };
   const dismissedSaveIdsRef = useRef(new Set());
+  const inFlightSaveIdsRef = useRef(new Set());
+  const pendingSaveClaimTimerRef = useRef(null);
   const mountTimestampRef = useRef(Date.now());
 
+  useEffect(() => {
+    if (!campaignId || !standaloneSheetId || !windowId) return;
+    registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
+    const cleanup = () => unregisterOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
+    window.addEventListener("pagehide", cleanup);
+    window.addEventListener("beforeunload", cleanup);
+    return () => {
+      window.removeEventListener("pagehide", cleanup);
+      window.removeEventListener("beforeunload", cleanup);
+      cleanup();
+    };
+  }, [campaignId, standaloneSheetId, windowId]);
+
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
-  const currentDisplayName =
-    myPlayerProfile?.displayName ||
-    user?.displayName ||
-    user?.email?.split("@")[0] ||
-    "Pinguim";
+  // Fase 3.1 (errata Fase 3 §4.2): nome do jogador resolvido pelo ponto único resolveSpeakerIdentity
+  const currentDisplayName = resolveSpeakerIdentity({
+    user,
+    myPlayerProfile,
+    playersMap: campaign?.players
+  }).senderName;
 
   const activeCharacter = useMemo(() => {
     // 1. Se houver um token selecionado no tabuleiro, valida se o usuário pode controlá-lo
     if (selectedTokenOnBoard) {
-      const isControlled = isGM || (() => {
-        const list = Array.isArray(selectedTokenOnBoard.controlledBy) ? selectedTokenOnBoard.controlledBy : [];
-        return list.includes("ALL") || (user && list.includes(user.uid));
-      })();
+      const isControlled =
+        isGM ||
+        Boolean(user && selectedTokenOnBoard.ownerId === user.uid) ||
+        hasControlledByAccess(selectedTokenOnBoard.controlledBy, user?.uid);
 
       if (isControlled) {
         if (selectedTokenOnBoard.characterId) {
@@ -255,32 +344,104 @@ export default function VTTLayout() {
     return characters.find((c) => c.id === targetId) || null;
   }, [characters, standaloneSheetId, openCharacterId]);
 
-  const handleExecuteSheetRoll = async (rollParams) => {
+  // Fase 3.1 (V-05): identifica a instância de token que está agindo por uma ficha.
+  // Prioriza o token selecionado no tabuleiro; sem seleção, só aceita um token único da ficha.
+  const resolveActorToken = (character, preferredTokenId = null) => {
+    if (!character) return null;
+    const boardTokens = boardTokensApi.tokens || [];
+    if (preferredTokenId) {
+      const preferred = boardTokens.find((t) => t.id === preferredTokenId);
+      if (preferred) return preferred;
+    }
+    if (selectedTokenOnBoard?.characterId === character.id) {
+      return boardTokens.find((t) => t.id === selectedTokenOnBoard.id) || selectedTokenOnBoard;
+    }
+    const sameCharTokens = boardTokens.filter((t) => t.characterId === character.id);
+    return sameCharTokens.length === 1 ? sameCharTokens[0] : null;
+  };
+
+  const handleConsumeTurnMovement = async (tokenObj, distanceMeters) => {
+    if (!combatState?.active || !isRealGM) return;
+    await consumeCampaignTurnMovement(campaignId, combatState, tokenObj, distanceMeters);
+  };
+
+  const handleExecuteSheetRoll = async (incomingRollParams) => {
+    const currentTargets = targetSelectionRef.current.tokenIds
+      .map((id) => targetSelectionRef.current.tokensById[id])
+      .filter(Boolean);
+
     const activeTargets =
-      (Array.isArray(rollParams.targetedTokens) && rollParams.targetedTokens.length > 0)
-        ? rollParams.targetedTokens
-        : (targetedTokensRef.current && targetedTokensRef.current.length > 0)
-        ? targetedTokensRef.current
-        : loadStoredTargetedTokens(campaignId);
+      Array.isArray(incomingRollParams.targetedTokens) && incomingRollParams.targetedTokens.length > 0
+        ? incomingRollParams.targetedTokens
+        : currentTargets;
 
-    const primaryTarget =
-      rollParams.targetedToken ??
-      activeTargets[0] ??
-      targetedToken ??
-      targetedTokenRef.current ??
-      loadStoredTargetedToken(campaignId);
+    const primaryTarget = incomingRollParams.targetedToken ?? activeTargets[0] ?? null;
 
-    await executeRoll({
+    // Fase 6.3 (A15): rolagem personalizada antiga só de acerto (sem `rollKind` salvo) é ataque
+    // quando há alvo, como no 711451e; sem alvo continua teste.
+    const { attackWhenTargeted, ...baseRollParams } = incomingRollParams;
+    const rollParams =
+      attackWhenTargeted && primaryTarget
+        ? { ...baseRollParams, rollKind: ROLL_KINDS.ATTACK, primaryLabel: "Acerto" }
+        : baseRollParams;
+
+    const actor = rollParams.character || activeCharacter;
+    const resolvedActionKind =
+      rollParams.trigger ||
+      (rollParams.rollKind === ROLL_KINDS.SAVING_THROW
+        ? "saving_throw"
+        : rollParams.rollKind === ROLL_KINDS.CHECK
+          ? "check"
+          : "active");
+    const actCheck = evaluateActorAct(combatState, actor, resolvedActionKind, {
+      isGM,
+      isFollowUp: Boolean(rollParams.isFollowUp || rollParams.parentMessageId)
+    });
+    if (!actCheck.allowed) {
+      showActionBlockNotice(actCheck.reason);
+      return false;
+    }
+    const sentMsg = await executeRoll({
       ...rollParams,
       targetedToken: primaryTarget,
       targetedTokens: activeTargets.length > 0 ? activeTargets : (primaryTarget ? [primaryTarget] : []),
       allCharacters,
-      onDeductResource: updateCharacterResource
+      // Fase 3.1 (V-05): custo da habilidade sai do token da matriz GM/NPC, nunca da ficha-matriz
+      onDeductResource: async (charId, resKey, nextVal, meta = {}) => {
+        const payer = allCharacters.find((c) => c.id === charId) || actor;
+        const amount =
+          Number(meta.amount) ||
+          Math.max(0, Number(payer?.resources?.[resKey]?.current ?? 0) - Number(nextVal));
+        return await deductActorResources({
+          campaignId,
+          campaign,
+          user,
+          character: payer,
+          actorToken: resolveActorToken(payer),
+          sceneId: boardTokensValue.sceneId,
+          costs: { [resKey]: amount },
+          updateCharacterResource
+        });
+      }
     });
+    if (!sentMsg) return false;
+
+    if (
+      combatState?.active &&
+      isRealGM &&
+      actor &&
+      actCheck.budgetField &&
+      !rollParams.isFollowUp &&
+      !rollParams.parentMessageId
+    ) {
+      await consumeCampaignTurnAction(campaignId, combatState, actor, resolvedActionKind);
+    }
+
     if (!standaloneSheetId) {
       setSidebarOpen(true);
       setActiveSidebarTab("chat");
     }
+    return true;
   };
 
   const handlePingSkill = async (pingParams) => {
@@ -297,12 +458,24 @@ export default function VTTLayout() {
 
   // Detecta automaticamente novos pedidos de Teste de Resistência direcionados ao jogador / Mestre
   useEffect(() => {
+    if (pendingSaveClaimTimerRef.current) {
+      clearTimeout(pendingSaveClaimTimerRef.current);
+      pendingSaveClaimTimerRef.current = null;
+    }
     if (!user || !Array.isArray(messages) || messages.length === 0) return;
 
     const answeredSaveIds = new Set(
       messages
         .map((m) => m.rollData?.respondedToSaveId)
         .filter(Boolean)
+    );
+
+    // Fase 6.4 (A20): fecha o pop-up automaticamente assim que a resposta chegar ao chat.
+    for (const ansId of answeredSaveIds) {
+      markSavingThrowAnswered(campaignId, ansId);
+    }
+    setActiveSavingThrowReq((prev) =>
+      prev?.id && answeredSaveIds.has(prev.id) ? null : prev
     );
 
     // Procura do mais recente para o mais antigo por um pedido recente ainda não respondido
@@ -312,25 +485,57 @@ export default function VTTLayout() {
       if (!req || !req.id) continue;
       if ((m.timestampMs || 0) < mountTimestampRef.current - 15000) continue;
       if (answeredSaveIds.has(req.id) || dismissedSaveIdsRef.current.has(req.id)) continue;
+      if (isSavingThrowAnswered(campaignId, req.id)) continue;
 
       if (
-        isUserResponsibleForSavingThrow({
+        !isUserResponsibleForSavingThrow({
           user,
           isGM,
           savingThrowRequest: req,
           campaignGMId: campaign?.gmId
         })
       ) {
-        setActiveSavingThrowReq((prev) => (prev?.id === req.id ? prev : req));
-        break;
+        continue;
       }
+
+      // Janela destacada (?sheetId=...) só abre automaticamente pedidos do próprio personagem.
+      if (standaloneSheetId && req.targetCharacterId !== standaloneSheetId) {
+        continue;
+      }
+
+      const priority = standaloneSheetId && req.targetCharacterId === standaloneSheetId ? 2 : 1;
+      const openForThisWindow = () => {
+        const claim = tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority });
+        if (!claim.claimed) return;
+        broadcastSaveClaimed(req.id, { priority });
+        setActiveSavingThrowReq((prev) => (prev?.id === req.id ? prev : req));
+      };
+
+      // Se a janela principal detectar que a ficha destacada do alvo está aberta, dá preferência
+      // a ela antes de reivindicar o pop-up para evitar abertura dupla entre janelas.
+      if (!standaloneSheetId && hasOpenStandaloneSheet(campaignId, req.targetCharacterId)) {
+        pendingSaveClaimTimerRef.current = setTimeout(() => {
+          pendingSaveClaimTimerRef.current = null;
+          openForThisWindow();
+        }, 120);
+      } else {
+        openForThisWindow();
+      }
+      break;
     }
-  }, [messages, user, isGM, campaign?.gmId]);
+
+    return () => {
+      if (pendingSaveClaimTimerRef.current) {
+        clearTimeout(pendingSaveClaimTimerRef.current);
+        pendingSaveClaimTimerRef.current = null;
+      }
+    };
+  }, [messages, user, isGM, campaign?.gmId, campaignId, standaloneSheetId, windowId, broadcastSaveClaimed]);
 
   const handleExecuteDamageRoll = async ({
     isCrit,
     baseFormula,
-    critFormula,
+    critFormula: _critFormula,
     extraDamage,
     selectedTriggers = [],
     attackMessage,
@@ -342,42 +547,18 @@ export default function VTTLayout() {
       activeCharacter;
 
     // 1. Deduz custos de recursos ou itens dos gatilhos selecionados
-    if (attacker) {
-      let nextMp = Number(attacker.resources?.mp?.current ?? 0);
-      let nextHp = Number(attacker.resources?.hp?.current ?? 0);
-      let mpChanged = false;
-      let hpChanged = false;
-      let nextInventory = Array.isArray(attacker.inventory)
-        ? [...attacker.inventory]
-        : [];
-      let invChanged = false;
-
-      for (const trig of selectedTriggers) {
-        if (trig.sourceType === "ability") {
-          if (trig.costMp > 0) {
-            nextMp = Math.max(0, nextMp - trig.costMp);
-            mpChanged = true;
-          }
-          if (trig.costHp > 0) {
-            nextHp = Math.max(0, nextHp - trig.costHp);
-            hpChanged = true;
-          }
-        } else if (trig.sourceType === "item" && trig.consumeOnUse) {
-          nextInventory = nextInventory
-            .map((it) =>
-              it.id === trig.id
-                ? { ...it, qty: Math.max(0, (Number(it.qty) || 1) - 1) }
-                : it
-            )
-            .filter((it) => (Number(it.qty) ?? 1) > 0);
-          invChanged = true;
-        }
-      }
-
-      if (mpChanged) await updateCharacterResource(attacker.id, "mp", nextMp);
-      if (hpChanged) await updateCharacterResource(attacker.id, "hp", nextHp);
-      if (invChanged) await updateCharacter(attacker.id, { inventory: nextInventory });
-    }
+    // (Fase 3.1 / V-05: MP/HP de matriz GM/NPC saem da instância do token atacante)
+    await consumeCombatCosts({
+      campaignId,
+      campaign,
+      user,
+      character: attacker,
+      actorToken: resolveActorToken(attacker),
+      sceneId: boardTokensValue.sceneId,
+      itemsToConsume: selectedTriggers,
+      updateCharacterResource,
+      updateCharacter
+    });
 
     // 2. Fórmula final de dano (Normal vs Crítico + Extra + Gatilhos com dados dobrados no crítico)
     const coreFormula = isCrit ? doubleDiceInFormula(baseFormula) : baseFormula;
@@ -431,7 +612,7 @@ export default function VTTLayout() {
         attackMessage?.rollData?.damageConfig?.effectType ||
         "damage",
       savingThrow: saveToAttach,
-      rollKind: "damage",
+      rollKind: ROLL_KINDS.DAMAGE,
       deferSecondaryDamage: false,
       targetInfoOverride: prevTargetInfo
         ? {
@@ -451,6 +632,19 @@ export default function VTTLayout() {
     setActiveSidebarTab("chat");
   };
 
+  const handleOpenSavingThrowModal = (req) => {
+    if (!req?.id) return;
+    if (
+      messages.some((m) => m.rollData?.respondedToSaveId === req.id) ||
+      isSavingThrowAnswered(campaignId, req.id)
+    ) {
+      return;
+    }
+    tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority: 3, forceManual: true });
+    broadcastSaveClaimed(req.id, { priority: 3, manual: true });
+    setActiveSavingThrowReq(req);
+  };
+
   const handleExecuteSavingThrow = async ({
     savingThrowRequest,
     attributeLabel,
@@ -458,76 +652,84 @@ export default function VTTLayout() {
     selectedAssists = [],
     defenderCharacter
   }) => {
-    if (!savingThrowRequest) return;
-    dismissedSaveIdsRef.current.add(savingThrowRequest.id);
+    const saveId = savingThrowRequest?.id;
+    if (!savingThrowRequest || !saveId) return false;
+    if (inFlightSaveIdsRef.current.has(saveId)) return false;
 
-    if (defenderCharacter) {
-      let nextMp = Number(defenderCharacter.resources?.mp?.current ?? 0);
-      let nextHp = Number(defenderCharacter.resources?.hp?.current ?? 0);
-      let mpChanged = false;
-      let hpChanged = false;
-      let nextInventory = Array.isArray(defenderCharacter.inventory)
-        ? [...defenderCharacter.inventory]
-        : [];
-      let invChanged = false;
-
-      for (const ast of selectedAssists) {
-        if (ast.sourceType === "ability") {
-          if (ast.costMp > 0) {
-            nextMp = Math.max(0, nextMp - ast.costMp);
-            mpChanged = true;
-          }
-          if (ast.costHp > 0) {
-            nextHp = Math.max(0, nextHp - ast.costHp);
-            hpChanged = true;
-          }
-        } else if (ast.sourceType === "item" && ast.consumeOnUse) {
-          nextInventory = nextInventory
-            .map((it) =>
-              it.id === ast.id
-                ? { ...it, qty: Math.max(0, (Number(it.qty) || 1) - 1) }
-                : it
-            )
-            .filter((it) => (Number(it.qty) ?? 1) > 0);
-          invChanged = true;
-        }
-      }
-
-      if (mpChanged) await updateCharacterResource(defenderCharacter.id, "mp", nextMp);
-      if (hpChanged) await updateCharacterResource(defenderCharacter.id, "hp", nextHp);
-      if (invChanged) await updateCharacter(defenderCharacter.id, { inventory: nextInventory });
+    const alreadyAnswered =
+      messages.some((m) => m.rollData?.respondedToSaveId === saveId) ||
+      isSavingThrowAnswered(campaignId, saveId);
+    if (alreadyAnswered) {
+      dismissedSaveIdsRef.current.add(saveId);
+      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
+      return false;
     }
 
-    const dc = Number(savingThrowRequest.dc) || 10;
+    const beginClaim = tryBeginSavingThrowSubmission(campaignId, saveId, windowId);
+    if (!beginClaim.allowed) {
+      dismissedSaveIdsRef.current.add(saveId);
+      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
+      return false;
+    }
 
-    await executeRoll({
-      title: `Resistência (${attributeLabel}) — ${savingThrowRequest.sourceRollName || "Teste"}`,
-      categoryColor: "#7e22ce",
-      description: savingThrowRequest.effectDescription || "",
-      character: defenderCharacter,
-      senderName:
-        savingThrowRequest.targetName ||
-        defenderCharacter?.name ||
-        currentDisplayName,
-      primaryFormula: formula,
-      primaryLabel: `${attributeLabel} (CD ${dc})`,
-      secondaryFormula: "",
-      visibility: rollVisibility,
-      icon: "shield",
-      rollKind: "saving_throw",
-      deferSecondaryDamage: false,
-      respondedToSaveId: savingThrowRequest.id,
-      parentMessageId: savingThrowRequest.parentMessageId || null,
-      savingThrowOutcome: {
-        dc,
-        attribute: attributeLabel,
-        effectDescription: savingThrowRequest.effectDescription || ""
+    inFlightSaveIdsRef.current.add(saveId);
+    dismissedSaveIdsRef.current.add(saveId);
+
+    try {
+      // Fase 3.1 (V-05): MP/HP de matriz GM/NPC saem da instância do token defensor
+      await consumeCombatCosts({
+        campaignId,
+        campaign,
+        user,
+        character: defenderCharacter,
+        actorToken: resolveActorToken(defenderCharacter, savingThrowRequest.targetTokenId),
+        sceneId: savingThrowRequest.targetSceneId || boardTokensValue.sceneId,
+        itemsToConsume: selectedAssists,
+        updateCharacterResource,
+        updateCharacter
+      });
+
+      const dc = Number(savingThrowRequest.dc) || 10;
+
+      await executeRoll({
+        title: `Resistência (${attributeLabel}) — ${savingThrowRequest.sourceRollName || "Teste"}`,
+        categoryColor: "#7e22ce",
+        description: savingThrowRequest.effectDescription || "",
+        character: defenderCharacter,
+        senderName:
+          savingThrowRequest.targetName ||
+          defenderCharacter?.name ||
+          currentDisplayName,
+        primaryFormula: formula,
+        primaryLabel: `${attributeLabel} (CD ${dc})`,
+        secondaryFormula: "",
+        visibility: rollVisibility,
+        icon: "shield",
+        rollKind: ROLL_KINDS.SAVING_THROW,
+        deferSecondaryDamage: false,
+        respondedToSaveId: saveId,
+        parentMessageId: savingThrowRequest.parentMessageId || null,
+        savingThrowOutcome: {
+          dc,
+          attribute: attributeLabel,
+          effectDescription: savingThrowRequest.effectDescription || ""
+        }
+      });
+
+      markSavingThrowAnswered(campaignId, saveId, windowId);
+      broadcastSaveAnswered(saveId);
+      setActiveSavingThrowReq(null);
+      if (!standaloneSheetId) {
+        setSidebarOpen(true);
+        setActiveSidebarTab("chat");
       }
-    });
-
-    setActiveSavingThrowReq(null);
-    setSidebarOpen(true);
-    setActiveSidebarTab("chat");
+      return true;
+    } catch (err) {
+      rollbackSavingThrowSubmission(campaignId, saveId, windowId);
+      throw err;
+    } finally {
+      inFlightSaveIdsRef.current.delete(saveId);
+    }
   };
 
   const handleApplyCombatEffect = async ({
@@ -538,170 +740,61 @@ export default function VTTLayout() {
     effectType = "damage",
     manualModifiers = []
   }) => {
-    if (!isGM || !msg) return;
-
-    const msgTarget = msg.rollData?.targetInfo || null;
-    const targetTokenId =
-      msgTarget?.tokenId || targetedToken?.id || selectedTokenOnBoard?.id || null;
-    const targetSceneId =
-      msgTarget?.sceneId ||
-      targetedToken?.sceneId ||
-      activeScene?.id ||
-      campaign?.activeSceneId ||
-      null;
-    const targetCharId =
-      msgTarget?.characterId ||
-      targetedToken?.characterId ||
-      selectedTokenOnBoard?.characterId ||
-      null;
-
-    const liveToken =
-      boardSyncRef.current.tokens?.find(
-        (t) => t.id === targetTokenId || (targetCharId && t.characterId === targetCharId)
-      ) ||
-      targetedToken ||
-      selectedTokenOnBoard ||
-      null;
-
-    const effectiveCharId = targetCharId || liveToken?.characterId || null;
-    const targetChar = effectiveCharId
-      ? allCharacters.find((c) => c.id === effectiveCharId) || null
-      : null;
-    const sourceChar = msg.characterId
-      ? allCharacters.find((c) => c.id === msg.characterId) || null
-      : null;
-
-    if (!targetChar && !liveToken && !targetTokenId) return;
-
-    const computed = computeModifiedEffectValue({
+    await applyCombatEffectToTarget({
+      campaignId,
+      campaign,
+      user,
+      isGM,
+      msg,
       baseValue,
       scaleMode,
       customValue,
       effectType,
-      sourceCharacter: sourceChar,
-      targetCharacter: targetChar,
-      targetToken: liveToken,
-      manualModifiers
-    });
-
-    const resKey = computed.resourceKey || "hp";
-    let syncedHpValue = null;
-
-    if (targetChar && resKey) {
-      const resObj = targetChar.resources?.[resKey] || { current: 20, max: 20 };
-      const maxVal = Number(resObj.max) || 9999;
-      const nextVal = Math.max(
-        0,
-        Math.min(maxVal, (Number(resObj.current) || 0) + computed.resourceDelta)
-      );
-      await updateCharacterResource(targetChar.id, resKey, nextVal);
-      if (resKey === "hp") {
-        syncedHpValue = nextVal;
-      }
-    }
-
-    const effectiveTokenId = liveToken?.id || targetTokenId;
-    const effectiveSceneId =
-      liveToken?.sceneId || targetSceneId || activeScene?.id || campaign?.activeSceneId;
-
-    if (resKey === "hp" && effectiveTokenId && effectiveSceneId && campaignId) {
-      const curTokHp = Number(liveToken?.hpCurrent ?? targetChar?.resources?.hp?.current ?? 20);
-      const maxTokHp = Number(liveToken?.hpMax ?? targetChar?.resources?.hp?.max ?? 9999) || 9999;
-      const nextTokHp =
-        syncedHpValue !== null
-          ? syncedHpValue
-          : Math.max(0, Math.min(maxTokHp, curTokHp + computed.resourceDelta));
-
-      const tokRef = ref(
-        rtdb,
-        `vtt_realtime/${campaignId}/tokens/${effectiveSceneId}/${effectiveTokenId}`
-      );
-      await rtdbUpdate(tokRef, {
-        hpCurrent: nextTokHp,
-        updatedBy: user?.uid || "gm",
-        updatedAt: Date.now()
-      });
-    }
-
-    const effMeta =
-      EFFECT_TYPES.find((e) => e.id === computed.effectType) || EFFECT_TYPES[0];
-    const targetDisplayName =
-      targetChar?.name || liveToken?.name || msgTarget?.name || "Alvo";
-
-    const prevApplied = Array.isArray(msg.rollData?.appliedEffects)
-      ? msg.rollData.appliedEffects
-      : [];
-
-    await updateMessageRollData(msg.id, {
-      appliedEffects: [
-        ...prevApplied,
-        {
-          effectType: computed.effectType,
-          label: effMeta.label,
-          scaleMode,
-          finalValue: computed.finalValue,
-          targetName: targetDisplayName,
-          timestampMs: Date.now()
-        }
-      ]
+      manualModifiers,
+      boardTokens: boardTokensApi.tokens || [],
+      targetedToken,
+      selectedTokenOnBoard,
+      activeScene,
+      allCharacters,
+      updateCharacterResource,
+      updateMessageRollData
     });
   };
 
   // Coloca o Token do Personagem diretamente no Mapa Ativo em Tempo Real
   const handleSpawnCharacterToken = async (char, spawnOptions = {}) => {
-    const targetSceneId = activeScene?.id || campaign?.activeSceneId;
-    if (!char || !targetSceneId || !user) return;
+    // Fase 6.2 (A11): sem permissão de edição, o serviço não grava nada; avisa em vez de falhar em silêncio
+    if (char && !isGM && !canEditCharacter(char)) {
+      showActionBlockNotice("Só quem pode editar esta ficha coloca o token dela no mapa.");
+      return;
+    }
+    try {
+      await spawnCharacterTokenToScene({
+        campaignId,
+        campaign,
+        user,
+        isGM,
+        canEditCharacter,
+        activeScene,
+        char,
+        spawnOptions
+      });
+    } catch (err) {
+      // Fase 3.1 (V-12): falha de escrita no RTDB deixa de ser silenciosa
+      console.warn("Falha ao colocar token no mapa:", err);
+      showActionBlockNotice("Não foi possível colocar o token no mapa.");
+    }
+  };
 
-    const tokenId = `tok_${char.id}_${Date.now().toString().slice(-4)}`;
-    const tokenRef = ref(
-      rtdb,
-      `vtt_realtime/${campaignId}/tokens/${targetSceneId}/${tokenId}`
-    );
-
-    const cellSizePx = Number(activeScene?.grid?.cellSizePx) || 64;
-    const widthPx = Number(activeScene?.mapImage?.widthPx) || 1920;
-    const heightPx = Number(activeScene?.mapImage?.heightPx) || 1080;
-    const startX =
-      Math.round(widthPx / 2 / cellSizePx) * cellSizePx;
-    const startY =
-      Math.round(heightPx / 2 / cellSizePx) * cellSizePx;
-
-    const showName =
-      spawnOptions?.showName !== undefined
-        ? Boolean(spawnOptions.showName)
-        : (char.defaultToken?.showName !== false);
-
-    const visibleToPlayers =
-      spawnOptions?.visibleToPlayers !== undefined
-        ? Boolean(spawnOptions.visibleToPlayers)
-        : (char.type !== "npc" || isGM);
-
-    await rtdbSet(tokenRef, {
-      id: tokenId,
-      characterId: char.id,
-      layer: "tokens",
-      name: char.name || "Pinguim",
-      showName,
-      mediaId: char.defaultToken?.mediaId || char.avatarMediaId || null,
-      externalUrl:
-        char.defaultToken?.externalUrl || char.avatarExternalUrl || null,
-      x: startX,
-      y: startY,
-      sizeInCells: Number(char.defaultToken?.sizeInCells) || 1,
-      rotation: 0,
-      ringColor: char.cardColor || "#3090f0",
-      visibleToPlayers,
-      controlledBy: Array.from(
-        new Set([campaign?.gmId, char.ownerId].filter(Boolean))
-      ),
-      ownerId: char.ownerId || null,
-      characterType: char.type || "pc",
-      defense: Number(char.defense ?? 12),
-      hpCurrent: Number(char.resources?.hp?.current ?? 20),
-      hpMax: Number(char.resources?.hp?.max ?? 20),
-      showBarsToPlayers: true,
-      updatedBy: user.uid,
-      updatedAt: Date.now()
+  // Sincronização Token (Tabuleiro) -> Ficha (Firestore) apenas para PCs (nunca para NPC/Matriz do Mestre)
+  const handleSyncTokenToCharacter = async (token, updatedFields = {}) => {
+    await syncTokenUpdatesToCharacter({
+      token,
+      updatedFields,
+      allCharacters,
+      campaign,
+      canEditCharacter,
+      updateCharacter
     });
   };
 
@@ -711,43 +804,39 @@ export default function VTTLayout() {
     const raw = dockChatText.trim();
     setDockChatText("");
 
-    // Determina o emissor ativo (personagem aberto ou perfil do usuário)
-    const senderName = activeCharacter?.name || currentDisplayName;
-    const senderPhotoURL = activeCharacter
-      ? (activeCharacter.avatarExternalUrl ||
-         activeCharacter.defaultToken?.externalUrl ||
-         activeCharacter.tokenImage ||
-         activeCharacter.avatarImage ||
-         null)
-      : (myPlayerProfile?.photoURL || user?.photoURL || null);
+    const speaker = resolveSpeakerIdentity({
+      character: activeCharacter,
+      user,
+      myPlayerProfile,
+      playersMap: campaign?.players
+    });
 
     // Rolagens no chat
+    // Fase 6.3 (A14): passa pelo mesmo caminho da barra lateral (handleExecuteSheetRoll), que
+    // anexa os alvos atuais e aplica o bloqueio do Modo de Turno.
     if (raw.startsWith("/r ") || raw.startsWith("/roll ")) {
       const expr = raw.replace(/^\/r(oll)?\s+/i, "");
-      await executeRoll({
+      await handleExecuteSheetRoll({
         title: `Rolagem (${expr})`,
         primaryFormula: expr,
         primaryLabel: "Resultado",
+        // Fase 3.1 (V-03): rolagem livre é teste (CHECK), nunca ataque contra a Defesa
+        rollKind: ROLL_KINDS.CHECK,
         character: activeCharacter,
-        senderName,
-        senderPhotoURL,
-        visibility: rollVisibility,
-        onDeductResource: updateCharacterResource
+        senderName: speaker.senderName,
+        senderPhotoURL: speaker.senderPhotoURL,
+        visibility: rollVisibility
       });
-      setSidebarOpen(true);
-      setActiveSidebarTab("chat");
       return;
     }
 
     // Mensagem de texto comum
     await sendTextMessage({
       content: raw,
-      senderName,
-      senderPhotoURL,
-      characterId: activeCharacter?.id || null,
-      characterMediaId: activeCharacter
-        ? activeCharacter.avatarMediaId || activeCharacter.defaultToken?.mediaId || null
-        : null
+      senderName: speaker.senderName,
+      senderPhotoURL: speaker.senderPhotoURL,
+      characterId: speaker.characterId,
+      characterMediaId: speaker.characterMediaId
     });
     setSidebarOpen(true);
     setActiveSidebarTab("chat");
@@ -757,78 +846,72 @@ export default function VTTLayout() {
     if (!emote) return;
     setEmotePickerOpen(false);
 
-    const senderName = activeCharacter?.name || currentDisplayName;
-    const senderPhotoURL = activeCharacter
-      ? (activeCharacter.avatarExternalUrl ||
-         activeCharacter.defaultToken?.externalUrl ||
-         activeCharacter.tokenImage ||
-         activeCharacter.avatarImage ||
-         null)
-      : (myPlayerProfile?.photoURL || user?.photoURL || null);
+    const speaker = resolveSpeakerIdentity({
+      character: activeCharacter,
+      user,
+      myPlayerProfile,
+      playersMap: campaign?.players
+    });
 
     await sendEmoteMessage({
       icon: emote.id,
-      senderName,
-      senderPhotoURL,
-      characterId: activeCharacter?.id || null,
-      characterMediaId: activeCharacter
-        ? activeCharacter.avatarMediaId || activeCharacter.defaultToken?.mediaId || null
-        : null,
+      senderName: speaker.senderName,
+      senderPhotoURL: speaker.senderPhotoURL,
+      characterId: speaker.characterId,
+      characterMediaId: speaker.characterMediaId,
       visibility: rollVisibility
     });
     setSidebarOpen(true);
     setActiveSidebarTab("chat");
   };
 
-  // Modo Janela Dedicada (Pop-out para tela cheia ou Alt+Tab)
-  if (standaloneSheetId) {
-    if (!openedSheetCharacter) {
-      return (
-        <div
-          style={{
-            width: "100vw",
-            height: "100vh",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center"
-          }}
-        >
-          <div className="cp-window">
-            <h2 className="cp-title" style={{ padding: "12px 24px" }}>
-              CARREGANDO FICHA...
-            </h2>
-          </div>
-        </div>
-      );
-    }
+  // Fase 5: props dos modais de combate, compartilhadas pela mesa e pela janela destacada
+  const combatModalsProps = {
+    damageModalMsg,
+    setDamageModalMsg,
+    activeSavingThrowReq,
+    setActiveSavingThrowReq,
+    dismissedSaveIdsRef,
+    allCharacters,
+    activeCharacter,
+    handleExecuteDamageRoll,
+    handleExecuteSavingThrow
+  };
 
+  // Modo Janela Dedicada (Pop-out para tela cheia ou Alt+Tab) — Fase 5: StandaloneSheetView
+  // renderiza a ficha e os modais de combate (antes só a ficha).
+  if (standaloneSheetId) {
     return (
-      <CharacterSheetModal
+      <StandaloneSheetView
         character={openedSheetCharacter}
-        campaignId={campaignId}
-        playersMap={campaign?.players || {}}
-        compendiumEntries={compendiumEntries}
-        canEdit={canEditCharacter(openedSheetCharacter)}
-        isGM={isGM}
-        rollVisibility={rollVisibility}
-        onChangeRollVisibility={setRollVisibility}
-        onUpdateCharacter={updateCharacter}
-        onUploadCharacterImage={uploadCharacterImage}
-        onExecuteRoll={handleExecuteSheetRoll}
-        onPingSkill={handlePingSkill}
-        onSpawnTokenOnMap={
-          activeScene ? handleSpawnCharacterToken : null
-        }
-        isStandaloneWindow={true}
-        onStartAoeDemarcate={handleStartAoeDemarcate}
+        combatModalsProps={combatModalsProps}
+        sheetProps={{
+          campaignId,
+          playersMap: campaign?.players || {},
+          compendiumEntries,
+          canEdit: openedSheetCharacter ? canEditCharacter(openedSheetCharacter) : false,
+          isGM,
+          rollVisibility,
+          onChangeRollVisibility: setRollVisibility,
+          onUpdateCharacter: updateCharacter,
+          onUploadCharacterImage: uploadCharacterImage,
+          onExecuteRoll: handleExecuteSheetRoll,
+          onPingSkill: handlePingSkill,
+          onSpawnTokenOnMap: activeScene ? handleSpawnCharacterToken : null,
+          onStartAoeDemarcate: handleStartAoeDemarcate
+        }}
       />
     );
   }
 
+  const activeCombatant = combatState?.active ? getActiveCombatant(combatState) : null;
   const combinedError = firestoreError || scenesError;
 
   return (
-    <div className={`vtt-shell ${snowballAimActive ? "cp-snowball-aiming" : ""}`}>
+    <div
+      className={`vtt-shell ${snowballAimActive ? "cp-snowball-aiming" : ""}`}
+      style={SNOWBALL_CURSOR_STYLE}
+    >
       {/* Barra Superior */}
       <header className="vtt-topbar">
         <div className="vtt-topbar-left">
@@ -909,6 +992,24 @@ export default function VTTLayout() {
             <span>{currentDisplayName}</span>
           </button>
 
+          {isGM && !combatState?.active && (
+            <button
+              type="button"
+              className="cp-btn cp-btn-epf"
+              style={{ padding: "6px 12px", fontSize: "13px" }}
+              onClick={() =>
+                startTurnCombat({
+                  campaignId,
+                  tokens: boardTokensApi.tokens || [],
+                  allCharacters
+                })
+              }
+              title="Iniciar Modo de Turnos"
+            >
+              ⚔️ Turnos
+            </button>
+          )}
+
           {isGM && (
             <button
               type="button"
@@ -953,7 +1054,96 @@ export default function VTTLayout() {
           </div>
         )}
 
+        {actionBlockNotice && (
+          <div
+            style={{
+              position: "absolute",
+              top: "14px",
+              right: "14px",
+              zIndex: 49,
+              background: "rgba(185, 28, 28, 0.95)",
+              border: "2px solid #fca5a5",
+              borderRadius: "999px",
+              padding: "5px 14px",
+              color: "#ffffff",
+              fontSize: "12px",
+              fontWeight: 900,
+              boxShadow: "0 6px 20px rgba(0,0,0,0.55)"
+            }}
+          >
+            ⏳ {actionBlockNotice}
+          </div>
+        )}
+
+        {combatState?.active && (
+          <div
+            style={{
+              position: "absolute",
+              top: "14px",
+              left: "14px",
+              zIndex: 47,
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "rgba(11, 25, 44, 0.92)",
+              border: "2px solid #f59e0b",
+              borderRadius: "999px",
+              padding: "4px 12px",
+              color: "#ffffff",
+              fontSize: "12px",
+              fontWeight: 900,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.55)"
+            }}
+          >
+            <span style={{ color: "#fbbf24" }}>R{combatState.round}</span>
+            <span>{activeCombatant?.name || "Turno"}</span>
+            {activeCombatant && (
+              <span style={{ color: "#38bdf8", fontSize: "11px" }}>
+                {Math.max(
+                  0,
+                  activeCombatant.movementBudgetMeters - activeCombatant.movementUsedMeters
+                )
+                  .toFixed(1)
+                  .replace(".", ",")}
+                m
+              </span>
+            )}
+            {isGM && (
+              <>
+                <button
+                  type="button"
+                  className="cp-btn"
+                  style={{ padding: "2px 6px", fontSize: "10px", height: "22px" }}
+                  onClick={() => regressCampaignTurn(campaignId, combatState)}
+                  title="Turno Anterior"
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  className="cp-btn cp-btn-gold"
+                  style={{ padding: "2px 6px", fontSize: "10px", height: "22px" }}
+                  onClick={() => advanceCampaignTurn(campaignId, combatState)}
+                  title="Próximo Turno"
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  className="cp-btn cp-btn-orange"
+                  style={{ padding: "2px 6px", fontSize: "10px", height: "22px" }}
+                  onClick={() => stopTurnCombat(campaignId, combatState)}
+                  title="Encerrar Turnos"
+                >
+                  ■
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {activeDockModule === "board" && (
+          <BoardTokensProvider value={boardTokensValue}>
           <BoardViewport
             activeScene={activeScene}
             campaignId={campaignId}
@@ -973,12 +1163,13 @@ export default function VTTLayout() {
             onTargetedTokensChange={setTargetedTokens}
             aoeDemarcateConfig={aoeDemarcateConfig}
             onCloseAoeDemarcate={() => handleStartAoeDemarcate(null)}
-            onTokensSync={(syncData) => {
-              boardSyncRef.current = syncData;
-            }}
             snowballAimActive={snowballAimActive}
             onDeactivateSnowballAim={() => setSnowballAimActive(false)}
+            onSyncTokenToCharacter={handleSyncTokenToCharacter}
+            combatState={combatState}
+            onConsumeTurnMovement={isRealGM ? handleConsumeTurnMovement : null}
           />
+          </BoardTokensProvider>
         )}
 
         {activeDockModule === "journal" && (
@@ -1032,7 +1223,7 @@ export default function VTTLayout() {
           title="Mapa da Campanha"
         >
           <img
-            src="/map-icon.png"
+            src={getAssetUrl("map-icon.png")}
             alt="Mapa da Campanha"
             className="cp-dock-map-img"
           />
@@ -1076,7 +1267,7 @@ export default function VTTLayout() {
                 onClick={() => setHotbarOpen((prev) => !prev)}
               >
                 <img
-                  src="/icones/iconeAcoesRapidas.png"
+                  src={getAssetUrl("icones/iconeAcoesRapidas.png")}
                   alt="Ações Rápidas"
                   width="22"
                   height="22"
@@ -1113,7 +1304,7 @@ export default function VTTLayout() {
               }}
             >
               <img
-                src="/icones/iconeBolaDeNeve.png"
+                src={getAssetUrl("icones/iconeBolaDeNeve.png")}
                 alt="Bola de Neve"
                 width="22"
                 height="22"
@@ -1131,7 +1322,7 @@ export default function VTTLayout() {
                 onClick={() => setEmotePickerOpen((prev) => !prev)}
               >
                 <img
-                  src="/icones/iconeEmotes.webp"
+                  src={getAssetUrl("icones/iconeEmotes.webp")}
                   alt="Emotes"
                   width="22"
                   height="22"
@@ -1164,7 +1355,7 @@ export default function VTTLayout() {
               title="Enviar mensagem / rolar"
             >
               <img
-                src="/icones/iconeChat.png"
+                src={getAssetUrl("icones/iconeChat.png")}
                 alt="Enviar"
                 width="16"
                 height="16"
@@ -1202,7 +1393,7 @@ export default function VTTLayout() {
               }}
             >
               <img
-                src="/icones/iconeFicha.png"
+                src={getAssetUrl("icones/iconeFicha.png")}
                 alt="Meu Pinguim"
                 width="22"
                 height="22"
@@ -1219,7 +1410,7 @@ export default function VTTLayout() {
               title="Livro / Compêndio"
             >
               <img
-                src="/icones/iconeCompendio.png"
+                src={getAssetUrl("icones/iconeCompendio.png")}
                 alt="Livro / Compêndio"
                 width="22"
                 height="22"
@@ -1236,7 +1427,7 @@ export default function VTTLayout() {
               title="Diários e Teias"
             >
               <img
-                src="/icones/iconeDiarios.png"
+                src={getAssetUrl("icones/iconeDiarios.png")}
                 alt="Diários e Teias"
                 width="22"
                 height="22"
@@ -1253,7 +1444,7 @@ export default function VTTLayout() {
               title="Lista de Amigos / Agentes"
             >
               <img
-                src="/icones/iconeListaMembros.webp"
+                src={getAssetUrl("icones/iconeListaMembros.webp")}
                 alt="Lista de Amigos"
                 width="22"
                 height="22"
@@ -1313,7 +1504,7 @@ export default function VTTLayout() {
               onSendText={sendTextMessage}
               onExecuteRoll={handleExecuteSheetRoll}
               onOpenDamageModal={(msg) => setDamageModalMsg(msg)}
-              onOpenSavingThrowModal={(req) => setActiveSavingThrowReq(req)}
+              onOpenSavingThrowModal={handleOpenSavingThrowModal}
               onApplyEffect={handleApplyCombatEffect}
               onDeleteMessage={deleteMessage}
               isGM={isGM}
@@ -1326,6 +1517,8 @@ export default function VTTLayout() {
               folders={characterFolders}
               campaignId={campaignId}
               isGM={isGM}
+              canEditCharacter={canEditCharacter}
+              canEditFolder={canEditCharacterFolder}
               currentUser={user}
               playersMap={campaign?.players || {}}
               gmId={campaign?.gmId}
@@ -1508,38 +1701,8 @@ export default function VTTLayout() {
         />
       )}
 
-      {/* Janela de Rolagem de Dano (Normal / Crítico / Extra / Gatilho) */}
-      <DamageRollModal
-        open={Boolean(damageModalMsg)}
-        onClose={() => setDamageModalMsg(null)}
-        attackMessage={damageModalMsg}
-        character={
-          (damageModalMsg?.characterId &&
-            allCharacters.find((c) => c.id === damageModalMsg.characterId)) ||
-          activeCharacter
-        }
-        onExecuteDamageRoll={handleExecuteDamageRoll}
-      />
-
-      {/* Pop-up de Teste de Resistência para o Alvo */}
-      <SavingThrowModal
-        open={Boolean(activeSavingThrowReq)}
-        onClose={() => {
-          if (activeSavingThrowReq?.id) {
-            dismissedSaveIdsRef.current.add(activeSavingThrowReq.id);
-          }
-          setActiveSavingThrowReq(null);
-        }}
-        savingThrowRequest={activeSavingThrowReq}
-        defenderCharacter={
-          (activeSavingThrowReq?.targetCharacterId &&
-            allCharacters.find(
-              (c) => c.id === activeSavingThrowReq.targetCharacterId
-            )) ||
-          activeCharacter
-        }
-        onExecuteSavingThrow={handleExecuteSavingThrow}
-      />
+      {/* Modais de Combate (Dano e Teste de Resistência) — Fase 5: componente compartilhado com a janela destacada */}
+      <CombatModals {...combatModalsProps} />
     </div>
   );
 }

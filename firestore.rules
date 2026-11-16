@@ -6,88 +6,134 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isGM(campaignId) {
+    function isAuthorizedGMByEmail() {
       return isSignedIn() &&
+        'email' in request.auth.token &&
+        request.auth.token.email == 'erickteixeiractt@gmail.com';
+    }
+
+    function isGM(campaignId) {
+      return isAuthorizedGMByEmail() || (
+        isSignedIn() &&
         exists(/databases/$(database)/documents/campaigns/$(campaignId)) &&
-        get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid;
+        'gmId' in get(/databases/$(database)/documents/campaigns/$(campaignId)).data &&
+        get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid
+      );
+    }
+
+    // Fase 3.1 (D-3): Soft Delete (alterar isDeleted/deletedAt/deletedBy) é exclusivo do dono.
+    // O Mestre passa antes por isGM(campaignId). editableBy e scope 'party' concedem só edição.
+    function touchesSoftDeleteFields() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['isDeleted', 'deletedAt', 'deletedBy']);
+    }
+
+    function isResourceOwner() {
+      return 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid;
     }
 
     function canSeeResource(campaignId, resourceData) {
       return isGM(campaignId) ||
-        resourceData.visibleToPlayers == true ||
         ('visibleTo' in resourceData && (
           'ALL' in resourceData.visibleTo ||
           request.auth.uid in resourceData.visibleTo
-        ));
+        )) ||
+        ('visibleToPlayers' in resourceData && resourceData.visibleToPlayers == true) ||
+        ('ownerId' in resourceData && resourceData.ownerId == request.auth.uid) ||
+        ('scope' in resourceData && resourceData.scope == 'party');
     }
 
     match /campaigns/{campaignId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isGM(campaignId) || isSignedIn();
+      allow create: if isSignedIn() &&
+        (isAuthorizedGMByEmail() || request.resource.data.gmId == request.auth.uid);
+      allow update: if isGM(campaignId) || (
+        isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'updatedAt']) &&
+        (!('players' in resource.data) ||
+          request.resource.data.players.diff(resource.data.players).affectedKeys().hasOnly([request.auth.uid]))
+      );
       allow delete: if isGM(campaignId);
 
       // Mapas / Cenas
       match /scenes/{sceneId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
         allow write: if isGM(campaignId);
       }
 
       // Fichas de Personagem
       match /characters/{characterId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn();
-        allow update: if isGM(campaignId) ||
-          (isSignedIn() && (
-            resource.data.ownerId == request.auth.uid ||
-            request.auth.uid in resource.data.editableBy
-          ));
-        allow delete: if isGM(campaignId) ||
-          (isSignedIn() && resource.data.ownerId == request.auth.uid);
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
+        allow create: if isGM(campaignId) ||
+          (isSignedIn() && request.resource.data.ownerId == request.auth.uid);
+        allow update: if isGM(campaignId) || (
+          isSignedIn() &&
+          (('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
+            ('editableBy' in resource.data &&
+              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'ownerId', 'visibleTo', 'editableBy', 'type', 'campaignId'
+          ]) &&
+          (!touchesSoftDeleteFields() || isResourceOwner())
+        );
+        // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
+        allow delete: if isGM(campaignId);
       }
 
       // Compêndio (Habilidades, Magias, Itens)
       match /compendium/{itemId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
         allow write: if isGM(campaignId);
       }
 
       // Chat e Rolagens (Imutáveis para players após enviadas)
       match /messages/{messageId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
         allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
         allow update, delete: if isGM(campaignId);
       }
 
       // Diários e Cards de Investigação (Mestre, Players e Grupo)
       match /notes/{noteId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
         allow create: if isGM(campaignId) ||
           (isSignedIn() &&
             request.resource.data.ownerId == request.auth.uid &&
             request.resource.data.scope in ['player', 'party']);
-        allow update: if isGM(campaignId) ||
-          (isSignedIn() && (
-            resource.data.scope == 'party' ||
-            resource.data.ownerId == request.auth.uid ||
-            request.auth.uid in resource.data.editableBy
-          ));
-        allow delete: if isGM(campaignId) ||
-          (isSignedIn() && resource.data.ownerId == request.auth.uid);
+        allow update: if isGM(campaignId) || (
+          isSignedIn() &&
+          (('scope' in resource.data && resource.data.scope == 'party') ||
+            ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
+            ('editableBy' in resource.data &&
+              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+          (!('scope' in request.resource.data) || request.resource.data.scope in ['player', 'party']) &&
+          (!('ownerId' in request.resource.data) || !('ownerId' in resource.data) ||
+            request.resource.data.ownerId == resource.data.ownerId) &&
+          (!touchesSoftDeleteFields() || isResourceOwner())
+        );
+        // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
+        allow delete: if isGM(campaignId);
       }
 
-      // Pastas dos Diários
+      // Pastas (Personagens e Diários)
       match /folders/{folderId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
         allow create: if isGM(campaignId) ||
           (isSignedIn() &&
             request.resource.data.ownerId == request.auth.uid &&
-            request.resource.data.scope in ['player', 'party']);
-        allow update, delete: if isGM(campaignId) ||
-          (isSignedIn() && (
-            resource.data.scope == 'party' ||
-            resource.data.ownerId == request.auth.uid
-          ));
+            (!('scope' in request.resource.data) || request.resource.data.scope in ['player', 'party']));
+        allow update: if isGM(campaignId) || (
+          isSignedIn() &&
+          (('scope' in resource.data && resource.data.scope == 'party') ||
+            ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
+            ('editableBy' in resource.data &&
+              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+          (!('ownerId' in request.resource.data) || !('ownerId' in resource.data) ||
+            request.resource.data.ownerId == resource.data.ownerId) &&
+          (!touchesSoftDeleteFields() || isResourceOwner())
+        );
+        // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
+        allow delete: if isGM(campaignId);
       }
 
       // Repositório Imutável de Mídia WebP (Mapas, Tokens, Avatares, Notas)
@@ -95,7 +141,17 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.sizeBytes < 800000;
         allow update, delete: if isGM(campaignId) ||
-          (isSignedIn() && resource.data.uploadedBy == request.auth.uid);
+          (isSignedIn() && 'uploadedBy' in resource.data && resource.data.uploadedBy == request.auth.uid);
+
+        match /chunks/{chunkIndex} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn();
+          allow update, delete: if isGM(campaignId) || (
+            isSignedIn() &&
+            'uploadedBy' in get(/databases/$(database)/documents/campaigns/$(campaignId)/media/$(mediaId)).data &&
+            get(/databases/$(database)/documents/campaigns/$(campaignId)/media/$(mediaId)).data.uploadedBy == request.auth.uid
+          );
+        }
       }
     }
   }

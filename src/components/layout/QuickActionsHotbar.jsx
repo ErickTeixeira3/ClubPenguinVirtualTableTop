@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
+import {
+  buildHotbarSlotFromRoll,
+  buildShortcutRollParams,
+  resolveDynamicRollEntry,
+  resolveHotbarSlot
+} from "../../services/rollService";
 
 export default function QuickActionsHotbar({
   character,
@@ -24,66 +30,89 @@ export default function QuickActionsHotbar({
     };
   }, [onClose]);
 
-  // Lista consolidada de todas as rolagens disponíveis na ficha
+  // Lista consolidada e resolvida dinamicamente de todas as rolagens disponíveis na ficha
   const allRolls = useMemo(() => {
     const rollGroups = Array.isArray(character?.rollGroups) ? character.rollGroups : [];
     const list = [];
     for (const grp of rollGroups) {
       for (const r of grp.rolls || []) {
-        list.push({ ...r, groupName: grp.name });
+        const resolved = resolveDynamicRollEntry(r, character) || r;
+        list.push({ ...resolved, groupName: grp.name });
       }
     }
     return list;
   }, [character]);
 
-  // Garante array de 9 posições
+  // Garante array de 9 posições já resolvidas dinamicamente contra a ficha atual
   const hotbarSlots = useMemo(() => {
     const raw = Array.isArray(character?.hotbar) ? character.hotbar : [];
     const slots = [];
     for (let i = 0; i < 9; i++) {
-      slots.push(raw[i] || null);
+      slots.push(resolveHotbarSlot(raw[i], character));
     }
     return slots;
   }, [character]);
 
   const handleRollSlot = (slotData) => {
     if (!slotData) return;
-    const latest = allRolls.find((r) => r.id === slotData.rollId) || slotData;
-    const costAmt = Number(latest.costAmount) || 0;
+    const latest = resolveHotbarSlot(slotData, character) || slotData;
+    // Fase 3.1 (V-03 / V-09b): mesma montagem da aba Rolagens (ROLL_KINDS.SAVE inexistente removido)
+    const params = buildShortcutRollParams(latest, character);
     onExecuteRoll({
-      title: latest.name,
-      categoryColor: latest.color || "#02529c",
-      primaryFormula: latest.hitFormula || "",
-      primaryLabel: latest.effectFormula ? "Acerto" : "Rolagem",
-      rollKind: "attack",
-      secondaryFormula: latest.effectFormula || "",
-      secondaryLabel: "Efeito / Dano",
-      character,
-      cost: costAmt > 0 ? { resource: latest.costResource || "mp", amount: costAmt } : null,
-      costResource: latest.costResource,
-      costAmount: latest.costAmount,
-      effectType: latest.effectType || (latest.effectFormula ? "damage" : null),
-      savingThrow: latest.savingThrow || null,
+      ...params,
       icon: latest.icon || slotData.icon || latest.name
     });
     onClose?.();
   };
 
+  const handleRollSlotRef = useRef(handleRollSlot);
+  useEffect(() => {
+    handleRollSlotRef.current = handleRollSlot;
+  });
+
+  // Atalhos numéricos 1–9 e Escape enquanto a barra rápida está aberta.
+  // Fase 3.1 (V-10): o listener roda na fase de CAPTURA do window e, quando consome a tecla,
+  // interrompe a propagação — os listeners de bolha do tabuleiro (régua 1/2/3, Esc da mira)
+  // não recebem a mesma tecla. Barra aberta tem prioridade sobre 1–9 e Esc.
+  useEffect(() => {
+    if (!character) return;
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) {
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (pickingSlotIndex !== null) {
+          setPickingSlotIndex(null);
+        } else {
+          onClose?.();
+        }
+        return;
+      }
+      if (pickingSlotIndex === null && /^[1-9]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        const slot = hotbarSlots[idx];
+        if (slot) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleRollSlotRef.current(slot);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [character, hotbarSlots, pickingSlotIndex, onClose]);
+
   const handleAssignRoll = (roll, slotIdx) => {
     if (!character || !onUpdateCharacter) return;
-    const next = [...hotbarSlots];
-    next[slotIdx] = {
-      rollId: roll.id,
-      name: roll.name,
-      color: roll.color || "#02529c",
-      icon: roll.icon || roll.name,
-      hitFormula: roll.hitFormula || "1d20",
-      effectFormula: roll.effectFormula || "",
-      costResource: roll.costResource || "mp",
-      costAmount: roll.costAmount || 0,
-      effectType: roll.effectType || "damage",
-      savingThrow: roll.savingThrow || null
-    };
+    const resolvedRoll = resolveDynamicRollEntry(roll, character) || roll;
+    const next = Array.isArray(character?.hotbar) ? [...character.hotbar] : [];
+    while (next.length < 9) next.push(null);
+    // Fase 3.1 (V-09b): montagem única do slot (mesma da ficha)
+    next[slotIdx] = buildHotbarSlotFromRoll(resolvedRoll);
     onUpdateCharacter(character.id, { hotbar: next });
     setPickingSlotIndex(null);
   };
@@ -91,7 +120,8 @@ export default function QuickActionsHotbar({
   const handleClearSlot = (slotIdx, e) => {
     e.stopPropagation();
     if (!character || !onUpdateCharacter) return;
-    const next = [...hotbarSlots];
+    const next = Array.isArray(character?.hotbar) ? [...character.hotbar] : [];
+    while (next.length < 9) next.push(null);
     next[slotIdx] = null;
     onUpdateCharacter(character.id, { hotbar: next });
   };
@@ -209,29 +239,76 @@ export default function QuickActionsHotbar({
                   type="button"
                   className="cp-hotbar-slot empty"
                   onClick={() => setPickingSlotIndex(idx)}
-                  title={`Slot ${idx + 1} (Clique para configurar)`}
+                  title={`Slot ${idx + 1} (Tecla ${idx + 1})`}
+                  style={{ position: "relative" }}
                 >
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: "3px",
+                      left: "5px",
+                      fontSize: "9px",
+                      fontWeight: 900,
+                      color: "#94a3b8",
+                      lineHeight: 1,
+                      pointerEvents: "none"
+                    }}
+                  >
+                    {idx + 1}
+                  </span>
                   <span style={{ fontSize: "16px", color: "#94a3b8", fontWeight: 900 }}>+</span>
                 </button>
               );
             }
 
-            const latest = allRolls.find((r) => r.id === slot.rollId) || slot;
-            const tooltip = `${latest.name}\n${latest.hitFormula || "1d20"}${latest.effectFormula ? ` | ${latest.effectFormula}` : ""}`;
+            const latest = slot;
+            const tooltip = `[${idx + 1}] ${latest.isLinkedMissing ? "⚠️ " : ""}${latest.name}\n${latest.hitFormula || "1d20"}${latest.effectFormula ? ` | ${latest.effectFormula}` : ""}`;
 
             return (
               <div
                 key={idx}
                 className="cp-hotbar-slot occupied"
-                onClick={() => handleRollSlot(slot)}
+                onClick={() => handleRollSlot(latest)}
                 title={tooltip}
                 style={{
+                  position: "relative",
                   borderColor: latest.color || "#008be3"
                 }}
               >
+                <span
+                  style={{
+                    position: "absolute",
+                    top: "2px",
+                    left: "4px",
+                    fontSize: "9px",
+                    fontWeight: 900,
+                    color: "#64748b",
+                    lineHeight: 1,
+                    pointerEvents: "none"
+                  }}
+                >
+                  {idx + 1}
+                </span>
+
                 <div style={{ width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                   {renderCpFlashIcon(latest.icon || latest.name, 30)}
                 </div>
+
+                {/* Fase 3.1 (V-09c): origem do atalho removida da ficha */}
+                {latest.isLinkedMissing && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      bottom: "1px",
+                      left: "3px",
+                      fontSize: "10px",
+                      lineHeight: 1,
+                      pointerEvents: "none"
+                    }}
+                  >
+                    ⚠️
+                  </span>
+                )}
 
                 {/* Botão sutil de desvincular no topo */}
                 <button

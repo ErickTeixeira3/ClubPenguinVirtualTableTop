@@ -1,25 +1,15 @@
 import { useMemo, useRef, useState } from "react";
-import { NOTE_TYPES, getNoteTypeMeta } from "../../engines/aliasEngine";
+import {
+  NOTE_TYPES,
+  getNoteTypeIcon,
+  getNoteTypeMeta
+} from "../../engines/aliasEngine";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { canUserDeleteJournalFolder } from "../../services/journalService";
+import ConfirmDeleteModal from "../ui/ConfirmDeleteModal";
+import { Z_LAYERS } from "../../constants/zLayers";
 import JournalGraphWebView from "./JournalGraphWebView";
 import NoteEditorModal from "./NoteEditorModal";
-
-function getNoteTypeIcon(noteType) {
-  switch (noteType) {
-    case "lore":
-      return "📜";
-    case "character":
-      return "🐧";
-    case "location":
-      return "📍";
-    case "event":
-      return "⚡";
-    case "quest":
-      return "🎯";
-    default:
-      return "📄";
-  }
-}
 
 function normalizeFolderPath(rawPath) {
   return String(rawPath || "")
@@ -224,6 +214,7 @@ function FolderTreeNode({
   onCancelNewFolder,
   onStartNewCardInFolder,
   onDeleteFolder,
+  canDeleteFolderNode,
   draggedNoteId,
   dragOverTargetKey,
   onDragOverTarget,
@@ -383,7 +374,7 @@ function FolderTreeNode({
             +
           </button>
 
-          {onDeleteFolder && (
+          {onDeleteFolder && canDeleteFolderNode?.(folderNode) !== false && (
             <button
               type="button"
               title={`Excluir pasta "${folderNode.name}"`}
@@ -509,6 +500,7 @@ function FolderTreeNode({
               onCancelNewFolder={onCancelNewFolder}
               onStartNewCardInFolder={onStartNewCardInFolder}
               onDeleteFolder={onDeleteFolder}
+              canDeleteFolderNode={canDeleteFolderNode}
               draggedNoteId={draggedNoteId}
               dragOverTargetKey={dragOverTargetKey}
               onDragOverTarget={onDragOverTarget}
@@ -573,6 +565,30 @@ export default function JournalWorkspace({
   // newFolderTarget: { typeKey: string, parentPath: string } | null
   const [newFolderTarget, setNewFolderTarget] = useState(null);
   const [newFolderNameInput, setNewFolderNameInput] = useState("");
+  const [folderToDelete, setFolderToDelete] = useState(null);
+
+  // Fase 3.1 (V-22 / D-3): o botão de excluir pasta só aparece para o dono da pasta ou o Mestre.
+  // Pastas implícitas (sem documento, derivadas do caminho dos cards) não têm dono.
+  const canDeleteFolderNode = (folderNode) => {
+    if (!folderNode?.id) return true;
+    const folderDoc = (accessibleFolders || []).find((f) => f.id === folderNode.id);
+    if (!folderDoc) return Boolean(isGM);
+    return canUserDeleteJournalFolder(folderDoc, { user: { uid: currentUserId }, isGM });
+  };
+
+  const handleRequestDeleteFolder = (folderId, fullPath, typeKey) => {
+    const segs = String(fullPath || "")
+      .split("/")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const displayName = segs[segs.length - 1] || "Pasta";
+    setFolderToDelete({
+      id: folderId,
+      fullPath,
+      typeKey,
+      name: displayName
+    });
+  };
 
   // Estado de Arrastar e Soltar (Drag & Drop Explorer)
   const [draggedNoteId, setDraggedNoteId] = useState(null);
@@ -771,7 +787,7 @@ export default function JournalWorkspace({
   const handleSaveNote = async (formData) => {
     const normalizedFolder = normalizeFolderPath(formData.folder);
     if (formData.id) {
-      await onUpdateNote(
+      return await onUpdateNote(
         formData.id,
         {
           title: formData.title,
@@ -801,7 +817,7 @@ export default function JournalWorkspace({
             : currentUserId
           : currentUserId;
 
-      await onCreateNote({
+      return await onCreateNote({
         scope: targetScope,
         ownerId: targetOwnerId,
         noteType: formData.noteType,
@@ -831,7 +847,7 @@ export default function JournalWorkspace({
         display: "flex",
         position: "relative",
         overflow: "hidden",
-        zIndex: 12
+        zIndex: Z_LAYERS.workspaceJournal
       }}
     >
       {/* Menu Esquerdo de Documentos e Pastas (Estilo vvd.world) */}
@@ -1252,7 +1268,8 @@ export default function JournalWorkspace({
                           setDefaultFolderForNewNote(fullPath);
                           setCreatingNote(true);
                         }}
-                        onDeleteFolder={onDeleteFolder}
+                        onDeleteFolder={handleRequestDeleteFolder}
+                        canDeleteFolderNode={canDeleteFolderNode}
                         draggedNoteId={draggedNoteId}
                         dragOverTargetKey={dragOverTargetKey}
                         onDragOverTarget={handleDragOverTarget}
@@ -1418,6 +1435,46 @@ export default function JournalWorkspace({
             setEditingNote(null);
             setDefaultTypeForNewNote(null);
             setDefaultFolderForNewNote("");
+          }}
+        />
+      )}
+
+      {/* Modal de Confirmação de Exclusão de Pasta do Diário */}
+      {folderToDelete && (
+        // Fase 4: ConfirmDeleteModal (era overlay inline com zIndex 2500, contexto local do workspace)
+        <ConfirmDeleteModal
+          title={`Excluir Pasta "${folderToDelete.name}"`}
+          question="Deseja excluir também os cards desta pasta?"
+          moveLabel="Não, mover cards para a pasta pai"
+          deleteLabel="Sim, excluir pasta e cards"
+          zIndex={Z_LAYERS.modalNested}
+          maxWidth="360px"
+          overlayBackground="rgba(0, 27, 58, 0.55)"
+          panelShadow="0 10px 30px rgba(0,0,0,0.4)"
+          onCancel={() => setFolderToDelete(null)}
+          onMove={async () => {
+            const target = folderToDelete;
+            setFolderToDelete(null);
+            if (onDeleteFolder) {
+              await onDeleteFolder(
+                target.id,
+                target.fullPath,
+                target.typeKey,
+                { deleteContents: false }
+              );
+            }
+          }}
+          onDelete={async () => {
+            const target = folderToDelete;
+            setFolderToDelete(null);
+            if (onDeleteFolder) {
+              await onDeleteFolder(
+                target.id,
+                target.fullPath,
+                target.typeKey,
+                { deleteContents: true }
+              );
+            }
           }}
         />
       )}

@@ -3,6 +3,10 @@ import {
   compressImageToWebP,
   formatBytes
 } from "../../engines/imageCompressor";
+import {
+  normalizeControlledByList,
+  toControlledByMap
+} from "../../engines/combatEngine";
 
 const CP_PENGUIN_COLORS = [
   "#3090f0",
@@ -22,6 +26,7 @@ export default function TokenModal({
   defaultLayer = "tokens",
   playersMap = {},
   isGM,
+  canDelete = isGM,
   onSave,
   onDelete,
   onClose
@@ -51,14 +56,20 @@ export default function TokenModal({
     initialToken?.hpCurrent ?? ""
   );
   const [hpMax, setHpMax] = useState(initialToken?.hpMax ?? "");
+  const [mpCurrent, setMpCurrent] = useState(
+    initialToken?.mpCurrent ?? ""
+  );
+  const [mpMax, setMpMax] = useState(initialToken?.mpMax ?? "");
   const [defense, setDefense] = useState(initialToken?.defense ?? 10);
   const [showBarsToPlayers, setShowBarsToPlayers] = useState(
     initialToken ? initialToken.showBarsToPlayers !== false : true
   );
-  const [controlledBy, setControlledBy] = useState(
-    Array.isArray(initialToken?.controlledBy)
-      ? initialToken.controlledBy
-      : ["ALL"]
+  const [controlledBy, setControlledBy] = useState(() =>
+    initialToken
+      ? normalizeControlledByList(initialToken.controlledBy)
+      : isGM
+        ? ["ALL"]
+        : []
   );
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -114,9 +125,11 @@ export default function TokenModal({
           ringColor,
           visibleToPlayers,
           showName,
-          controlledBy,
+          controlledBy: toControlledByMap(controlledBy),
           hpCurrent: hpCurrent !== "" ? Number(hpCurrent) : null,
           hpMax: hpMax !== "" ? Number(hpMax) : null,
+          mpCurrent: mpCurrent !== "" ? Number(mpCurrent) : null,
+          mpMax: mpMax !== "" ? Number(mpMax) : null,
           defense: defense !== "" ? Number(defense) : 10,
           showBarsToPlayers
         },
@@ -307,6 +320,47 @@ export default function TokenModal({
             />
           </div>
 
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "8px"
+            }}
+          >
+            <input
+              type="number"
+              className="cp-input"
+              placeholder="MP Atual"
+              value={mpCurrent}
+              onChange={(e) => setMpCurrent(e.target.value)}
+            />
+            <input
+              type="number"
+              className="cp-input"
+              placeholder="MP Máximo"
+              value={mpMax}
+              onChange={(e) => setMpMax(e.target.value)}
+            />
+          </div>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "13px",
+              fontWeight: 800,
+              cursor: "pointer"
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showName}
+              onChange={(e) => setShowName(e.target.checked)}
+            />
+            Exibir Nome
+          </label>
+
           {isGM && (
             <>
               <select
@@ -342,24 +396,6 @@ export default function TokenModal({
                     onChange={(e) => setVisibleToPlayers(e.target.checked)}
                   />
                   Visível aos Players
-                </label>
-
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    fontSize: "13px",
-                    fontWeight: 800,
-                    cursor: "pointer"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={showName}
-                    onChange={(e) => setShowName(e.target.checked)}
-                  />
-                  Exibir Nome
                 </label>
 
                 <label
@@ -453,7 +489,7 @@ export default function TokenModal({
           )}
 
           <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
-            {initialToken && isGM && onDelete && (
+            {initialToken && canDelete && onDelete && (
               <button
                 type="button"
                 className="cp-btn cp-btn-orange"

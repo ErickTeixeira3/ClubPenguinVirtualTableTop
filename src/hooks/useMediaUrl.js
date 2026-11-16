@@ -7,27 +7,28 @@ export function useMediaUrl(
   externalUrl = null,
   campaignId = DEFAULT_CAMPAIGN_ID
 ) {
+  const cacheKey = mediaId ? `${campaignId}:${mediaId}` : null;
   const [resolvedState, setResolvedState] = useState({
     key: null,
     url: null
   });
 
-  const syncCached = mediaId ? getCachedMediaSync(mediaId) : null;
+  const syncCached = mediaId ? getCachedMediaSync(mediaId, campaignId) : null;
 
   useEffect(() => {
     if (!mediaId) return;
-    if (getCachedMediaSync(mediaId)) return;
+    if (getCachedMediaSync(mediaId, campaignId)) return;
 
     let cancelled = false;
     getMediaDataUrl(mediaId, campaignId)
       .then((dataUrl) => {
         if (!cancelled) {
-          setResolvedState({ key: mediaId, url: dataUrl });
+          setResolvedState({ key: `${campaignId}:${mediaId}`, url: dataUrl });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setResolvedState({ key: mediaId, url: null });
+          setResolvedState({ key: `${campaignId}:${mediaId}`, url: null });
         }
       });
 
@@ -48,7 +49,7 @@ export function useMediaUrl(
     return { url: syncCached, loading: false };
   }
 
-  if (resolvedState.key === mediaId) {
+  if (resolvedState.key === cacheKey) {
     return { url: resolvedState.url, loading: false };
   }
 

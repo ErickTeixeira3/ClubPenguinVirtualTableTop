@@ -1,9 +1,11 @@
+import { normalizeText } from "../utils/stringUtils";
+
 export const NOTE_TYPES = [
-  { key: "quest", label: "Missões", singular: "Missão", color: "#fdd835" },
-  { key: "location", label: "Lugares", singular: "Lugar", color: "#1e88e5" },
-  { key: "character", label: "Personagens", singular: "Personagem", color: "#e53935" },
-  { key: "lore", label: "Lore", singular: "Lore", color: "#00bcd4" },
-  { key: "event", label: "Eventos", singular: "Evento", color: "#6a1b9a" }
+  { key: "quest", label: "Missões", singular: "Missão", color: "#fdd835", icon: "🎯" },
+  { key: "location", label: "Lugares", singular: "Lugar", color: "#1e88e5", icon: "📍" },
+  { key: "character", label: "Personagens", singular: "Personagem", color: "#e53935", icon: "🐧" },
+  { key: "lore", label: "Lore", singular: "Lore", color: "#00bcd4", icon: "📜" },
+  { key: "event", label: "Eventos", singular: "Evento", color: "#6a1b9a", icon: "⚡" }
 ];
 
 export function getNoteTypeMeta(noteType) {
@@ -12,18 +14,18 @@ export function getNoteTypeMeta(noteType) {
       key: "lore",
       label: "Lore",
       singular: "Lore",
-      color: "#3090f0"
+      color: "#3090f0",
+      icon: "📄"
     }
   );
 }
 
+export function getNoteTypeIcon(noteType) {
+  return getNoteTypeMeta(noteType).icon;
+}
+
 export function normalizeAliasText(str) {
-  return String(str || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeText(str);
 }
 
 export function buildNormalizedAliases(title, aliasesArray = []) {

@@ -1,17 +1,24 @@
 import { useMemo, useState } from "react";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import WindowModal from "../ui/WindowModal";
+import ConfirmDeleteModal from "../ui/ConfirmDeleteModal";
 
 function CharacterRow({
   character,
   campaignId,
   isGM,
   canEdit,
+  currentUserId = null,
   onlineUsers = {},
   onOpenSheet,
   onOpenSpawnModal,
   onDeleteCharacter,
   onOpenMoveModal
 }) {
+  // Fase 3.1 (V-16 / D-3): excluir, mover e arrastar a ficha são exclusivos do dono ou do Mestre
+  // (mesma regra de deleteCharacter/moveCharacterToFolder). `editableBy` concede apenas edição.
+  const canManage = Boolean(isGM || (currentUserId && character.ownerId === currentUserId));
+
   const { url: avatarUrl } = useMediaUrl(
     character.avatarMediaId || character.defaultToken?.mediaId,
     character.avatarExternalUrl || character.defaultToken?.externalUrl,
@@ -22,7 +29,8 @@ function CharacterRow({
 
   const handleOpenNewWindow = (e) => {
     e.stopPropagation();
-    const url = `${window.location.origin}${window.location.pathname}?sheetId=${encodeURIComponent(character.id)}`;
+    const cid = campaignId || character?.campaignId || "main-table";
+    const url = `${window.location.origin}${window.location.pathname}?campaignId=${encodeURIComponent(cid)}&sheetId=${encodeURIComponent(character.id)}`;
     window.open(
       url,
       `cpvtt_sheet_${character.id}`,
@@ -36,8 +44,9 @@ function CharacterRow({
 
   return (
     <div
-      draggable
+      draggable={canManage}
       onDragStart={(e) => {
+        if (!canManage) return;
         e.dataTransfer.setData("text/character-id", character.id);
       }}
       onClick={() => onOpenSheet(character.id)}
@@ -114,7 +123,7 @@ function CharacterRow({
         {/* Ações em hover */}
         {isHovered && (
           <>
-            {onOpenSpawnModal && (
+            {onOpenSpawnModal && (isGM || canEdit) && (
               <button
                 type="button"
                 className="cp-btn cp-btn-green"
@@ -136,7 +145,7 @@ function CharacterRow({
               ↗
             </button>
 
-            {onOpenMoveModal && (
+            {onOpenMoveModal && canManage && (
               <button
                 type="button"
                 className="cp-btn"
@@ -148,7 +157,7 @@ function CharacterRow({
               </button>
             )}
 
-            {(isGM || canEdit) && (
+            {canManage && (
               <button
                 type="button"
                 className="cp-btn cp-btn-orange"
@@ -186,6 +195,9 @@ function FolderItem({
   campaignId,
   isGM,
   canEdit,
+  canEditCharacter,
+  canEditFolder = null,
+  currentUserId,
   onlineUsers,
   collapsedMap,
   onToggleCollapse,
@@ -204,6 +216,9 @@ function FolderItem({
   const [tempName, setTempName] = useState(folder.name);
 
   const isCollapsed = Boolean(collapsedMap[folder.id]);
+  // Fase 3.1 (V-16 / D-3): arrastar e excluir a pasta são exclusivos do dono ou do Mestre
+  // (mesma regra de deleteFolder/moveFolder); criar dentro e renomear seguem canEdit.
+  const canManageFolder = Boolean(isGM || (currentUserId && folder.ownerId === currentUserId));
 
   const subfolders = useMemo(
     () => allFolders.filter((f) => f.parentId === folder.id),
@@ -244,8 +259,9 @@ function FolderItem({
     <div style={{ display: "flex", flexDirection: "column" }}>
       {/* Cabeçalho da Pasta */}
       <div
-        draggable
+        draggable={canManageFolder}
         onDragStart={(e) => {
+          if (!canManageFolder) return;
           e.dataTransfer.setData("text/folder-id", folder.id);
         }}
         onDragOver={(e) => {
@@ -315,44 +331,48 @@ function FolderItem({
         </div>
 
         {/* Ações da Pasta */}
-        <div style={{ display: "flex", alignItems: "center", gap: "4px" }} onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="cp-btn"
-            style={{ padding: "1px 5px", fontSize: "10px" }}
-            onClick={() => onStartCreateInFolder(folder, "character")}
-            title="Novo Personagem nesta Pasta"
-          >
-            +👤
-          </button>
-          <button
-            type="button"
-            className="cp-btn"
-            style={{ padding: "1px 5px", fontSize: "10px" }}
-            onClick={() => onStartCreateInFolder(folder, "folder")}
-            title="Nova Subpasta nesta Pasta"
-          >
-            +📁
-          </button>
-          <button
-            type="button"
-            className="cp-btn"
-            style={{ padding: "1px 5px", fontSize: "10px" }}
-            onClick={() => setEditingName((prev) => !prev)}
-            title="Renomear Pasta"
-          >
-            ✏️
-          </button>
-          <button
-            type="button"
-            className="cp-btn cp-btn-orange"
-            style={{ padding: "1px 5px", fontSize: "10px" }}
-            onClick={() => onDeleteFolder(folder.id)}
-            title="Excluir Pasta"
-          >
-            ✕
-          </button>
-        </div>
+        {(isGM || canEdit) && (
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }} onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="cp-btn"
+              style={{ padding: "1px 5px", fontSize: "10px" }}
+              onClick={() => onStartCreateInFolder(folder, "character")}
+              title="Novo Personagem nesta Pasta"
+            >
+              +👤
+            </button>
+            <button
+              type="button"
+              className="cp-btn"
+              style={{ padding: "1px 5px", fontSize: "10px" }}
+              onClick={() => onStartCreateInFolder(folder, "folder")}
+              title="Nova Subpasta nesta Pasta"
+            >
+              +📁
+            </button>
+            <button
+              type="button"
+              className="cp-btn"
+              style={{ padding: "1px 5px", fontSize: "10px" }}
+              onClick={() => setEditingName((prev) => !prev)}
+              title="Renomear Pasta"
+            >
+              ✏️
+            </button>
+            {canManageFolder && (
+              <button
+                type="button"
+                className="cp-btn cp-btn-orange"
+                style={{ padding: "1px 5px", fontSize: "10px" }}
+                onClick={() => onDeleteFolder(folder.id)}
+                title="Excluir Pasta"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Conteúdo Expandido com indentação clássica */}
@@ -373,7 +393,13 @@ function FolderItem({
               allCharacters={allCharacters}
               campaignId={campaignId}
               isGM={isGM}
-              canEdit={canEdit}
+              canEdit={
+                isGM ||
+                (canEditFolder ? canEditFolder(sub) : sub.ownerId === currentUserId)
+              }
+              canEditCharacter={canEditCharacter}
+              canEditFolder={canEditFolder}
+              currentUserId={currentUserId}
               onlineUsers={onlineUsers}
               collapsedMap={collapsedMap}
               onToggleCollapse={onToggleCollapse}
@@ -396,7 +422,13 @@ function FolderItem({
               character={char}
               campaignId={campaignId}
               isGM={isGM}
-              canEdit={canEdit}
+              canEdit={
+                isGM ||
+                (canEditCharacter
+                  ? canEditCharacter(char)
+                  : char.ownerId === currentUserId)
+              }
+              currentUserId={currentUserId}
               onlineUsers={onlineUsers}
               onOpenSheet={onOpenSheet}
               onOpenSpawnModal={onOpenSpawnModal}
@@ -428,6 +460,8 @@ export default function CharactersSidebarList({
   folders = [],
   campaignId,
   isGM,
+  canEditCharacter = null,
+  canEditFolder = null,
   currentUser,
   playersMap = {},
   gmId,
@@ -455,6 +489,14 @@ export default function CharactersSidebarList({
   // Diálogo para mover personagem
   const [movingChar, setMovingChar] = useState(null);
   const [targetMoveFolder, setTargetMoveFolder] = useState("");
+
+  // Diálogo para confirmar exclusão de pasta
+  const [folderToDelete, setFolderToDelete] = useState(null);
+
+  const handleRequestDeleteFolder = (folderId) => {
+    const found = folders.find((f) => f.id === folderId);
+    setFolderToDelete(found || { id: folderId, name: "Pasta" });
+  };
 
   // Diálogo para colocar token no mapa (definir se exibe nome e visibilidade)
   const [spawnModalChar, setSpawnModalChar] = useState(null);
@@ -642,6 +684,7 @@ export default function CharactersSidebarList({
                 campaignId={campaignId}
                 isGM={isGM}
                 canEdit={true}
+                currentUserId={currentUser?.uid}
                 onlineUsers={onlineUsers}
                 onOpenSheet={onOpenSheet}
                 onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
@@ -663,6 +706,9 @@ export default function CharactersSidebarList({
                 campaignId={campaignId}
                 isGM={isGM}
                 canEdit={true}
+                canEditCharacter={canEditCharacter}
+                canEditFolder={canEditFolder}
+                currentUserId={currentUser?.uid}
                 onlineUsers={onlineUsers}
                 collapsedMap={collapsedMap}
                 onToggleCollapse={toggleCollapse}
@@ -678,7 +724,7 @@ export default function CharactersSidebarList({
                   else handleOpenCreateFolder(fld, fld.ownerId);
                 }}
                 onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                onDeleteFolder={onDeleteFolder}
+                onDeleteFolder={handleRequestDeleteFolder}
                 onMoveCharacterToFolder={onMoveCharacterToFolder}
                 onMoveFolder={onMoveFolder}
               />
@@ -774,6 +820,7 @@ export default function CharactersSidebarList({
                       campaignId={campaignId}
                       isGM={isGM}
                       canEdit={true}
+                      currentUserId={currentUser?.uid}
                       onlineUsers={onlineUsers}
                       onOpenSheet={onOpenSheet}
                       onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
@@ -795,6 +842,9 @@ export default function CharactersSidebarList({
                       campaignId={campaignId}
                       isGM={isGM}
                       canEdit={true}
+                      canEditCharacter={canEditCharacter}
+                      canEditFolder={canEditFolder}
+                      currentUserId={currentUser?.uid}
                       onlineUsers={onlineUsers}
                       collapsedMap={collapsedMap}
                       onToggleCollapse={toggleCollapse}
@@ -810,7 +860,7 @@ export default function CharactersSidebarList({
                         else handleOpenCreateFolder(fld, player.uid);
                       }}
                       onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                      onDeleteFolder={onDeleteFolder}
+                      onDeleteFolder={handleRequestDeleteFolder}
                       onMoveCharacterToFolder={onMoveCharacterToFolder}
                       onMoveFolder={onMoveFolder}
                     />
@@ -835,20 +885,42 @@ export default function CharactersSidebarList({
         })}
 
         {/* =========================================================================
-            VISÃO DO JOGADOR: APENAS SEUS PRÓPRIOS PERSONAGENS E PASTAS
+            VISÃO DO JOGADOR: PERSONAGENS E PASTAS PRÓPRIOS OU COMPARTILHADOS
            ========================================================================= */}
         {!isGM && (
           <div>
-            {/* Personagens do jogador na raiz */}
+            {/* Personagens do jogador (ou compartilhados fora de pastas visíveis) */}
+            {/* Fase 6.2 (A11): como no commit 711451e, o jogador lista só as próprias fichas, agora
+                somadas às compartilhadas com ele individualmente (uid em visibleTo/editableBy).
+                Fichas apenas "Visíveis a Todos" (["ALL"]) não entram na lista. */}
             {characters
-              .filter((c) => c.ownerId === currentUser?.uid && !c.folderId)
+              .filter((c) => {
+                const uid = currentUser?.uid;
+                if (!uid) return false;
+                const sharedWithMe =
+                  (Array.isArray(c.visibleTo) && c.visibleTo.includes(uid)) ||
+                  (Array.isArray(c.editableBy) && c.editableBy.includes(uid));
+                return c.ownerId === uid || sharedWithMe;
+              })
+              .filter(
+                (c) =>
+                  !c.folderId ||
+                  !folders.some(
+                    (f) => f.id === c.folderId && f.ownerId === currentUser?.uid
+                  )
+              )
               .map((char) => (
                 <CharacterRow
                   key={char.id}
                   character={char}
                   campaignId={campaignId}
                   isGM={false}
-                  canEdit={true}
+                  canEdit={
+                    canEditCharacter
+                      ? canEditCharacter(char)
+                      : char.ownerId === currentUser?.uid
+                  }
+                  currentUserId={currentUser?.uid}
                   onlineUsers={onlineUsers}
                   onOpenSheet={onOpenSheet}
                   onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
@@ -871,7 +943,14 @@ export default function CharactersSidebarList({
                   allCharacters={characters}
                   campaignId={campaignId}
                   isGM={false}
-                  canEdit={true}
+                  canEdit={
+                    canEditFolder
+                      ? canEditFolder(folder)
+                      : folder.ownerId === currentUser?.uid
+                  }
+                  canEditCharacter={canEditCharacter}
+                  canEditFolder={canEditFolder}
+                  currentUserId={currentUser?.uid}
                   onlineUsers={onlineUsers}
                   collapsedMap={collapsedMap}
                   onToggleCollapse={toggleCollapse}
@@ -887,7 +966,7 @@ export default function CharactersSidebarList({
                     else handleOpenCreateFolder(fld, currentUser?.uid);
                   }}
                   onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                  onDeleteFolder={onDeleteFolder}
+                  onDeleteFolder={handleRequestDeleteFolder}
                   onMoveCharacterToFolder={onMoveCharacterToFolder}
                   onMoveFolder={onMoveFolder}
                 />
@@ -898,35 +977,7 @@ export default function CharactersSidebarList({
 
       {/* Modal de Criação (Personagem ou Pasta) */}
       {createModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 27, 58, 0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "16px"
-          }}
-          onClick={() => setCreateModal(null)}
-        >
-          <div
-            style={{
-              background: "#ffffff",
-              border: "3px solid #008be3",
-              borderRadius: "14px",
-              padding: "16px",
-              width: "100%",
-              maxWidth: "340px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px"
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
+        <WindowModal onClose={() => setCreateModal(null)} maxWidth="340px">
             <div style={{ fontSize: "15px", fontWeight: 800, color: "#003264" }}>
               {createModal.type === "character" ? "Novo Personagem" : "Nova Pasta"}
             </div>
@@ -1019,41 +1070,12 @@ export default function CharactersSidebarList({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </WindowModal>
       )}
 
       {/* Modal para mover personagem para outra pasta */}
       {movingChar && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 27, 58, 0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "16px"
-          }}
-          onClick={() => setMovingChar(null)}
-        >
-          <div
-            style={{
-              background: "#ffffff",
-              border: "3px solid #008be3",
-              borderRadius: "14px",
-              padding: "16px",
-              width: "100%",
-              maxWidth: "320px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px"
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
+        <WindowModal onClose={() => setMovingChar(null)} maxWidth="320px">
             <div style={{ fontSize: "14px", fontWeight: 800, color: "#003264" }}>
               Mover &quot;{movingChar.name}&quot;
             </div>
@@ -1091,41 +1113,12 @@ export default function CharactersSidebarList({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </WindowModal>
       )}
 
       {/* Modal para Colocar Token no Mapa com opção de exibir nome */}
       {spawnModalChar && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 27, 58, 0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "16px"
-          }}
-          onClick={() => setSpawnModalChar(null)}
-        >
-          <div
-            style={{
-              background: "#ffffff",
-              border: "3px solid #008be3",
-              borderRadius: "14px",
-              padding: "16px",
-              width: "100%",
-              maxWidth: "320px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px"
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
+        <WindowModal onClose={() => setSpawnModalChar(null)} maxWidth="320px">
             <div style={{ fontSize: "14px", fontWeight: 800, color: "#003264" }}>
               Colocar Token no Mapa
             </div>
@@ -1198,8 +1191,28 @@ export default function CharactersSidebarList({
                 + No Mapa
               </button>
             </div>
-          </div>
-        </div>
+        </WindowModal>
+      )}
+
+      {/* Modal de Confirmação de Exclusão de Pasta */}
+      {folderToDelete && (
+        <ConfirmDeleteModal
+          title={`Excluir Pasta "${folderToDelete.name}"`}
+          question="Deseja excluir também as fichas desta pasta?"
+          moveLabel="Não, mover fichas para a pasta pai"
+          deleteLabel="Sim, excluir pasta e fichas"
+          onCancel={() => setFolderToDelete(null)}
+          onMove={async () => {
+            const fid = folderToDelete.id;
+            setFolderToDelete(null);
+            await onDeleteFolder(fid, { deleteContents: false });
+          }}
+          onDelete={async () => {
+            const fid = folderToDelete.id;
+            setFolderToDelete(null);
+            await onDeleteFolder(fid, { deleteContents: true });
+          }}
+        />
       )}
     </div>
   );

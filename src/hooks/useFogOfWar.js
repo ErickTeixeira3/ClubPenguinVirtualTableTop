@@ -15,50 +15,71 @@ export function useFogOfWar(sceneId) {
 
   const [fogDataState, setFogDataState] = useState({
     sceneKey: null,
-    value: null
+    enabled: false,
+    areas: {}
   });
 
   useEffect(() => {
     if (!user || !campaignId || !sceneId) return;
 
     const currentSceneKey = `${campaignId}:${sceneId}`;
-    const fogRef = ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}`);
+    const enabledRef = ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}/enabled`);
+    const areasRef = ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}/areas`);
 
-    const unsubscribe = onValue(
-      fogRef,
+    const unsubEnabled = onValue(
+      enabledRef,
       (snapshot) => {
-        setFogDataState({
+        setFogDataState((prev) => ({
           sceneKey: currentSceneKey,
-          value: snapshot.val() || null
-        });
+          enabled: Boolean(snapshot.val()),
+          areas: prev.sceneKey === currentSceneKey ? prev.areas : {}
+        }));
       },
       () => {
-        setFogDataState({
+        setFogDataState((prev) => ({
           sceneKey: currentSceneKey,
-          value: null
-        });
+          enabled: false,
+          areas: prev.sceneKey === currentSceneKey ? prev.areas : {}
+        }));
       }
     );
 
-    return () => unsubscribe();
+    const unsubAreas = onValue(
+      areasRef,
+      (snapshot) => {
+        setFogDataState((prev) => ({
+          sceneKey: currentSceneKey,
+          enabled: prev.sceneKey === currentSceneKey ? prev.enabled : false,
+          areas: snapshot.val() || {}
+        }));
+      },
+      () => {
+        setFogDataState((prev) => ({
+          sceneKey: currentSceneKey,
+          enabled: prev.sceneKey === currentSceneKey ? prev.enabled : false,
+          areas: {}
+        }));
+      }
+    );
+
+    return () => {
+      unsubEnabled();
+      unsubAreas();
+    };
   }, [user, campaignId, sceneId]);
 
   const currentSceneKey =
     user && campaignId && sceneId ? `${campaignId}:${sceneId}` : null;
 
   const fogState = useMemo(() => {
-    const raw =
-      currentSceneKey && fogDataState.sceneKey === currentSceneKey
-        ? fogDataState.value
-        : null;
-
-    const areasMap = raw?.areas || {};
+    const isCurrent = currentSceneKey && fogDataState.sceneKey === currentSceneKey;
+    const areasMap = isCurrent ? fogDataState.areas || {} : {};
     const areasList = Object.values(areasMap).sort(
       (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
     );
 
     return {
-      enabled: Boolean(raw?.enabled),
+      enabled: isCurrent ? Boolean(fogDataState.enabled) : false,
       areas: areasList
     };
   }, [fogDataState, currentSceneKey]);
@@ -67,6 +88,8 @@ export function useFogOfWar(sceneId) {
     if (!isRealGM || !campaignId || !sceneId) return;
     const fogRef = ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}`);
     await rtdbUpdate(fogRef, {
+      campaignId,
+      sceneId,
       enabled: Boolean(nextEnabled),
       updatedAt: Date.now()
     });
@@ -85,6 +108,8 @@ export function useFogOfWar(sceneId) {
 
     await rtdbSet(areaRef, {
       id: areaId,
+      campaignId,
+      sceneId,
       op,
       x: Math.round(x),
       y: Math.round(y),
@@ -99,6 +124,8 @@ export function useFogOfWar(sceneId) {
     if (!isRealGM || !campaignId || !sceneId) return;
     const fogRef = ref(rtdb, `vtt_realtime/${campaignId}/fog/${sceneId}`);
     await rtdbUpdate(fogRef, {
+      campaignId,
+      sceneId,
       enabled: true,
       areas: null,
       updatedAt: Date.now()

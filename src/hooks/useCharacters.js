@@ -2,16 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
-  onSnapshot,
   setDoc,
   updateDoc,
-  deleteDoc,
   serverTimestamp
 } from "firebase/firestore";
-import { db } from "../services/firebase";
-import { uploadCompressedMedia, deleteMedia } from "../services/mediaService";
+import {
+  ref,
+  get as rtdbGet,
+  update as rtdbUpdate
+} from "firebase/database";
+import { applyOwnerAndGmAudience, subscribeVisibleCollection } from "../services/visibilityService";
+import { db, rtdb } from "../services/firebase";
+import { uploadCompressedMedia } from "../services/mediaService";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
+import { useFolders } from "./useFolders";
 
 export const DEFAULT_ATTRIBUTES = [
   { key: "forca", label: "Força", value: 2 },
@@ -31,61 +36,61 @@ export const DEFAULT_SKILLS = [
 
 export function useCharacters() {
   const { user } = useAuth();
-  const { campaignId, campaign, isGM } = useCampaign();
+  const { campaignId, campaign, isRealGM, isGM } = useCampaign();
   const [rawItems, setRawItems] = useState([]);
+  // Fase 5: pastas dedicadas via useFolders (listener unificado da subcoleção folders)
+  const { folders: dedicatedFolders, setFolders: setDedicatedFolders } = useFolders("character");
+
+  // Fase 3.1 (V-13): listeners dependem só de uid/campaignId/prontidão da campanha/papel,
+  // não do objeto `campaign` (recriado a cada snapshot da campanha ou resolução de avatar).
+  const listenerUid = user?.uid || null;
+  const campaignReady = Boolean(campaign);
 
   useEffect(() => {
-    if (!user || !campaignId) return;
+    if (!listenerUid || !campaignId || !campaignReady) return;
 
     const charCol = collection(db, "campaigns", campaignId, "characters");
-    const unsubscribe = onSnapshot(
-      charCol,
-      (snapshot) => {
-        const list = snapshot.docs.map((d) => {
-          const data = d.data();
-          if (Array.isArray(data.inventory)) {
-            data.inventory = data.inventory.map((it) => {
-              const nameLower = (it.name || "").toLowerCase();
-              const idLower = (it.id || "").toLowerCase();
-              const iconLower = (it.icon || "").toLowerCase();
-              if (
-                nameLower.includes("peixe") ||
-                nameLower.includes("fish") ||
-                nameLower.includes("fluffy") ||
-                idLower.includes("peixe")
-              ) {
-                if (!iconLower || iconLower === "meat" || iconLower === "carne" || iconLower === "fish") {
-                  return { ...it, icon: "fluffy_fish" };
-                }
-              }
-              return it;
-            });
-          }
-          return {
+    // Fase 6.2 (A5/A7/A8/A9: o dono sempre recebe as próprias fichas).
+    const unsubscribeChars = subscribeVisibleCollection({
+      colRef: charCol,
+      isRealGM,
+      uid: listenerUid,
+      includeOwned: true,
+      onNext: (snapshot) => {
+        const list = snapshot.docs
+          .map((d) => ({
             id: d.id,
-            ...data
-          };
-        });
+            ...d.data()
+          }))
+          .filter((item) => !item.isDeleted && !item.migratedToFoldersCollection);
         list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setRawItems(list);
       },
-      (err) => {
-        console.error("Erro ao carregar fichas e pastas:", err);
+      onError: (err) => {
+        console.error("Erro ao carregar fichas:", err);
       }
-    );
+    });
 
-    return () => unsubscribe();
-  }, [user, campaignId]);
+    return () => unsubscribeChars();
+  }, [listenerUid, campaignId, campaignReady, isRealGM]);
 
   const rawCharacters = useMemo(
-    () => rawItems.filter((i) => !i.isFolder),
+    () => rawItems.filter((i) => !i.isFolder && !i.isDeleted),
     [rawItems]
   );
 
-  const rawFolders = useMemo(
-    () => rawItems.filter((i) => Boolean(i.isFolder)),
-    [rawItems]
-  );
+  const rawFolders = useMemo(() => {
+    const map = new Map();
+    rawItems
+      .filter((i) => Boolean(i.isFolder) && !i.isDeleted && !i.migratedToFoldersCollection)
+      .forEach((f) => map.set(f.id, f));
+    dedicatedFolders
+      .filter((f) => !f.isDeleted)
+      .forEach((f) => map.set(f.id, f));
+    const list = Array.from(map.values());
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return list;
+  }, [rawItems, dedicatedFolders]);
 
   const characters = useMemo(() => {
     if (isGM) return rawCharacters;
@@ -125,6 +130,179 @@ export function useCharacters() {
     return editList.includes("ALL") || editList.includes(user.uid);
   };
 
+  const canEditFolder = (folder) => {
+    if (!user || !folder) return false;
+    if (isGM) return true;
+    if (folder.ownerId === user.uid) return true;
+    const editList = Array.isArray(folder.editableBy)
+      ? folder.editableBy
+      : [];
+    return editList.includes("ALL") || editList.includes(user.uid);
+  };
+
+  // Fase 3.1 (D-3): excluir (Soft Delete) é exclusivo do dono ou do Mestre; `editableBy` só edita.
+  const canDeleteCharacter = (character) =>
+    Boolean(user && character && (isGM || character.ownerId === user.uid));
+
+  const canDeleteFolder = (folder) =>
+    Boolean(user && folder && (isGM || folder.ownerId === user.uid));
+
+  const syncCharacterToActiveSceneTokens = async (targetChar, updates = {}) => {
+    const activeSceneId = campaign?.activeSceneId;
+    if (!user || !campaignId || !activeSceneId || !targetChar) return;
+
+    const merged = { ...targetChar, ...updates };
+    const isGmTemplate = Boolean(
+      merged.type === "npc" ||
+        (campaign?.gmId && merged.ownerId === campaign.gmId)
+    );
+    if (isGmTemplate) return;
+
+    const tokenUpdates = {};
+
+    if ("name" in updates) {
+      tokenUpdates.name = updates.name?.trim() || "Token";
+    }
+    if ("defense" in updates) {
+      tokenUpdates.defense = Number(updates.defense ?? 10);
+    }
+    if ("cardColor" in updates) {
+      tokenUpdates.ringColor = updates.cardColor || "#3090f0";
+    }
+
+    for (const [resKey, curField, maxField] of [
+      ["hp", "hpCurrent", "hpMax"],
+      ["mp", "mpCurrent", "mpMax"]
+    ]) {
+      const resObjUpdate =
+        updates[`resources.${resKey}`] || updates.resources?.[resKey];
+      const dotCurrent = updates[`resources.${resKey}.current`];
+      const dotMax = updates[`resources.${resKey}.max`];
+
+      if (dotCurrent !== undefined) {
+        tokenUpdates[curField] = Number(dotCurrent ?? 0);
+      } else if (
+        resObjUpdate &&
+        typeof resObjUpdate === "object" &&
+        "current" in resObjUpdate
+      ) {
+        tokenUpdates[curField] = Number(resObjUpdate.current ?? 0);
+      }
+
+      if (dotMax !== undefined) {
+        tokenUpdates[maxField] = Number(dotMax ?? 0);
+      } else if (
+        resObjUpdate &&
+        typeof resObjUpdate === "object" &&
+        "max" in resObjUpdate
+      ) {
+        tokenUpdates[maxField] = Number(resObjUpdate.max ?? 0);
+      }
+    }
+
+    const touchedVisualToken =
+      "defaultToken" in updates ||
+      "avatarMediaId" in updates ||
+      "avatarExternalUrl" in updates ||
+      "defaultToken.showName" in updates ||
+      "defaultToken.sizeInCells" in updates ||
+      "defaultToken.mediaId" in updates ||
+      "defaultToken.externalUrl" in updates;
+
+    if (touchedVisualToken) {
+      const mergedDefaultToken = {
+        ...(targetChar.defaultToken || {}),
+        ...(updates.defaultToken && typeof updates.defaultToken === "object"
+          ? updates.defaultToken
+          : {})
+      };
+      if ("defaultToken.showName" in updates) {
+        mergedDefaultToken.showName = updates["defaultToken.showName"];
+      }
+      if ("defaultToken.sizeInCells" in updates) {
+        mergedDefaultToken.sizeInCells = updates["defaultToken.sizeInCells"];
+      }
+      if ("defaultToken.mediaId" in updates) {
+        mergedDefaultToken.mediaId = updates["defaultToken.mediaId"];
+      }
+      if ("defaultToken.externalUrl" in updates) {
+        mergedDefaultToken.externalUrl = updates["defaultToken.externalUrl"];
+      }
+
+      if (
+        "defaultToken" in updates ||
+        "avatarMediaId" in updates ||
+        "avatarExternalUrl" in updates ||
+        "defaultToken.mediaId" in updates ||
+        "defaultToken.externalUrl" in updates
+      ) {
+        const hasExplicitTokenMedia =
+          Boolean(mergedDefaultToken.mediaId) ||
+          Boolean(mergedDefaultToken.externalUrl);
+        if (hasExplicitTokenMedia) {
+          tokenUpdates.mediaId = mergedDefaultToken.mediaId || null;
+          tokenUpdates.externalUrl = mergedDefaultToken.mediaId
+            ? null
+            : mergedDefaultToken.externalUrl || null;
+        } else {
+          tokenUpdates.mediaId = merged.avatarMediaId || null;
+          tokenUpdates.externalUrl = merged.avatarMediaId
+            ? null
+            : merged.avatarExternalUrl || null;
+        }
+      }
+
+      if ("showName" in mergedDefaultToken) {
+        tokenUpdates.showName = mergedDefaultToken.showName !== false;
+      }
+      if ("sizeInCells" in mergedDefaultToken && mergedDefaultToken.sizeInCells) {
+        tokenUpdates.sizeInCells = Math.max(
+          1,
+          Math.min(8, Number(mergedDefaultToken.sizeInCells) || 1)
+        );
+      }
+    }
+
+    if (Object.keys(tokenUpdates).length === 0) return;
+
+    tokenUpdates.updatedBy = user.uid;
+    tokenUpdates.updatedAt = Date.now();
+
+    try {
+      const sceneTokensRef = ref(
+        rtdb,
+        `vtt_realtime/${campaignId}/tokens/${activeSceneId}`
+      );
+      const snap = await rtdbGet(sceneTokensRef);
+      if (!snap.exists()) return;
+
+      const tokensMap = snap.val() || {};
+      const matchingIds = Object.entries(tokensMap)
+        .filter(([, tok]) => tok && tok.characterId === targetChar.id && !tok.isGmToken)
+        .map(([tokId]) => tokId);
+
+      if (matchingIds.length === 0) return;
+
+      await Promise.all(
+        matchingIds.map((tokId) =>
+          rtdbUpdate(
+            ref(
+              rtdb,
+              `vtt_realtime/${campaignId}/tokens/${activeSceneId}/${tokId}`
+            ),
+            tokenUpdates
+          )
+        )
+      );
+    } catch (err) {
+      console.warn("Erro ao sincronizar ficha do PC com tokens RTDB:", err);
+    }
+  };
+
+  // Fase 6.2 (A7/A8): gravações do Mestre que mexem em dono ou permissões mantêm Mestre e dono
+  const withOwnerAndGmAudience = (updates, target) =>
+    applyOwnerAndGmAudience(updates, target, campaign?.gmId || user?.uid);
+
   const createCharacter = async ({
     name,
     type = "pc", // 'pc' | 'npc'
@@ -136,7 +314,8 @@ export function useCharacters() {
     if (!user || !campaignId) return null;
 
     const gmUid = campaign?.gmId || user.uid;
-    const effectiveOwnerId = ownerId || user.uid;
+    const effectiveOwnerId = isGM && ownerId ? ownerId : user.uid;
+    const effectiveType = isGM ? type : "pc";
     const charId = `char_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const charRef = doc(db, "campaigns", campaignId, "characters", charId);
 
@@ -149,13 +328,15 @@ export function useCharacters() {
 
     const newCharacter = {
       id: charId,
+      campaignId,
       name: name?.trim() || "Novo Pinguim",
-      type,
+      type: effectiveType,
       ownerId: effectiveOwnerId,
       folderId: folderId || null,
       cardColor: cardColor || "#02529c",
       visibleTo,
       editableBy,
+      isDeleted: false,
       level: 1,
       defense: 12,
       avatarMediaId: null,
@@ -212,6 +393,9 @@ export function useCharacters() {
               hitFormula: "1d20 + @forca + @luta",
               effectFormula: "1d8 + @forca",
               effectType: "damage",
+              rollKind: "attack",
+              sourceType: "custom",
+              sourceId: null,
               costResource: "mp",
               costAmount: 0
             }
@@ -227,6 +411,9 @@ export function useCharacters() {
               color: "#fdd835",
               hitFormula: "1d20 + @agilidade",
               effectFormula: "",
+              rollKind: "check",
+              sourceType: "custom",
+              sourceId: null,
               costResource: "mp",
               costAmount: 0
             }
@@ -255,9 +442,9 @@ export function useCharacters() {
   const createFolder = async ({ name, parentId = null, ownerId = null }) => {
     if (!user || !campaignId || !name?.trim()) return null;
     const gmUid = campaign?.gmId || user.uid;
-    const effectiveOwnerId = ownerId || (isGM ? gmUid : user.uid);
+    const effectiveOwnerId = isGM ? ownerId || gmUid : user.uid;
     const folderId = `folder_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const folderRef = doc(db, "campaigns", campaignId, "characters", folderId);
+    const folderRef = doc(db, "campaigns", campaignId, "folders", folderId);
 
     const visibleTo = Array.from(
       new Set([gmUid, effectiveOwnerId, "ALL"].filter(Boolean))
@@ -266,18 +453,23 @@ export function useCharacters() {
 
     const newFolder = {
       id: folderId,
+      campaignId,
+      folderType: "character",
       isFolder: true,
+      // Fase 6.1 (A4): a regra publicada de folders exige scope "player"|"party" para quem não é Mestre
+      scope: "player",
       name: name.trim(),
       parentId: parentId || null,
       ownerId: effectiveOwnerId,
       visibleTo,
       editableBy,
+      isDeleted: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
 
     await setDoc(folderRef, newFolder);
-    setRawItems((prev) =>
+    setDedicatedFolders((prev) =>
       prev.some((item) => item.id === folderId) ? prev : [...prev, newFolder]
     );
     return folderId;
@@ -285,18 +477,42 @@ export function useCharacters() {
 
   const updateFolder = async (folderId, updates) => {
     if (!user || !campaignId || !folderId) return;
-    const folderRef = doc(db, "campaigns", campaignId, "characters", folderId);
+    const folderTarget = rawFolders.find((f) => f.id === folderId);
+    if (!folderTarget || !canEditFolder(folderTarget)) return;
+
+    const sanitizedUpdates = isGM ? withOwnerAndGmAudience(updates, folderTarget) : { ...updates };
+    if (!isGM) {
+      delete sanitizedUpdates.ownerId;
+      delete sanitizedUpdates.visibleTo;
+      delete sanitizedUpdates.editableBy;
+      delete sanitizedUpdates.isDeleted;
+      delete sanitizedUpdates.isFolder;
+      delete sanitizedUpdates.folderType;
+      delete sanitizedUpdates.campaignId;
+    }
+
+    const isLegacy = rawItems.some((i) => i.id === folderId && i.isFolder);
+    const folderRef = doc(
+      db,
+      "campaigns",
+      campaignId,
+      isLegacy ? "characters" : "folders",
+      folderId
+    );
     await updateDoc(folderRef, {
-      ...updates,
+      ...sanitizedUpdates,
+      campaignId,
       updatedAt: serverTimestamp()
     });
   };
 
-  const deleteFolder = async (folderId) => {
+  const deleteFolder = async (folderId, options = { deleteContents: false }) => {
     if (!user || !campaignId || !folderId) return;
     const folderTarget = rawFolders.find((f) => f.id === folderId);
     if (!folderTarget) return;
-    if (!isGM && folderTarget.ownerId !== user.uid) return;
+    if (!canDeleteFolder(folderTarget)) return;
+
+    const deleteContents = Boolean(options?.deleteContents);
 
     // Localiza todas as subpastas recursivamente
     const collectFolderIds = (fid) => {
@@ -309,22 +525,58 @@ export function useCharacters() {
     };
     const allFolderIds = collectFolderIds(folderId);
 
-    // Mover personagens contidos para o pai da pasta deletada ou raiz
     const parentDestination = folderTarget.parentId || null;
-    const affectedChars = rawCharacters.filter((c) =>
-      allFolderIds.includes(c.folderId)
+    const affectedChars = rawCharacters.filter(
+      (c) => allFolderIds.includes(c.folderId) && canEditCharacter(c)
     );
+
     for (const c of affectedChars) {
       const cRef = doc(db, "campaigns", campaignId, "characters", c.id);
-      await updateDoc(cRef, {
-        folderId: parentDestination,
-        updatedAt: serverTimestamp()
-      });
+      if (deleteContents) {
+        // Fase 3.1 (D-3): fichas de outros donos (acesso via editableBy) não são ocultadas;
+        // permanecem e são movidas para a pasta pai, como na opção "mover".
+        if (!canDeleteCharacter(c)) {
+          await updateDoc(cRef, {
+            folderId: parentDestination,
+            updatedAt: serverTimestamp()
+          });
+          continue;
+        }
+        await updateDoc(cRef, {
+          campaignId,
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.uid
+        });
+      } else {
+        await updateDoc(cRef, {
+          folderId: parentDestination,
+          updatedAt: serverTimestamp()
+        });
+      }
     }
 
-    // Deleta os documentos de pastas
+    // Soft Delete nos documentos de pastas (tanto na coleção dedicada quanto legada)
     for (const fid of allFolderIds) {
-      await deleteDoc(doc(db, "campaigns", campaignId, "characters", fid));
+      const folderDoc = rawFolders.find((f) => f.id === fid);
+      if (folderDoc && !canDeleteFolder(folderDoc)) continue;
+
+      const inDedicated = dedicatedFolders.some((f) => f.id === fid);
+      const inLegacy = rawItems.some((i) => i.id === fid && i.isFolder);
+      if (inDedicated) {
+        await updateDoc(doc(db, "campaigns", campaignId, "folders", fid), {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.uid
+        }).catch(() => {});
+      }
+      if (inLegacy) {
+        await updateDoc(doc(db, "campaigns", campaignId, "characters", fid), {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.uid
+        }).catch(() => {});
+      }
     }
   };
 
@@ -340,7 +592,7 @@ export function useCharacters() {
     if (targetOwnerId && isGM) {
       updates.ownerId = targetOwnerId;
     }
-    await updateCharacter(charId, updates);
+    await updateCharacter(charId, updates, { skipTokenSync: true });
   };
 
   const moveFolder = async (folderId, targetParentId, targetOwnerId = null) => {
@@ -359,29 +611,65 @@ export function useCharacters() {
     await updateFolder(folderId, updates);
   };
 
-  const updateCharacter = async (charId, updates) => {
+  const updateCharacter = async (charId, updates, options = {}) => {
     if (!user || !campaignId || !charId) return;
+    const target = rawCharacters.find((c) => c.id === charId);
+    if (!target || !canEditCharacter(target)) return;
+
+    const sanitizedUpdates = isGM ? withOwnerAndGmAudience(updates, target) : { ...updates };
+    if (!isGM) {
+      delete sanitizedUpdates.ownerId;
+      delete sanitizedUpdates.visibleTo;
+      delete sanitizedUpdates.editableBy;
+      delete sanitizedUpdates.isDeleted;
+      delete sanitizedUpdates.campaignId;
+      delete sanitizedUpdates.type;
+    }
+
     const charRef = doc(db, "campaigns", campaignId, "characters", charId);
     await updateDoc(charRef, {
-      ...updates,
+      ...sanitizedUpdates,
       updatedAt: serverTimestamp()
     });
+
+    if (!options?.skipTokenSync) {
+      await syncCharacterToActiveSceneTokens(target, sanitizedUpdates);
+    }
   };
 
-  const updateCharacterResource = async (charId, resourceKey, nextCurrent) => {
+  const updateCharacterResource = async (
+    charId,
+    resourceKey,
+    nextCurrent,
+    options = {}
+  ) => {
     const target = rawCharacters.find((c) => c.id === charId);
-    if (!target) return;
-    const existingRes = target.resources?.[resourceKey] || {
-      label: resourceKey.toUpperCase(),
-      current: 0,
-      max: 10
-    };
-    await updateCharacter(charId, {
-      [`resources.${resourceKey}`]: {
-        ...existingRes,
-        current: Math.max(0, Number(nextCurrent) || 0)
-      }
-    });
+    if (!target || !canEditCharacter(target)) return;
+    const cleanCurrent = Math.max(0, Number(nextCurrent) || 0);
+    if (!target.resources?.[resourceKey]) {
+      await updateCharacter(
+        charId,
+        {
+          [`resources.${resourceKey}`]: {
+            label:
+              resourceKey === "mp"
+                ? "Energia"
+                : resourceKey === "hp"
+                  ? "Vida"
+                  : resourceKey.toUpperCase(),
+            current: cleanCurrent,
+            max: 10
+          }
+        },
+        options
+      );
+      return;
+    }
+    await updateCharacter(
+      charId,
+      { [`resources.${resourceKey}.current`]: cleanCurrent },
+      options
+    );
   };
 
   const uploadCharacterImage = async (
@@ -391,7 +679,7 @@ export function useCharacters() {
   ) => {
     if (!user || !campaignId || !charId || !file) return;
     const target = rawCharacters.find((c) => c.id === charId);
-    if (!target) return;
+    if (!target || !canEditCharacter(target)) return;
 
     const category = targetField === "token" ? "token" : "avatar";
     const uploaded = await uploadCompressedMedia({
@@ -402,10 +690,6 @@ export function useCharacters() {
     });
 
     if (targetField === "token") {
-      const oldMediaId = target.defaultToken?.mediaId;
-      if (oldMediaId) {
-        await deleteMedia(oldMediaId, campaignId);
-      }
       await updateCharacter(charId, {
         defaultToken: {
           ...(target.defaultToken || {}),
@@ -414,10 +698,6 @@ export function useCharacters() {
         }
       });
     } else {
-      const oldMediaId = target.avatarMediaId;
-      if (oldMediaId) {
-        await deleteMedia(oldMediaId, campaignId);
-      }
       await updateCharacter(charId, {
         avatarMediaId: uploaded.mediaId,
         avatarExternalUrl: null
@@ -429,15 +709,14 @@ export function useCharacters() {
     if (!user || !campaignId || !charId) return;
     const target = rawCharacters.find((c) => c.id === charId);
     if (!target) return;
-    if (!isGM && target.ownerId !== user.uid) return;
+    if (!canDeleteCharacter(target)) return;
 
-    if (target.avatarMediaId) {
-      await deleteMedia(target.avatarMediaId, campaignId);
-    }
-    if (target.defaultToken?.mediaId) {
-      await deleteMedia(target.defaultToken.mediaId, campaignId);
-    }
-    await deleteDoc(doc(db, "campaigns", campaignId, "characters", charId));
+    await updateDoc(doc(db, "campaigns", campaignId, "characters", charId), {
+      campaignId,
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: user.uid
+    });
   };
 
   return {
@@ -445,6 +724,9 @@ export function useCharacters() {
     allCharacters: rawCharacters,
     folders,
     canEditCharacter,
+    canEditFolder,
+    canDeleteCharacter,
+    canDeleteFolder,
     createCharacter,
     updateCharacter,
     updateCharacterResource,

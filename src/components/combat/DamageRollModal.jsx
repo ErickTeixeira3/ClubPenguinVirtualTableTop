@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { doubleDiceInFormula, evaluateDcFormula } from "../../engines/combatEngine";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
+import WindowModal from "../ui/WindowModal";
+import { Z_LAYERS } from "../../constants/zLayers";
 
 export default function DamageRollModal({
   open,
@@ -151,16 +153,13 @@ export default function DamageRollModal({
   };
 
   return (
-    <div
-      className="cp-modal-overlay"
-      onClick={onClose}
-      style={{ zIndex: 1400 }}
+    // Fase 4: WindowModal (variante "cp") na camada --z-modal-combat (era zIndex 1400)
+    <WindowModal
+      variant="cp"
+      onClose={onClose}
+      zIndex={Z_LAYERS.modalCombat}
+      maxWidth="440px"
     >
-      <div
-        className="cp-window"
-        style={{ width: "100%", maxWidth: "440px" }}
-        onClick={(e) => e.stopPropagation()}
-      >
         {/* Header */}
         <div
           style={{
@@ -574,7 +573,6 @@ export default function DamageRollModal({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </WindowModal>
   );
 }

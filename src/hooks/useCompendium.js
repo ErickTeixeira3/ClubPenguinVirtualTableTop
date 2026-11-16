@@ -2,14 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
-  onSnapshot,
-  query,
-  where,
   setDoc,
   updateDoc,
-  deleteDoc,
   serverTimestamp
 } from "firebase/firestore";
+import { isReleasedToPlayers, subscribeVisibleCollection } from "../services/visibilityService";
 import { db } from "../services/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
@@ -19,34 +16,45 @@ export function useCompendium() {
   const { campaignId, campaign, isRealGM, isGM } = useCampaign();
   const [rawEntries, setRawEntries] = useState([]);
 
+  // Fase 3.1 (V-13): listeners dependem só de uid/campaignId/prontidão da campanha/papel,
+  // não do objeto `campaign` (recriado a cada snapshot da campanha ou resolução de avatar).
+  const listenerUid = user?.uid || null;
+  const campaignReady = Boolean(campaign);
+
   useEffect(() => {
-    if (!user || !campaignId || !campaign) return;
+    if (!listenerUid || !campaignId || !campaignReady) return;
 
     const compCol = collection(db, "campaigns", campaignId, "compendium");
-    const compQuery = isRealGM
-      ? query(compCol)
-      : query(compCol, where("visibleToPlayers", "==", true));
-
-    const unsubscribe = onSnapshot(
-      compQuery,
-      (snapshot) => {
-        const list = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data()
-        }));
+    // Fase 6.2 (A5/A6: itens liberados por visibleToPlayers chegam mesmo com visibleTo defasado).
+    const unsubscribe = subscribeVisibleCollection({
+      colRef: compCol,
+      isRealGM,
+      uid: listenerUid,
+      includePublicFlag: true,
+      onNext: (snapshot) => {
+        const list = snapshot.docs
+          .map((d) => ({
+            id: d.id,
+            ...d.data()
+          }))
+          .filter((e) => !e.isDeleted);
         list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setRawEntries(list);
       },
-      () => {}
-    );
+      onError: () => {}
+    });
 
     return () => unsubscribe();
-  }, [user, campaignId, campaign, isRealGM]);
+  }, [listenerUid, campaignId, campaignReady, isRealGM]);
 
+  // Fase 6.2 (A6/A10): mesma regra das cenas — visibleToPlayers decide quando existe, e a
+  // "Visão Player" do Mestre real não usa o UID dele como liberação.
+  const currentUid = user?.uid;
   const entries = useMemo(() => {
     if (isGM) return rawEntries;
-    return rawEntries.filter((e) => e.visibleToPlayers === true);
-  }, [rawEntries, isGM]);
+    const viewerUid = isRealGM ? null : currentUid;
+    return rawEntries.filter((e) => isReleasedToPlayers(e, viewerUid));
+  }, [rawEntries, isGM, isRealGM, currentUid]);
 
   const createEntry = async ({
     name,
@@ -68,9 +76,12 @@ export function useCompendium() {
 
     const itemId = `comp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const itemRef = doc(db, "campaigns", campaignId, "compendium", itemId);
+    const gmUid = campaign?.gmId || user?.uid;
+    const isVisible = Boolean(visibleToPlayers);
 
     const payload = {
       id: itemId,
+      campaignId,
       name: name?.trim() || "Item do Compêndio",
       type,
       elementColor: elementColor || "#3090f0",
@@ -86,7 +97,9 @@ export function useCompendium() {
       bonus: Number(bonus) || 0,
       attribute: attribute || "forca",
       description: description?.trim() || "",
-      visibleToPlayers: Boolean(visibleToPlayers),
+      visibleToPlayers: isVisible,
+      visibleTo: isVisible ? ["ALL"] : [gmUid].filter(Boolean),
+      isDeleted: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
@@ -98,16 +111,28 @@ export function useCompendium() {
   const updateEntry = async (itemId, updates) => {
     if (!isRealGM || !campaignId || !itemId) return;
     const itemRef = doc(db, "campaigns", campaignId, "compendium", itemId);
-    await updateDoc(itemRef, {
+    const nextUpdates = {
       ...updates,
+      campaignId,
       updatedAt: serverTimestamp()
-    });
+    };
+    if (updates?.visibleToPlayers !== undefined) {
+      const gmUid = campaign?.gmId || user?.uid;
+      nextUpdates.visibleTo = updates.visibleToPlayers
+        ? ["ALL"]
+        : [gmUid].filter(Boolean);
+    }
+    await updateDoc(itemRef, nextUpdates);
   };
 
   const deleteEntry = async (itemId) => {
     if (!isRealGM || !campaignId || !itemId) return;
     const itemRef = doc(db, "campaigns", campaignId, "compendium", itemId);
-    await deleteDoc(itemRef);
+    await updateDoc(itemRef, {
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: user?.uid || "gm"
+    });
   };
 
   return {

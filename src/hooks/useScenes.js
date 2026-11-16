@@ -2,16 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
-  onSnapshot,
-  query,
-  where,
   setDoc,
   updateDoc,
-  deleteDoc,
   serverTimestamp
 } from "firebase/firestore";
+import { isReleasedToPlayers, subscribeVisibleCollection } from "../services/visibilityService";
 import { db } from "../services/firebase";
-import { uploadCompressedMedia, deleteMedia } from "../services/mediaService";
+import { uploadCompressedMedia } from "../services/mediaService";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
 
@@ -38,39 +35,50 @@ export function useScenes() {
   const [rawScenes, setRawScenes] = useState([]);
   const [scenesError, setScenesError] = useState("");
 
+  // Fase 3.1 (V-13): listeners dependem só de uid/campaignId/prontidão da campanha/papel,
+  // não do objeto `campaign` (recriado a cada snapshot da campanha ou resolução de avatar).
+  const listenerUid = user?.uid || null;
+  const campaignReady = Boolean(campaign);
+
   useEffect(() => {
-    if (!user || !campaignId || !campaign) return;
+    if (!listenerUid || !campaignId || !campaignReady) return;
 
     const scenesCol = collection(db, "campaigns", campaignId, "scenes");
-    // Se não for o Mestre real no banco, consulta apenas cenas liberadas para players (exigido pelo firestore.rules)
-    const scenesQuery = isRealGM
-      ? query(scenesCol)
-      : query(scenesCol, where("visibleToPlayers", "==", true));
-
-    const unsubscribe = onSnapshot(
-      scenesQuery,
-      (snapshot) => {
+    // Se não for o Mestre real no banco, consulta apenas cenas liberadas (visibleTo ou visibleToPlayers; exigido pelo firestore.rules)
+    // Fase 6.2 (A5/A6: cenas liberadas por visibleToPlayers chegam mesmo com visibleTo defasado).
+    const unsubscribe = subscribeVisibleCollection({
+      colRef: scenesCol,
+      isRealGM,
+      uid: listenerUid,
+      includePublicFlag: true,
+      onNext: (snapshot) => {
         setScenesError("");
-        const list = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data()
-        }));
+        const list = snapshot.docs
+          .map((d) => ({
+            id: d.id,
+            ...d.data()
+          }))
+          .filter((s) => !s.isDeleted);
         list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         setRawScenes(list);
       },
-      (err) => {
+      onError: (err) => {
         setScenesError(err?.message || "Erro ao carregar mapas.");
       }
-    );
+    });
 
     return () => unsubscribe();
-  }, [user, campaignId, campaign, isRealGM]);
+  }, [listenerUid, campaignId, campaignReady, isRealGM]);
 
-  // Se o Mestre ativou "Visão: Player", filtra no cliente como um player veria
+  // Se o Mestre ativou "Visão: Player", filtra no cliente como um player veria.
+  // Fase 6.2 (A6/A10): visibleToPlayers é a fonte da verdade quando existe; na "Visão Player" do
+  // Mestre real o UID dele (presente em todo visibleTo de cena oculta) não conta como liberação.
+  const currentUid = user?.uid;
   const scenes = useMemo(() => {
     if (isGM) return rawScenes;
-    return rawScenes.filter((s) => s.visibleToPlayers === true);
-  }, [rawScenes, isGM]);
+    const viewerUid = isRealGM ? null : currentUid;
+    return rawScenes.filter((s) => isReleasedToPlayers(s, viewerUid));
+  }, [rawScenes, isGM, isRealGM, currentUid]);
 
   const activeSceneId = campaign?.activeSceneId || null;
 
@@ -117,10 +125,15 @@ export function useScenes() {
     const sceneId = `scene_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
 
+    const gmUid = campaign?.gmId || user.uid;
+    const isVisible = Boolean(visibleToPlayers);
     const newScene = {
       id: sceneId,
+      campaignId,
       name: name?.trim() || "Novo Mapa",
-      visibleToPlayers: Boolean(visibleToPlayers),
+      visibleToPlayers: isVisible,
+      visibleTo: isVisible ? ["ALL"] : [gmUid],
+      isDeleted: false,
       mapImage: mediaInfo,
       grid: {
         ...DEFAULT_GRID_CONFIG,
@@ -154,8 +167,14 @@ export function useScenes() {
 
     const nextPayload = {
       ...updates,
+      campaignId,
       updatedAt: serverTimestamp()
     };
+
+    if (updates.visibleToPlayers !== undefined) {
+      const gmUid = campaign?.gmId || user.uid;
+      nextPayload.visibleTo = updates.visibleToPlayers ? ["ALL"] : [gmUid];
+    }
 
     if (newImageFile) {
       const uploaded = await uploadCompressedMedia({
@@ -164,11 +183,6 @@ export function useScenes() {
         campaignId,
         uploadedBy: user.uid
       });
-
-      const oldMediaId = existing.mapImage?.mediaId;
-      if (oldMediaId) {
-        await deleteMedia(oldMediaId, campaignId);
-      }
 
       nextPayload.mapImage = {
         mediaId: uploaded.mediaId,
@@ -181,10 +195,6 @@ export function useScenes() {
       updates.externalUrl !== undefined &&
       updates.externalUrl?.trim()
     ) {
-      const oldMediaId = existing.mapImage?.mediaId;
-      if (oldMediaId) {
-        await deleteMedia(oldMediaId, campaignId);
-      }
       nextPayload.mapImage = {
         mediaId: null,
         externalUrl: updates.externalUrl.trim(),
@@ -200,19 +210,18 @@ export function useScenes() {
   };
 
   const deleteScene = async (sceneId) => {
-    if (!isRealGM || !sceneId) return;
-
-    const existing = rawScenes.find((s) => s.id === sceneId);
-    if (existing?.mapImage?.mediaId) {
-      await deleteMedia(existing.mapImage.mediaId, campaignId);
-    }
+    if (!isRealGM || !user || !sceneId) return;
 
     if (campaign?.activeSceneId === sceneId) {
       await setActiveScene(null);
     }
 
     const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
-    await deleteDoc(sceneRef);
+    await updateDoc(sceneRef, {
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: user.uid
+    });
   };
 
   const activateSceneForTable = async (sceneId) => {
@@ -224,6 +233,7 @@ export function useScenes() {
         const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
         await updateDoc(sceneRef, {
           visibleToPlayers: true,
+          visibleTo: ["ALL"],
           updatedAt: serverTimestamp()
         });
       }

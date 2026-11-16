@@ -19,7 +19,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  z-index: 30;
+  z-index: var(--z-hud-bars); /* Fase 4: era 30 */
 }
 
 .vtt-topbar-left,
@@ -76,7 +76,7 @@
     inset 0 2.5px 0 #ffffff,
     inset 0 4.5px 0 rgba(255, 255, 255, 0.4),
     0 -3px 10px rgba(0, 0, 0, 0.35);
-  z-index: 25;
+  z-index: var(--z-hud-bars); /* Fase 4: era 25 */
   user-select: none;
 }
 
@@ -203,7 +203,7 @@
   position: absolute;
   left: 14px;
   bottom: 8px;
-  z-index: 25;
+  z-index: var(--z-hud-bars); /* Fase 4: era 25 */
   background: transparent;
   border: none;
   outline: none;
@@ -251,7 +251,7 @@
   border-left: 3px solid var(--cp-blue-border);
   display: flex;
   flex-direction: column;
-  z-index: 25;
+  z-index: var(--z-hud-bars); /* Fase 4: era 25 */
   transition: width 0.2s ease;
   overflow: hidden;
 }
@@ -343,7 +343,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal-base); /* Fase 4: era 100 */
   padding: 16px;
 }
 
@@ -352,7 +352,7 @@
   position: absolute;
   left: 12px;
   top: 14px;
-  z-index: 26;
+  z-index: var(--z-board-ui); /* Fase 4: era 26 */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1167,7 +1167,7 @@
   border-radius: 18px;
   padding: 10px;
   box-shadow: 0 10px 28px rgba(0, 27, 58, 0.45), 0 2px 6px rgba(0, 0, 0, 0.18);
-  z-index: 120;
+  z-index: var(--z-hud-popovers);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1262,7 +1262,8 @@
    ========================================================================== */
 .cp-snowball-aiming,
 .cp-snowball-aiming * {
-  cursor: url('/icones/iconeMiraBolaDeNeve.png') 32 32, crosshair !important;
+  /* Fase 4: URL resolvida com BASE_URL em runtime (VTTLayout -> --cp-snowball-cursor) */
+  cursor: var(--cp-snowball-cursor) !important;
 }
 
 /* ==========================================================================
@@ -1278,7 +1279,7 @@
   border-radius: 18px;
   padding: 8px;
   box-shadow: 0 10px 28px rgba(0, 27, 58, 0.45), 0 2px 6px rgba(0, 0, 0, 0.18);
-  z-index: 120;
+  z-index: var(--z-hud-popovers);
   display: flex;
   flex-direction: column;
   align-items: center;

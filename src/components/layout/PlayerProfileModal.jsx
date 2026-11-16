@@ -2,20 +2,37 @@ import { useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
 import { compressImageToWebP } from "../../engines/imageCompressor";
+import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { isPlayerAvatarRemoved } from "../../services/rollService";
 
 export default function PlayerProfileModal({ onClose }) {
   const { user } = useAuth();
-  const { myPlayerProfile, updatePlayerProfile } = useCampaign();
+  const { campaignId, myPlayerProfile, updatePlayerProfile } = useCampaign();
 
   const fileInputRef = useRef(null);
   const [displayName, setDisplayName] = useState(
     myPlayerProfile?.displayName || user?.displayName || ""
   );
-  const [photoURL, setPhotoURL] = useState(
-    myPlayerProfile?.photoURL || user?.photoURL || ""
-  );
+  // Fase 3.1 (V-02): a foto ATUAL é sempre resolvida a partir de avatarMediaId (ou de uma URL HTTP
+  // externa); `newPhotoDataUrl` só existe quando o usuário escolhe um arquivo novo neste modal.
+  const avatarRemoved = isPlayerAvatarRemoved(myPlayerProfile);
+  const currentExternalPhoto = (
+    avatarRemoved
+      ? [myPlayerProfile?.photoURL]
+      : [myPlayerProfile?.photoURL, user?.photoURL]
+  ).find((url) => typeof url === "string" && /^https?:\/\//i.test(url)) || null;
+  const [newPhotoDataUrl, setNewPhotoDataUrl] = useState("");
+  const [photoRemoved, setPhotoRemoved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const { url: resolvedAvatarUrl } = useMediaUrl(
+    photoRemoved ? null : myPlayerProfile?.avatarMediaId,
+    photoRemoved || myPlayerProfile?.avatarMediaId ? null : currentExternalPhoto,
+    campaignId
+  );
+
+  const previewAvatarUrl = photoRemoved ? "" : (newPhotoDataUrl || resolvedAvatarUrl || "");
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -24,7 +41,8 @@ export default function PlayerProfileModal({ onClose }) {
     setErrorMsg("");
     try {
       const compressed = await compressImageToWebP(file, "avatar");
-      setPhotoURL(compressed.dataUrl);
+      setPhotoRemoved(false);
+      setNewPhotoDataUrl(compressed.dataUrl);
     } catch {
       setErrorMsg("Erro ao processar imagem.");
     } finally {
@@ -41,10 +59,21 @@ export default function PlayerProfileModal({ onClose }) {
     setSaving(true);
     setErrorMsg("");
     try {
-      await updatePlayerProfile({
-        displayName: displayName.trim(),
-        photoURL: photoURL || null
-      });
+      if (photoRemoved) {
+        await updatePlayerProfile({
+          displayName: displayName.trim(),
+          photoURL: null,
+          avatarMediaId: null
+        });
+      } else if (newPhotoDataUrl) {
+        await updatePlayerProfile({
+          displayName: displayName.trim(),
+          photoURL: newPhotoDataUrl
+        });
+      } else {
+        // Somente renomear: não envia foto, preservando avatarMediaId atual
+        await updatePlayerProfile({ displayName: displayName.trim() });
+      }
       onClose();
     } catch (err) {
       setErrorMsg(err?.message || "Erro ao salvar perfil.");
@@ -114,9 +143,9 @@ export default function PlayerProfileModal({ onClose }) {
                   fontSize: "36px"
                 }}
               >
-                {photoURL ? (
+                {previewAvatarUrl ? (
                   <img
-                    src={photoURL}
+                    src={previewAvatarUrl}
                     alt="Foto do Jogador"
                     style={{
                       width: "100%",
@@ -146,12 +175,15 @@ export default function PlayerProfileModal({ onClose }) {
                 >
                   Trocar Foto
                 </button>
-                {photoURL && (
+                {previewAvatarUrl && (
                   <button
                     type="button"
                     className="cp-btn"
                     style={{ padding: "4px 10px", fontSize: "12px" }}
-                    onClick={() => setPhotoURL("")}
+                    onClick={() => {
+                      setPhotoRemoved(true);
+                      setNewPhotoDataUrl("");
+                    }}
                   >
                     Remover
                   </button>

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { TRIGGER_TYPES, EFFECT_TYPES, SAVE_ATTRIBUTES } from "../../engines/combatEngine";
+import { TRIGGER_TYPES, EFFECT_TYPES } from "../../engines/combatEngine";
+import SavingThrowFields from "../ui/SavingThrowFields";
 
 const ELEMENT_COLORS = [
   { color: "#e53935", label: "Fogo" },
@@ -422,66 +423,21 @@ export default function CompendiumModal({
                 </select>
               </div>
 
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "12px",
-                  fontWeight: 800,
-                  cursor: "pointer"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={saveEnabled}
-                  onChange={(e) => setSaveEnabled(e.target.checked)}
-                />
-                Exige Teste de Resistência
-              </label>
-
-              {saveEnabled && (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "6px",
-                    background: "#f8fafc",
-                    padding: "6px",
-                    borderRadius: "8px",
-                    border: "1.5px solid #cbd5e1"
-                  }}
-                >
-                  <input
-                    type="text"
-                    className="cp-input"
-                    placeholder="CD (ex: 14 ou 10+@forca)"
-                    value={saveDcFormula}
-                    onChange={(e) => setSaveDcFormula(e.target.value)}
-                    style={{ fontSize: "11px" }}
-                  />
-                  <select
-                    className="cp-input"
-                    value={saveAttribute}
-                    onChange={(e) => setSaveAttribute(e.target.value)}
-                    style={{ fontSize: "11px" }}
-                  >
-                    {SAVE_ATTRIBUTES.map((sa) => (
-                      <option key={sa.id} value={sa.id}>
-                        {sa.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    className="cp-input"
-                    placeholder="Efeito na falha (ex: Derrubado)"
-                    value={saveEffectDesc}
-                    onChange={(e) => setSaveEffectDesc(e.target.value)}
-                    style={{ gridColumn: "1 / -1", fontSize: "11px" }}
-                  />
-                </div>
-              )}
+              {/* Fase 4: SavingThrowFields (layout "grid") */}
+              <SavingThrowFields
+                layout="grid"
+                enabled={saveEnabled}
+                onEnabledChange={setSaveEnabled}
+                dcFormula={saveDcFormula}
+                onDcFormulaChange={setSaveDcFormula}
+                attribute={saveAttribute}
+                onAttributeChange={setSaveAttribute}
+                effectDescription={saveEffectDesc}
+                onEffectDescriptionChange={setSaveEffectDesc}
+                toggleLabel="Exige Teste de Resistência"
+                dcPlaceholder="CD (ex: 14 ou 10+@forca)"
+                effectPlaceholder="Efeito na falha (ex: Derrubado)"
+              />
 
               <textarea
                 className="cp-input"

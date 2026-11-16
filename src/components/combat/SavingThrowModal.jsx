@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SAVE_ATTRIBUTES, applyD20ModeToFormula } from "../../engines/combatEngine";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
+import { normalizeKey } from "../../utils/stringUtils";
+import WindowModal from "../ui/WindowModal";
+import { Z_LAYERS } from "../../constants/zLayers";
 
 export default function SavingThrowModal({
   open,
@@ -18,11 +21,7 @@ export default function SavingThrowModal({
 
   useEffect(() => {
     if (savingThrowRequest?.attribute) {
-      const normalized = String(savingThrowRequest.attribute)
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, "");
+      const normalized = normalizeKey(savingThrowRequest.attribute);
       setSelectedAttrKey(normalized || "vigor");
     } else {
       setSelectedAttrKey("vigor");
@@ -46,11 +45,7 @@ export default function SavingThrowModal({
         : [];
       skills.forEach((sk) => {
         if (!sk?.name) return;
-        const key = String(sk.name)
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-          .replace(/[^a-z0-9_]/g, "");
+        const key = normalizeKey(sk.name);
         const attrKey = sk.attribute || sk.attr || "";
         if (!map.has(key)) {
           map.set(key, {
@@ -178,16 +173,13 @@ export default function SavingThrowModal({
   };
 
   return (
-    <div
-      className="cp-modal-overlay"
-      onClick={onClose}
-      style={{ zIndex: 1450 }}
+    // Fase 4: WindowModal (variante "cp") na camada --z-modal-combat (era zIndex 1450)
+    <WindowModal
+      variant="cp"
+      onClose={onClose}
+      zIndex={Z_LAYERS.modalCombat}
+      maxWidth="440px"
     >
-      <div
-        className="cp-window"
-        style={{ width: "100%", maxWidth: "440px" }}
-        onClick={(e) => e.stopPropagation()}
-      >
         {/* Header */}
         <div
           style={{
@@ -492,7 +484,6 @@ export default function SavingThrowModal({
             🎲 Rolar {currentAttrOption.label} ({previewFormula})
           </button>
         </div>
-      </div>
-    </div>
+    </WindowModal>
   );
 }

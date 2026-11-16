@@ -5,17 +5,39 @@
         ".read": "auth != null",
         "tokens": {
           "$sceneId": {
-            ".write": "auth != null"
+            "$tokenId": {
+              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && newData.child('ownerId').val() === auth.uid && newData.child('layer').val() === 'tokens') || (data.exists() && !newData.exists() && data.child('ownerId').val() === auth.uid) || (data.exists() && newData.exists() && (!data.child('ownerId').exists() || newData.child('ownerId').val() === data.child('ownerId').val()) && newData.child('layer').val() === data.child('layer').val() && (data.child('ownerId').val() === auth.uid || data.child('controlledBy').child('ALL').val() === true || data.child('controlledBy').child(auth.uid).val() === true)))"
+            }
           }
         },
         "fog": {
           "$sceneId": {
-            ".write": "auth != null"
+            ".write": "auth != null && (auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid)"
+          }
+        },
+        "drawings": {
+          "$sceneId": {
+            "$drawingId": {
+              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && newData.child('authorId').val() === auth.uid && newData.child('layer').val() === 'tokens') || (data.exists() && !newData.exists() && (data.child('authorId').val() === auth.uid || data.child('createdBy').val() === auth.uid)) || (data.exists() && newData.exists() && (data.child('authorId').val() === auth.uid || data.child('createdBy').val() === auth.uid) && (!data.child('authorId').exists() || newData.child('authorId').val() === data.child('authorId').val())))"
+            }
+          }
+        },
+        "pings": {
+          "$sceneId": {
+            "$pingId": {
+              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && (newData.child('authorId').val() === auth.uid || newData.child('senderId').val() === auth.uid)) || (data.exists() && !newData.exists() && (data.child('authorId').val() === auth.uid || data.child('senderId').val() === auth.uid)))"
+            }
           }
         },
         "presence": {
           "$uid": {
             ".write": "auth != null && auth.uid === $uid"
+          }
+        },
+        "meta": {
+          "gmId": {
+            ".write": "auth != null && (auth.token.email === 'erickteixeiractt@gmail.com' || data.val() === auth.uid)",
+            ".validate": "newData.isString()"
           }
         }
       }

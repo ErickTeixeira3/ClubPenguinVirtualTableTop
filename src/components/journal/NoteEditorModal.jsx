@@ -2,27 +2,13 @@ import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   NOTE_TYPES,
+  getNoteTypeIcon,
   getNoteTypeMeta,
   normalizeAliasText,
   parseTextWithAliases
 } from "../../engines/aliasEngine";
-
-function getNoteTypeIcon(noteType) {
-  switch (noteType) {
-    case "lore":
-      return "📜";
-    case "character":
-      return "🐧";
-    case "location":
-      return "📍";
-    case "event":
-      return "⚡";
-    case "quest":
-      return "🎯";
-    default:
-      return "📄";
-  }
-}
+import { Z_LAYERS } from "../../constants/zLayers";
+import { canUserEditJournalNote } from "../../services/journalService";
 
 function parseContentToSections(content, savedSections) {
   if (Array.isArray(savedSections) && savedSections.length > 0) {
@@ -147,7 +133,7 @@ function LinkedCardSpan({
                   : undefined,
               left: `${popoverPos.left}px`,
               transform: "translateX(-50%)",
-              zIndex: 999999,
+              zIndex: Z_LAYERS.portalTooltip, // Fase 4: era 999999
               background: "#ffffff",
               border: "2px solid #001b3a",
               borderRadius: "8px",
@@ -261,6 +247,12 @@ export default function NoteEditorModal({
   onClose
 }) {
   const isEditing = Boolean(note?.id);
+  const canEdit =
+    !isEditing ||
+    canUserEditJournalNote(note, {
+      user: currentUserId ? { uid: currentUserId } : null,
+      isGM
+    });
   const [cloneTarget, setCloneTarget] = useState("");
   const [justCloned, setJustCloned] = useState(false);
   const [showSharePanel, setShowSharePanel] = useState(false);
@@ -370,12 +362,13 @@ export default function NoteEditorModal({
   );
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // Modo de exibição: 'interactive' ou 'edit'
   const hasInitialContent =
     sections.some((s) => s.content?.trim() || s.title?.trim());
   const [editorMode, setEditorMode] = useState(
-    hasInitialContent ? "interactive" : "edit"
+    !canEdit || hasInitialContent ? "interactive" : "edit"
   );
   const [selectedText, setSelectedText] = useState("");
 
@@ -489,8 +482,13 @@ export default function NoteEditorModal({
   };
 
   const handleSubmitInternal = async () => {
-    if (!title.trim() || saving) return;
+    if (!title.trim() || saving) return false;
+    if (isEditing && !canEdit) {
+      setSaveError("Você não tem permissão para editar este card.");
+      return false;
+    }
 
+    setSaveError("");
     setSaving(true);
     try {
       const parsedAliases = aliasesText
@@ -507,7 +505,7 @@ export default function NoteEditorModal({
         .join("\n\n")
         .trim();
 
-      await onSave({
+      const res = await onSave({
         id: note?.id || null,
         scope: note?.scope || defaultScope,
         ownerId: note?.ownerId || defaultOwnerId,
@@ -525,6 +523,15 @@ export default function NoteEditorModal({
         relatedNoteIds,
         file
       });
+
+      if (res && res.ok === false) {
+        setSaveError(res.error || "Não foi possível salvar este card.");
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setSaveError(err?.message || "Erro ao salvar este card.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -532,14 +539,17 @@ export default function NoteEditorModal({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await handleSubmitInternal();
-    onClose();
+    const ok = await handleSubmitInternal();
+    if (ok) {
+      onClose();
+    }
   };
 
   const handleNavigateToCard = async (targetNote) => {
     if (!targetNote || targetNote.id === note?.id) return;
-    if (title.trim()) {
-      await handleSubmitInternal();
+    if (canEdit && title.trim()) {
+      const ok = await handleSubmitInternal();
+      if (!ok) return;
     }
     onOpenNote?.(targetNote);
   };
@@ -566,7 +576,7 @@ export default function NoteEditorModal({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 5000,
+        zIndex: Z_LAYERS.modalNoteEditor, // Fase 4: era 5000
         padding: "16px"
       }}
     >
@@ -591,7 +601,11 @@ export default function NoteEditorModal({
           }}
         >
           <h2 className="cp-title" style={{ fontSize: "18px" }}>
-            {isEditing ? "EDITAR CARD DO DIÁRIO" : "NOVO CARD DO DIÁRIO"}
+            {isEditing
+              ? canEdit
+                ? "EDITAR CARD DO DIÁRIO"
+                : "CARD DO DIÁRIO"
+              : "NOVO CARD DO DIÁRIO"}
           </h2>
 
           <button
@@ -648,6 +662,7 @@ export default function NoteEditorModal({
                 placeholder="Título do Card"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                disabled={!canEdit}
                 style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
                 required
               />
@@ -669,6 +684,7 @@ export default function NoteEditorModal({
                 className="cp-input"
                 value={noteType}
                 onChange={(e) => setNoteType(e.target.value)}
+                disabled={!canEdit}
                 style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
               >
                 {NOTE_TYPES.map((t) => (
@@ -698,6 +714,7 @@ export default function NoteEditorModal({
                 placeholder="Ex: Geral, Ato 1..."
                 value={folder}
                 onChange={(e) => setFolder(e.target.value)}
+                disabled={!canEdit}
                 style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
               />
               <datalist id="cp-note-folders-datalist">
@@ -726,6 +743,7 @@ export default function NoteEditorModal({
                 className="cp-input"
                 value={linkedCharacterSheetId}
                 onChange={(e) => setLinkedCharacterSheetId(e.target.value)}
+                disabled={!canEdit}
                 style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
               >
                 <option value="">Sem vínculo direto com ficha</option>
@@ -765,6 +783,7 @@ export default function NoteEditorModal({
                 placeholder="Separados por vírgula (ex: Vilão, Carlos)"
                 value={aliasesText}
                 onChange={(e) => setAliasesText(e.target.value)}
+                disabled={!canEdit}
                 style={{ height: "30px", padding: "4px 8px", fontSize: "12px" }}
               />
             </div>
@@ -790,7 +809,8 @@ export default function NoteEditorModal({
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  cursor: "pointer",
+                  cursor: canEdit ? "pointer" : "not-allowed",
+                  opacity: canEdit ? 1 : 0.6,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis"
@@ -800,6 +820,7 @@ export default function NoteEditorModal({
                 <input
                   type="file"
                   accept="image/*"
+                  disabled={!canEdit}
                   style={{ display: "none" }}
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                 />
@@ -822,7 +843,7 @@ export default function NoteEditorModal({
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-              {Boolean(selectedText && selectedText.trim().length >= 2) && (
+              {canEdit && Boolean(selectedText && selectedText.trim().length >= 2) && (
                 <button
                   type="button"
                   className="cp-btn cp-btn-gold"
@@ -929,20 +950,22 @@ export default function NoteEditorModal({
               >
                 Visualizar
               </button>
-              <button
-                type="button"
-                className={`cp-btn ${editorMode === "edit" ? "cp-btn-gold" : ""}`}
-                style={{
-                  padding: "3px 8px",
-                  fontSize: "11px",
-                  height: "26px",
-                  display: "inline-flex",
-                  alignItems: "center"
-                }}
-                onClick={() => setEditorMode("edit")}
-              >
-                Editar
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  className={`cp-btn ${editorMode === "edit" ? "cp-btn-gold" : ""}`}
+                  style={{
+                    padding: "3px 8px",
+                    fontSize: "11px",
+                    height: "26px",
+                    display: "inline-flex",
+                    alignItems: "center"
+                  }}
+                  onClick={() => setEditorMode("edit")}
+                >
+                  Editar
+                </button>
+              )}
             </div>
           </div>
 
@@ -1193,7 +1216,7 @@ export default function NoteEditorModal({
                                   matchedNote={token.note}
                                   term={token.term}
                                   onOpenCard={handleNavigateToCard}
-                                  onNegateLink={handleNegateLink}
+                                  onNegateLink={canEdit ? handleNegateLink : undefined}
                                 />
                               );
                             }
@@ -1246,6 +1269,7 @@ export default function NoteEditorModal({
                         className="cp-input"
                         placeholder="Título do Bloco (ex: RESUMO, ATO 1...)"
                         value={sec.title || ""}
+                        disabled={!canEdit}
                         onChange={(e) =>
                           handleUpdateSectionTitle(sec.id, e.target.value)
                         }
@@ -1258,72 +1282,74 @@ export default function NoteEditorModal({
                         }}
                       />
 
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "4px"
-                        }}
-                      >
-                        <button
-                          type="button"
-                          className="cp-btn"
+                      {canEdit && (
+                        <div
                           style={{
-                            padding: "2px 6px",
-                            fontSize: "10px",
-                            height: "26px",
-                            display: "inline-flex",
+                            display: "flex",
                             alignItems: "center",
-                            opacity: index === 0 ? 0.4 : 1,
-                            cursor: index === 0 ? "not-allowed" : "pointer"
+                            gap: "4px"
                           }}
-                          disabled={index === 0}
-                          onClick={() => handleMoveSection(index, -1)}
-                          title="Mover para cima"
                         >
-                          ▲
-                        </button>
-
-                        <button
-                          type="button"
-                          className="cp-btn"
-                          style={{
-                            padding: "2px 6px",
-                            fontSize: "10px",
-                            height: "26px",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            opacity: index === sections.length - 1 ? 0.4 : 1,
-                            cursor:
-                              index === sections.length - 1
-                                ? "not-allowed"
-                                : "pointer"
-                          }}
-                          disabled={index === sections.length - 1}
-                          onClick={() => handleMoveSection(index, 1)}
-                          title="Mover para baixo"
-                        >
-                          ▼
-                        </button>
-
-                        {sections.length > 1 && (
                           <button
                             type="button"
-                            className="cp-btn cp-btn-orange"
+                            className="cp-btn"
                             style={{
                               padding: "2px 6px",
                               fontSize: "10px",
                               height: "26px",
                               display: "inline-flex",
-                              alignItems: "center"
+                              alignItems: "center",
+                              opacity: index === 0 ? 0.4 : 1,
+                              cursor: index === 0 ? "not-allowed" : "pointer"
                             }}
-                            onClick={() => handleDeleteSection(sec.id)}
-                            title="Remover este bloco"
+                            disabled={index === 0}
+                            onClick={() => handleMoveSection(index, -1)}
+                            title="Mover para cima"
                           >
-                            ✕
+                            ▲
                           </button>
-                        )}
-                      </div>
+
+                          <button
+                            type="button"
+                            className="cp-btn"
+                            style={{
+                              padding: "2px 6px",
+                              fontSize: "10px",
+                              height: "26px",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              opacity: index === sections.length - 1 ? 0.4 : 1,
+                              cursor:
+                                index === sections.length - 1
+                                  ? "not-allowed"
+                                  : "pointer"
+                            }}
+                            disabled={index === sections.length - 1}
+                            onClick={() => handleMoveSection(index, 1)}
+                            title="Mover para baixo"
+                          >
+                            ▼
+                          </button>
+
+                          {sections.length > 1 && (
+                            <button
+                              type="button"
+                              className="cp-btn cp-btn-orange"
+                              style={{
+                                padding: "2px 6px",
+                                fontSize: "10px",
+                                height: "26px",
+                                display: "inline-flex",
+                                alignItems: "center"
+                              }}
+                              onClick={() => handleDeleteSection(sec.id)}
+                              title="Remover este bloco"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <textarea
@@ -1337,6 +1363,7 @@ export default function NoteEditorModal({
                       }}
                       placeholder="Conteúdo deste bloco..."
                       value={sec.content || ""}
+                      disabled={!canEdit}
                       onSelect={handleCaptureSelection}
                       onChange={(e) =>
                         handleUpdateSectionContent(sec.id, e.target.value)
@@ -1345,25 +1372,44 @@ export default function NoteEditorModal({
                   </div>
                 ))}
 
-                <button
-                  type="button"
-                  className="cp-btn cp-btn-epf"
-                  style={{
-                    padding: "4px 10px",
-                    fontSize: "11px",
-                    height: "28px",
-                    alignSelf: "flex-start",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    fontWeight: 800
-                  }}
-                  onClick={handleAddSection}
-                >
-                  + Adicionar Bloco
-                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="cp-btn cp-btn-epf"
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: "11px",
+                      height: "28px",
+                      alignSelf: "flex-start",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      fontWeight: 800
+                    }}
+                    onClick={handleAddSection}
+                  >
+                    + Adicionar Bloco
+                  </button>
+                )}
               </div>
             )}
           </div>
+
+          {saveError && (
+            <div
+              role="alert"
+              style={{
+                padding: "8px 10px",
+                borderRadius: "8px",
+                background: "#fee2e2",
+                border: "1.5px solid #ef4444",
+                color: "#991b1b",
+                fontSize: "12px",
+                fontWeight: 700
+              }}
+            >
+              {saveError}
+            </div>
+          )}
 
           {/* Rodapé: Botões mais finos no padrão do de Imagem */}
           <div
@@ -1377,7 +1423,7 @@ export default function NoteEditorModal({
               borderTop: "1.5px solid #cbd5e1"
             }}
           >
-            {isEditing && onDelete ? (
+            {canEdit && isEditing && onDelete ? (
               <button
                 type="button"
                 className="cp-btn cp-btn-orange"
@@ -1414,23 +1460,25 @@ export default function NoteEditorModal({
                 }}
                 onClick={onClose}
               >
-                Cancelar
+                {canEdit ? "Cancelar" : "Fechar"}
               </button>
-              <button
-                type="submit"
-                className="cp-btn cp-btn-gold"
-                style={{
-                  padding: "4px 14px",
-                  fontSize: "12px",
-                  height: "30px",
-                  fontWeight: 800,
-                  display: "inline-flex",
-                  alignItems: "center"
-                }}
-                disabled={saving}
-              >
-                {saving ? "Salvando..." : "Salvar Card"}
-              </button>
+              {canEdit && (
+                <button
+                  type="submit"
+                  className="cp-btn cp-btn-gold"
+                  style={{
+                    padding: "4px 14px",
+                    fontSize: "12px",
+                    height: "30px",
+                    fontWeight: 800,
+                    display: "inline-flex",
+                    alignItems: "center"
+                  }}
+                  disabled={saving}
+                >
+                  {saving ? "Salvando..." : "Salvar Card"}
+                </button>
+              )}
             </div>
           </div>
         </form>
@@ -1445,7 +1493,7 @@ export default function NoteEditorModal({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              zIndex: 6000,
+              zIndex: Z_LAYERS.modalNoteEditor, // Fase 4: era 6000 (contexto local do editor)
               padding: "16px"
             }}
             onClick={() => setLinkingModalOpen(false)}
