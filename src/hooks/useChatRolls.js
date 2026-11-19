@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "../services/firebase";
+import { db } from "../infra/firebase.js";
 import {
   executeChatRollMessage,
   sendEmoteChatMessage,
@@ -11,10 +11,13 @@ import {
 } from "../services/rollService";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
+import { useMembers } from "../contexts/MembersContext";
 
 export function useChatRolls() {
   const { user } = useAuth();
   const { campaignId, campaign, isRealGM, isGM } = useCampaign();
+  // T1 permanece até a Fase 11: identidade de membro ainda expõe o mapa legado à UI.
+  const { playersMap } = useMembers();
   const [rawMessages, setRawMessages] = useState([]);
 
   // Fase 3.1 (V-13): listeners dependem só de uid/campaignId/prontidão da campanha/papel,
@@ -58,10 +61,15 @@ export function useChatRolls() {
     });
   }, [rawMessages, isGM, user]);
 
+  const campaignWithPlayers = useMemo(
+    () => (campaign ? { ...campaign, players: playersMap } : null),
+    [campaign, playersMap]
+  );
+
   const sendEmoteMessage = async (params) =>
     sendEmoteChatMessage({
       campaignId,
-      campaign,
+      campaign: campaignWithPlayers,
       user,
       ...params
     });
@@ -69,7 +77,7 @@ export function useChatRolls() {
   const sendTextMessage = async (params) =>
     sendTextChatMessage({
       campaignId,
-      campaign,
+      campaign: campaignWithPlayers,
       user,
       ...params
     });
@@ -77,7 +85,7 @@ export function useChatRolls() {
   const sendSkillPing = async (params) =>
     sendSkillPingChatMessage({
       campaignId,
-      campaign,
+      campaign: campaignWithPlayers,
       user,
       ...params
     });
@@ -85,7 +93,7 @@ export function useChatRolls() {
   const executeRoll = async (params) =>
     executeChatRollMessage({
       campaignId,
-      campaign,
+      campaign: campaignWithPlayers,
       user,
       ...params
     });

@@ -1,12 +1,27 @@
 import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { db } from "../infra/firebase.js";
 import {
   ROLL_KINDS,
   buildTargetInfo,
   evaluateDcFormula,
 } from "../engines/combatEngine";
 import { evaluateFormula } from "../engines/formulaEngine";
+import { classifyRollKind } from "../engines/rolls/index.js";
 import { normalizeText } from "../utils/stringUtils";
+import { grantMediaAudience } from "./mediaService.js";
+
+// Fase 1 / Fase 5 (T2): classificação e resolução de atalhos vêm do engine puro `engines/rolls`,
+// que lê os mapas v2 de `rollGroups`/`hotbar`. A divisão do rollService acontece na Fase 9.
+export {
+  buildHotbarSlotFromRoll,
+  buildShortcutRollParams,
+  classifyRollKind,
+  effectRollKind,
+  inferAbilityRollKind,
+  isAttackRollMessage,
+  resolveDynamicRollEntry,
+  resolveHotbarSlot,
+} from "../engines/rolls/index.js";
 
 /**
  * Indica se o jogador removeu explicitamente a própria foto de perfil (A26),
@@ -22,8 +37,6 @@ export function isPlayerAvatarRemoved(playerRecord) {
   );
 }
 
-const VALID_ROLL_KINDS = new Set(Object.values(ROLL_KINDS));
-
 /**
  * Fase 6.3 (A17): ícones que o código grava por padrão num atalho de atributo
  * ("sword" no 711451e, "clover" a partir da Fase 3.1). Qualquer outro foi escolhido pelo usuário.
@@ -36,21 +49,6 @@ export function isCustomAttributeShortcutIcon(entry) {
   const icon = String(entry.icon || "").trim();
   if (!icon || DEFAULT_ATTRIBUTE_SHORTCUT_ICONS.has(icon)) return false;
   return normalizeText(icon) !== normalizeText(entry.name);
-}
-
-/**
- * Fase 6.3 (A18): nome exibido de um atalho vinculado.
- * - `customName === true`: nome salvo no atalho;
- * - `customName === false`: nome atual da origem (renomear a origem propaga);
- * - sem o campo (vinculado pela migração da Fase 3.1): nome salvo quando difere da origem
- *   (ex.: "Perícia Luta" do 711451e continua "Perícia Luta").
- */
-export function resolveLinkedShortcutName(entry, sourceName) {
-  const saved = String(entry?.name || "").trim();
-  if (!sourceName) return saved || sourceName || "";
-  if (!saved || entry?.customName === false) return sourceName;
-  if (entry?.customName === true) return saved;
-  return normalizeText(saved) === normalizeText(sourceName) ? sourceName : saved;
 }
 
 /**
@@ -70,6 +68,7 @@ export function toPersistablePhotoUrl(url) {
  * - `photoURL`: URL para exibição imediata na UI (pode ser DataURL resolvida).
  * - `senderPhotoURL`: valor seguro para persistir (apenas HTTP(S) ou null).
  * - `senderAvatarMediaId`: referência à foto do jogador em media/{mediaId} (mensagens sem personagem).
+ * Fase 5 (T2): lê `avatar`/`token.image` (ImageRef v2) com fallback para os campos v1.
  */
 export function resolveSpeakerIdentity({
   character = null,
@@ -93,11 +92,14 @@ export function resolveSpeakerIdentity({
 
   if (!character) {
     const allowAuthPhotoFallback = !isPlayerAvatarRemoved(playerProfile);
+    const playerAvatarMediaId =
+      playerProfile?.avatarMediaId || playerProfile?.avatar?.mediaId || null;
     const playerPhoto =
       senderPhotoURL !== null && senderPhotoURL !== undefined
         ? senderPhotoURL
         : playerProfile?.photoURL ||
-          (allowAuthPhotoFallback ? user?.photoURL : null) ||
+          playerProfile?.avatar?.url ||
+          (allowAuthPhotoFallback && !playerAvatarMediaId ? user?.photoURL : null) ||
           null;
 
     return {
@@ -106,7 +108,7 @@ export function resolveSpeakerIdentity({
       senderName: resolvedName,
       photoURL: playerPhoto,
       senderPhotoURL: toPersistablePhotoUrl(playerPhoto),
-      senderAvatarMediaId: playerProfile?.avatarMediaId || null,
+      senderAvatarMediaId: playerAvatarMediaId,
       character: null,
       characterId: null,
       characterMediaId: null,
@@ -114,6 +116,8 @@ export function resolveSpeakerIdentity({
   }
 
   const externalPhoto =
+    character.avatar?.url ||
+    character.token?.image?.url ||
     character.avatarExternalUrl ||
     character.defaultToken?.externalUrl ||
     character.tokenImage ||
@@ -121,16 +125,16 @@ export function resolveSpeakerIdentity({
     null;
 
   const charMediaId =
-    character.avatarMediaId || character.defaultToken?.mediaId || null;
+    character.avatar?.mediaId ||
+    character.token?.image?.mediaId ||
+    character.avatarMediaId ||
+    character.defaultToken?.mediaId ||
+    null;
 
   const uiPhotoUrl = resolvedAvatarUrl || externalPhoto || null;
   const persistedPhotoUrl =
     senderPhotoURL !== null && senderPhotoURL !== undefined
       ? senderPhotoURL
-      : character.avatarMediaId
-      ? null
-      : character.avatarExternalUrl
-      ? character.avatarExternalUrl
       : charMediaId
       ? null
       : externalPhoto;
@@ -149,397 +153,14 @@ export function resolveSpeakerIdentity({
 }
 
 /**
- * Fase 3.1 (V-11): tipo de rolagem de um EFEITO (sem rolagem de acerto) conforme effectType.
+ * Fase 4: antes de publicar a mensagem, a mídia do remetente (foto do jogador ou do personagem)
+ * passa a incluir a audiência da mensagem.
  */
-export function effectRollKind(effectType) {
-  if (effectType === "heal" || effectType === "mp_heal") return ROLL_KINDS.HEAL;
-  if (effectType === "utility") return ROLL_KINDS.UTILITY;
-  return ROLL_KINDS.DAMAGE;
-}
-
-/**
- * Fase 3.1 (V-11): ponto único para o `rollKind` de habilidades/magias/perícias.
- * - Perícia sem fórmula de efeito => CHECK (teste, nunca ataque).
- * - Com acerto => ATTACK (comparado contra a Defesa do alvo).
- * - Só efeito => DAMAGE/HEAL/UTILITY conforme effectType.
- */
-export function inferAbilityRollKind({
-  hitFormula = "",
-  effectFormula = "",
-  effectType = null,
-  isSkill = false,
-} = {}) {
-  const hasHit = Boolean(String(hitFormula || "").trim());
-  const hasEffect = Boolean(String(effectFormula || "").trim());
-  if (isSkill && !hasEffect) return ROLL_KINDS.CHECK;
-  if (hasHit) return ROLL_KINDS.ATTACK;
-  if (hasEffect) return effectRollKind(effectType);
-  return ROLL_KINDS.CHECK;
-}
-
-/**
- * Classifica explicitamente o tipo de rolagem sem depender de heurística frágil por nome em português
- * (mantém fallback apenas para registros antigos sem metadado `rollKind`).
- */
-export function classifyRollKind({
-  rollKind = null,
-  primaryFormula = "",
-  secondaryFormula = "",
-  effectType = null,
-  deferSecondaryDamage = true,
-  primaryLabel = "",
-  title = "",
-} = {}) {
-  if (rollKind && VALID_ROLL_KINDS.has(rollKind)) {
-    return rollKind;
-  }
-
-  const hasPrimary = Boolean(String(primaryFormula || "").trim());
-  const hasSecondary = Boolean(String(secondaryFormula || "").trim());
-
-  if (deferSecondaryDamage && hasPrimary && hasSecondary) {
-    return ROLL_KINDS.ATTACK;
-  }
-
-  if (effectType === "heal" || effectType === "mp_heal") {
-    return ROLL_KINDS.HEAL;
-  }
-  if (effectType === "mp_damage") {
-    return ROLL_KINDS.MP_DAMAGE;
-  }
-  if (effectType === "damage") {
-    return ROLL_KINDS.DAMAGE;
-  }
-  if (effectType === "utility") {
-    return ROLL_KINDS.UTILITY;
-  }
-
-  // Fallback por rótulo apenas quando nenhum metadado foi informado.
-  // Fase 3.1 (V-03): removido o ramo "d20 + alvo selecionado => ATAQUE" (introduzido na Fase 3),
-  // que transformava rolagens livres de d20 em ataques contra a Defesa.
-  if (
-    primaryLabel === "Acerto" ||
-    primaryLabel === "Ataque" ||
-    /^(acerto|ataque|tiro|golpe)/i.test(primaryLabel || "") ||
-    /^(ataque|tiro|golpe)/i.test(title || "")
-  ) {
-    return ROLL_KINDS.ATTACK;
-  }
-
-  return ROLL_KINDS.CHECK;
-}
-
-/**
- * Determina se uma mensagem de chat representa uma rolagem de ataque (comparada contra Defesa).
- * Usa metadados estruturais (`rollKind` e `damageConfig`), restringindo regex apenas a mensagens históricas legadas.
- */
-export function isAttackRollMessage({ rollData = null, targetedToken = null } = {}) {
-  if (!rollData) return false;
-
-  const explicitKind = rollData.rollKind || null;
-  if (
-    explicitKind === ROLL_KINDS.DAMAGE ||
-    explicitKind === ROLL_KINDS.HEAL ||
-    explicitKind === ROLL_KINDS.MP_DAMAGE ||
-    explicitKind === ROLL_KINDS.MP_HEAL ||
-    explicitKind === ROLL_KINDS.SAVING_THROW ||
-    Boolean(rollData.parentMessageId && !rollData.savingThrowOutcome)
-  ) {
-    return false;
-  }
-
-  if (
-    explicitKind === ROLL_KINDS.ATTACK ||
-    Boolean(rollData.damageConfig) ||
-    Boolean(rollData.targetInfo?.isAttackRoll)
-  ) {
-    return true;
-  }
-
-  if (explicitKind) {
-    return false;
-  }
-
-  // Retrocompatibilidade estrita com rolagens persistidas antes da Fase 3 sem `rollKind`
-  const primaryRoll = rollData.primary || rollData.rolls?.[0] || null;
-  return (
-    /^(acerto|ataque|tiro|golpe)/i.test(primaryRoll?.label || "") ||
-    /^(ataque|tiro|golpe)/i.test(rollData.title || "") ||
-    (Boolean(targetedToken) && /\b1?d20\b/i.test(primaryRoll?.formulaOriginal || ""))
-  );
-}
-
-/**
- * Resolve dinamicamente um atalho de `rollGroups` com vínculo por referência (`sourceType` + `sourceId`)
- * contra a entidade original da ficha (habilidade, perícia, item ou atributo).
- */
-export function resolveDynamicRollEntry(entry, character) {
-  if (!entry) return null;
-
-  const sourceType = entry.sourceType || null;
-  const sourceId = entry.sourceId || null;
-
-  if (character && sourceType && sourceId) {
-    if (sourceType === "ability") {
-      const ab = (character.abilities || []).find((a) => a.id === sourceId);
-      if (ab) {
-        const hitFormula = ab.hitFormula || "";
-        const effectFormula = ab.effectFormula || "";
-        const effectType = ab.effectType || (effectFormula ? "damage" : null);
-        const rollKind = inferAbilityRollKind({ hitFormula, effectFormula, effectType });
-
-        return {
-          ...entry,
-          sourceType,
-          sourceId,
-          name: resolveLinkedShortcutName(entry, ab.name),
-          color: ab.elementColor || entry.color || "#e53935",
-          icon: entry.customIcon && entry.icon ? entry.icon : ab.icon || entry.icon || ab.name,
-          description: ab.description || "",
-          hitFormula,
-          effectFormula,
-          effectType,
-          savingThrow: ab.savingThrow || null,
-          range: ab.range || null,
-          aoe: ab.aoe || null,
-          trigger: ab.trigger || "active",
-          costResource: ab.cost?.resource || "mp",
-          costAmount: Number(ab.cost?.amount) || 0,
-          rollKind,
-          isLinkedMissing: false,
-        };
-      }
-    } else if (sourceType === "skill") {
-      const sk = (character.skills || []).find((s) => s.id === sourceId);
-      if (sk) {
-        const hitFormula =
-          sk.formula || `1d20 + @${sk.attribute || "forca"} + ${Number(sk.bonus) || 0}`;
-        return {
-          ...entry,
-          sourceType,
-          sourceId,
-          name: resolveLinkedShortcutName(entry, sk.name),
-          color: entry.color || "#02529c",
-          icon: entry.customIcon && entry.icon ? entry.icon : sk.icon || entry.icon || sk.name,
-          description: `Perícia (${sk.attribute || "atributo"} +${Number(sk.bonus) || 0})`,
-          hitFormula,
-          effectFormula: "",
-          effectType: null,
-          savingThrow: null,
-          costResource: "mp",
-          costAmount: 0,
-          rollKind: ROLL_KINDS.CHECK,
-          isLinkedMissing: false,
-        };
-      }
-    } else if (sourceType === "item") {
-      const item = (character.inventory || []).find((it) => it.id === sourceId);
-      if (item) {
-        const hitFormula = item.rollFormula || "";
-        const effectType = item.effectType || "heal";
-        const rollKind = classifyRollKind({
-          rollKind:
-            effectType === "heal" || effectType === "mp_heal"
-              ? ROLL_KINDS.HEAL
-              : effectType === "damage" || effectType === "mp_damage"
-              ? ROLL_KINDS.DAMAGE
-              : effectType === "utility"
-              ? ROLL_KINDS.UTILITY
-              : ROLL_KINDS.CHECK,
-          primaryFormula: hitFormula,
-          effectType,
-          deferSecondaryDamage: false,
-        });
-
-        return {
-          ...entry,
-          sourceType,
-          sourceId,
-          name: resolveLinkedShortcutName(entry, item.name),
-          color: item.elementColor || entry.color || "#38c172",
-          icon: entry.customIcon && entry.icon ? entry.icon : item.icon || entry.icon || item.name,
-          description: item.description || "",
-          hitFormula: hitFormula || "1d20",
-          effectFormula: "",
-          effectType,
-          savingThrow: item.savingThrow || null,
-          trigger: item.trigger || "active",
-          consumeOnUse: Boolean(item.consumeOnUse),
-          qty: Number(item.qty) || 0,
-          costResource: "mp",
-          costAmount: 0,
-          rollKind,
-          isLinkedMissing: false,
-        };
-      }
-    } else if (sourceType === "attribute") {
-      const attrList = Array.isArray(character.attributes) ? character.attributes : [];
-      const attr = attrList.find((a) => a.key === sourceId);
-      if (attr) {
-        return {
-          ...entry,
-          sourceType,
-          sourceId,
-          name: resolveLinkedShortcutName(entry, `Teste ${attr.label}`),
-          color: entry.color || "#02529c",
-          // Fase 3.1 (V-19): atributo usa sempre o ícone "clover", salvo ícone personalizado.
-          // Fase 6.3 (A17): ícone salvo diferente do padrão ("sword"/"clover") conta como personalizado.
-          icon: isCustomAttributeShortcutIcon(entry) ? entry.icon : "clover",
-          hitFormula: `1d20 + @${attr.key}`,
-          effectFormula: "",
-          effectType: null,
-          savingThrow: null,
-          costResource: "mp",
-          costAmount: 0,
-          rollKind: ROLL_KINDS.CHECK,
-          isLinkedMissing: false,
-        };
-      }
-    }
-  }
-
-  // Fase 3.1 (V-11): rolagem personalizada só de acerto (sem fórmula de efeito) não herda
-  // o effectType "damage" padrão do formulário — passa a ser CHECK, não DAMAGE.
-  const hasEffectFormula = Boolean(String(entry.effectFormula || "").trim());
-  const effectiveEffectType =
-    !hasEffectFormula && entry.effectType === "damage" ? null : entry.effectType || null;
-
-  const inferredKind = classifyRollKind({
-    rollKind: entry.rollKind || null,
-    primaryFormula: entry.hitFormula || "",
-    secondaryFormula: entry.effectFormula || "",
-    effectType: effectiveEffectType,
-    deferSecondaryDamage: Boolean(entry.hitFormula && entry.effectFormula),
-    title: entry.name || "",
-  });
-
-  // Fase 6.3 (A15): rolagem personalizada antiga só de acerto, sem `rollKind` salvo
-  // (ex.: "Disparo", "Espada"), vira ataque quando houver alvo no momento da rolagem.
-  // Rolagens novas gravam o tipo escolhido no formulário (Ataque ou Teste).
-  const hasExplicitKind = Boolean(
-    entry.rollKind && VALID_ROLL_KINDS.has(entry.rollKind) && !entry.attackWhenTargeted
-  );
-  const attackWhenTargeted =
-    (!sourceType || sourceType === "custom") &&
-    !hasExplicitKind &&
-    !hasEffectFormula &&
-    !effectiveEffectType &&
-    Boolean(String(entry.hitFormula || "").trim()) &&
-    inferredKind === ROLL_KINDS.CHECK;
-
-  return {
-    ...entry,
-    effectType: effectiveEffectType,
-    rollKind: inferredKind,
-    attackWhenTargeted,
-    // Vínculo com a fonte original (sourceType + sourceId) que não existe mais na ficha
-    isLinkedMissing: Boolean(sourceType && sourceId),
-  };
-}
-
-/**
- * Fase 3.1 (V-03 / V-09b): monta os parâmetros de execução de um atalho já resolvido
- * (aba Rolagens & Ações e Hotbar de Bolas de Neve usam exatamente a mesma montagem).
- */
-export function buildShortcutRollParams(resolvedRoll, character = null) {
-  if (!resolvedRoll) return null;
-  const costAmt = Number(resolvedRoll.costAmount) || 0;
-  const effectType =
-    resolvedRoll.effectType || (resolvedRoll.effectFormula ? "damage" : null);
-  const rollKind =
-    resolvedRoll.rollKind ||
-    inferAbilityRollKind({
-      hitFormula: resolvedRoll.hitFormula,
-      effectFormula: resolvedRoll.effectFormula,
-      effectType,
-    });
-  const primaryLabel =
-    rollKind === ROLL_KINDS.ATTACK
-      ? "Acerto"
-      : rollKind === ROLL_KINDS.SAVING_THROW
-        ? "Resistência"
-        : "Rolagem";
-
-  return {
-    title: resolvedRoll.name,
-    categoryColor: resolvedRoll.color || "#3090f0",
-    description: resolvedRoll.description || "",
-    primaryFormula: resolvedRoll.hitFormula ?? "1d20",
-    primaryLabel,
-    rollKind,
-    trigger: resolvedRoll.trigger || null,
-    range: resolvedRoll.range || null,
-    aoe: resolvedRoll.aoe || null,
-    secondaryFormula: resolvedRoll.effectFormula || "",
-    secondaryLabel: "Efeito / Dano",
-    character,
-    cost: costAmt > 0 ? { resource: resolvedRoll.costResource || "mp", amount: costAmt } : null,
-    costResource: resolvedRoll.costResource,
-    costAmount: resolvedRoll.costAmount,
-    effectType,
-    savingThrow: resolvedRoll.savingThrow || null,
-    icon: resolvedRoll.icon || resolvedRoll.name,
-    // Fase 6.3 (A15): decidido em handleExecuteSheetRoll, conforme haja alvo
-    attackWhenTargeted: Boolean(resolvedRoll.attackWhenTargeted),
-  };
-}
-
-/**
- * Fase 3.1 (V-09b): ponto único para gravar um atalho num slot da Hotbar (ficha e barra rápida).
- * O slot guarda a referência (`rollId` + `sourceType`/`sourceId`) e uma cópia apenas de reserva;
- * na execução, resolveHotbarSlot sempre relê o atalho e a fonte original da ficha.
- */
-export function buildHotbarSlotFromRoll(resolvedRoll) {
-  if (!resolvedRoll) return null;
-  return {
-    rollId: resolvedRoll.id,
-    sourceType: resolvedRoll.sourceType || "custom",
-    sourceId: resolvedRoll.sourceId || null,
-    customIcon: Boolean(resolvedRoll.customIcon),
-    ...(typeof resolvedRoll.customName === "boolean" ? { customName: resolvedRoll.customName } : {}),
-    name: resolvedRoll.name,
-    color: resolvedRoll.color || "#02529c",
-    icon: resolvedRoll.icon || resolvedRoll.name,
-    hitFormula: resolvedRoll.hitFormula ?? "1d20",
-    effectFormula: resolvedRoll.effectFormula || "",
-    effectType: resolvedRoll.effectType || (resolvedRoll.effectFormula ? "damage" : null),
-    rollKind: resolvedRoll.attackWhenTargeted ? null : (resolvedRoll.rollKind || null),
-    range: resolvedRoll.range || null,
-    aoe: resolvedRoll.aoe || null,
-    trigger: resolvedRoll.trigger || null,
-    savingThrow: resolvedRoll.savingThrow || null,
-    costResource: resolvedRoll.costResource || "mp",
-    costAmount: resolvedRoll.costAmount || 0,
-  };
-}
-
-/**
- * Resolve um slot da Hotbar 3x3 em duas camadas:
- * slot.rollId -> item atualizado em rollGroups -> fonte original (habilidade/perícia/item).
- */
-export function resolveHotbarSlot(slot, character) {
-  if (!slot) return null;
-
-  let baseEntry = slot;
-  if (character && slot.rollId) {
-    const rollGroups = Array.isArray(character.rollGroups) ? character.rollGroups : [];
-    for (const grp of rollGroups) {
-      const found = (grp.rolls || []).find((r) => r.id === slot.rollId);
-      if (found) {
-        // Fase 6.3 (A19): o resultado preserva o `rollId` do slot salvo (o atalho do grupo só
-        // tem `id`), para a ficha reconhecer o slot do atalho e oferecer "Remover".
-        baseEntry = {
-          ...found,
-          rollId: slot.rollId,
-          sourceType: found.sourceType || slot.sourceType || null,
-          sourceId: found.sourceId || slot.sourceId || null,
-        };
-        break;
-      }
-    }
-  }
-
-  return resolveDynamicRollEntry(baseEntry, character);
+async function grantSenderMediaAudience({ campaignId, identity, visibleTo, characterMediaId = null }) {
+  const mediaId =
+    characterMediaId || identity?.characterMediaId || identity?.senderAvatarMediaId || null;
+  if (!campaignId || !mediaId) return;
+  await grantMediaAudience({ campaignId, mediaId, visibleTo });
 }
 
 /**
@@ -603,6 +224,14 @@ export async function sendEmoteChatMessage({
     senderPhotoURL,
   });
 
+  const emoteVisibleTo = buildVisibilityAudience(visibility, campaign, user);
+  await grantSenderMediaAudience({
+    campaignId,
+    identity,
+    visibleTo: emoteVisibleTo,
+    characterMediaId,
+  });
+
   const emoteMessage = {
     id: msgId,
     campaignId,
@@ -614,7 +243,7 @@ export async function sendEmoteChatMessage({
     characterMediaId: characterMediaId || identity.characterMediaId,
     type: "emote",
     visibility,
-    visibleTo: buildVisibilityAudience(visibility, campaign, user),
+    visibleTo: emoteVisibleTo,
     icon,
     isDeleted: false,
     timestampMs: Date.now(),
@@ -649,6 +278,14 @@ export async function sendTextChatMessage({
     senderPhotoURL,
   });
 
+  const textVisibleTo = buildVisibilityAudience(visibility, campaign, user);
+  await grantSenderMediaAudience({
+    campaignId,
+    identity,
+    visibleTo: textVisibleTo,
+    characterMediaId,
+  });
+
   const payload = {
     id: msgId,
     campaignId,
@@ -660,7 +297,7 @@ export async function sendTextChatMessage({
     characterMediaId: characterMediaId || identity.characterMediaId,
     type: "text",
     visibility,
-    visibleTo: buildVisibilityAudience(visibility, campaign, user),
+    visibleTo: textVisibleTo,
     content: content.trim(),
     isDeleted: false,
     timestampMs: Date.now(),
@@ -689,6 +326,9 @@ export async function sendSkillPingChatMessage({
     playersMap: campaign?.players,
   });
 
+  const pingVisibleTo = buildVisibilityAudience(visibility, campaign, user);
+  await grantSenderMediaAudience({ campaignId, identity, visibleTo: pingVisibleTo });
+
   const pingMessage = {
     id: msgId,
     campaignId,
@@ -700,7 +340,7 @@ export async function sendSkillPingChatMessage({
     characterMediaId: identity.characterMediaId,
     type: "skill_ping",
     visibility,
-    visibleTo: buildVisibilityAudience(visibility, campaign, user),
+    visibleTo: pingVisibleTo,
     content: skill.description || "",
     skillData: {
       id: skill.id || `sk_${Date.now()}`,
@@ -715,7 +355,7 @@ export async function sendSkillPingChatMessage({
       range: skill.range || null,
       aoe: skill.aoe || null,
       description: skill.description || "",
-      icon: skill.icon || skill.name || null,
+      icon: skill.icon || null,
       attribute: skill.attribute || null,
       bonus: skill.bonus !== undefined ? skill.bonus : null,
     },
@@ -835,9 +475,6 @@ export async function executeChatRollMessage({
     secondaryFormula,
     effectType: resolvedEffectType,
     deferSecondaryDamage,
-    primaryLabel,
-    title,
-    hasTarget: Boolean(effectiveTargetedToken),
   });
 
   const isAttackRoll = resolvedRollKind === ROLL_KINDS.ATTACK;
@@ -886,7 +523,7 @@ export async function executeChatRollMessage({
       parentMessageId: msgId,
       dc: dcVal,
       dcFormula: savingThrow.dcFormula || String(dcVal),
-      attribute: savingThrow.attribute || "resistencia",
+      attribute: savingThrow.attributeKey || savingThrow.attribute || "resistencia",
       effectDescription: savingThrow.effectDescription || "",
       sourceRollName: title,
       sourceCharacterId: character?.id || null,
@@ -930,6 +567,9 @@ export async function executeChatRollMessage({
         }
       : savingThrowOutcome;
 
+  const rollVisibleTo = buildVisibilityAudience(visibility, campaign, user);
+  await grantSenderMediaAudience({ campaignId, identity, visibleTo: rollVisibleTo });
+
   const rollMessage = {
     id: msgId,
     campaignId,
@@ -941,7 +581,7 @@ export async function executeChatRollMessage({
     characterMediaId: identity.characterMediaId,
     type: "ability_roll",
     visibility,
-    visibleTo: buildVisibilityAudience(visibility, campaign, user),
+    visibleTo: rollVisibleTo,
     content: description || "",
     icon: icon || null,
     isDeleted: false,

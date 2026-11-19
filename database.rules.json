@@ -1,43 +1,493 @@
 {
   "rules": {
+    "platformAdmins": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
+    },
     "vtt_realtime": {
       "$campaignId": {
-        ".read": "auth != null",
+        "meta": {
+          "gmId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && newData.exists() && ((!data.exists() && newData.val() === auth.uid && root.child('platformAdmins').child(auth.uid).val() === true) || (root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && (data.val() === auth.uid || (data.parent().child('pendingGm').val() === auth.uid && newData.val() === auth.uid))))",
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "pendingGm": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && (data.parent().child('gmId').val() === auth.uid || (data.val() === auth.uid && !newData.exists()))",
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "members": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            "$uid": {
+              ".write": "auth != null && ((root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid && ($uid !== auth.uid || newData.exists())) || (auth.uid === $uid && newData.val() === true && root.child('platformAdmins').child(auth.uid).val() === true && !root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').exists() && newData.parent().parent().child('gmId').val() === auth.uid) || (auth.uid === $uid && newData.val() === true && auth.token.email_verified === true && auth.token.email.length > 0 && root.child('vtt_realtime').child($campaignId).child('meta').child('invites').child(auth.token.email.toLowerCase().replace('.', ',')).val() === true))",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "invites": {
+            ".read": false,
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            "$emailKey": {
+              ".validate": "newData.val() === true"
+            }
+          }
+        },
+        "presence": {
+          ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+          "$uid": {
+            ".write": "auth != null && !newData.exists() && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            "$connId": {
+              ".write": "auth != null && auth.uid === $uid && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+              ".validate": "newData.hasChildren(['kind', 'connectedAt']) && ((newData.child('kind').val() === 'main' && !newData.child('sheetId').exists()) || (newData.child('kind').val() === 'sheet' && newData.child('sheetId').isString() && newData.child('sheetId').val().length > 0)) && newData.child('connectedAt').isNumber() && newData.child('connectedAt').val() >= 0",
+              "kind": {
+                ".validate": "newData.isString()"
+              },
+              "sheetId": {
+                ".validate": "newData.isString()"
+              },
+              "connectedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
         "tokens": {
           "$sceneId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
             "$tokenId": {
-              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && newData.child('ownerId').val() === auth.uid && newData.child('layer').val() === 'tokens') || (data.exists() && !newData.exists() && data.child('ownerId').val() === auth.uid) || (data.exists() && newData.exists() && (!data.child('ownerId').exists() || newData.child('ownerId').val() === data.child('ownerId').val()) && newData.child('layer').val() === data.child('layer').val() && (data.child('ownerId').val() === auth.uid || data.child('controlledBy').child('ALL').val() === true || data.child('controlledBy').child(auth.uid).val() === true)))"
+              ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && ((!data.exists() && newData.exists() && newData.child('ownerId').val() === auth.uid && (newData.child('kind').val() === 'pc' || newData.child('kind').val() === 'free') && newData.child('layer').val() === 'tokens' && newData.child('hidden').val() === false) || (data.exists() && !newData.exists() && data.child('ownerId').val() === auth.uid))",
+              ".validate": "newData.hasChildren(['id', 'kind', 'ownerId', 'layer', 'hidden', 'x', 'y', 'sizeInCells', 'rotation', 'ringColor', 'showName', 'rev']) && newData.child('id').val() === $tokenId && newData.child('hidden').val() === false && ((newData.child('kind').val() === 'pc' && newData.child('characterId').isString() && newData.child('characterId').val().length > 0) || (newData.child('kind').val() === 'free' && !newData.child('characterId').exists()) || (newData.child('kind').val() === 'npc' && (!newData.child('characterId').exists() || (newData.child('characterId').isString() && newData.child('characterId').val().length > 0))))",
+              "id": {
+                ".validate": "newData.isString() && newData.val() === $tokenId"
+              },
+              "kind": {
+                ".validate": "newData.val() === 'pc' || newData.val() === 'npc' || newData.val() === 'free'"
+              },
+              "characterId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "ownerId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "controlledBy": {
+                "$uid": {
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "layer": {
+                ".validate": "newData.val() === 'map' || newData.val() === 'objects' || newData.val() === 'tokens'"
+              },
+              "hidden": {
+                ".validate": "newData.val() === false"
+              },
+              "label": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "image": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                ".validate": "!(newData.child('mediaId').exists() && newData.child('url').exists())",
+                "mediaId": {
+                  ".validate": "newData.isString() && newData.val().length > 0"
+                },
+                "url": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length < 2048"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "x": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true)",
+                ".validate": "newData.isNumber()"
+              },
+              "y": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true)",
+                ".validate": "newData.isNumber()"
+              },
+              "sizeInCells": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 8"
+              },
+              "rotation": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true)",
+                ".validate": "newData.isNumber()"
+              },
+              "ringColor": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "showName": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                ".validate": "newData.isBoolean()"
+              },
+              "bars": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.parent().child('rev').isNumber() && (!data.parent().child('rev').exists() || newData.parent().child('rev').val() > data.parent().child('rev').val())",
+                "hpCurrent": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "hpMax": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "mpCurrent": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "mpMax": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "rev": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true) && newData.isNumber() && (!data.exists() || newData.val() > data.val())",
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() % 1 === 0 && (!data.exists() || newData.val() >= data.val())"
+              },
+              "updatedAt": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true)",
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "updatedBy": {
+                ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && data.parent().exists() && newData.parent().exists() && (data.parent().child('ownerId').val() === auth.uid || data.parent().child('controlledBy').child('ALL').val() === true || data.parent().child('controlledBy').child(auth.uid).val() === true)",
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
+        "hiddenTokens": {
+          "$sceneId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            "$tokenId": {
+              ".validate": "newData.hasChildren(['id', 'kind', 'ownerId', 'layer', 'hidden', 'x', 'y', 'sizeInCells', 'rotation', 'ringColor', 'showName', 'rev']) && newData.child('id').val() === $tokenId && ((newData.child('kind').val() === 'pc' && newData.child('characterId').isString() && newData.child('characterId').val().length > 0) || (newData.child('kind').val() === 'free' && !newData.child('characterId').exists()) || (newData.child('kind').val() === 'npc' && (!newData.child('characterId').exists() || (newData.child('characterId').isString() && newData.child('characterId').val().length > 0))))",
+              "id": {
+                ".validate": "newData.isString() && newData.val() === $tokenId"
+              },
+              "kind": {
+                ".validate": "newData.val() === 'pc' || newData.val() === 'npc' || newData.val() === 'free'"
+              },
+              "characterId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "ownerId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "controlledBy": {
+                "$uid": {
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "layer": {
+                ".validate": "newData.val() === 'map' || newData.val() === 'objects' || newData.val() === 'tokens'"
+              },
+              "hidden": {
+                ".validate": "newData.isBoolean()"
+              },
+              "label": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "image": {
+                ".validate": "!(newData.child('mediaId').exists() && newData.child('url').exists())",
+                "mediaId": {
+                  ".validate": "newData.isString() && newData.val().length > 0"
+                },
+                "url": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length < 2048"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "x": {
+                ".validate": "newData.isNumber()"
+              },
+              "y": {
+                ".validate": "newData.isNumber()"
+              },
+              "sizeInCells": {
+                ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 8"
+              },
+              "rotation": {
+                ".validate": "newData.isNumber()"
+              },
+              "ringColor": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "showName": {
+                ".validate": "newData.isBoolean()"
+              },
+              "bars": {
+                "hpCurrent": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "hpMax": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "mpCurrent": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "mpMax": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "rev": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() % 1 === 0 && (!data.exists() || newData.val() >= data.val())"
+              },
+              "updatedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "updatedBy": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
+        "tokenSecrets": {
+          "$sceneId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            "$tokenId": {
+              ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).exists() && (root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('ownerId').val() === auth.uid || root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('controlledBy').child('ALL').val() === true || root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('controlledBy').child(auth.uid).val() === true)",
+              ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && ((!data.exists() && newData.exists() && !root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).exists() && newData.parent().parent().parent().child('tokens').child($sceneId).child($tokenId).exists() && newData.parent().parent().parent().child('tokens').child($sceneId).child($tokenId).child('ownerId').val() === auth.uid) || (data.exists() && !newData.exists() && root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).exists() && root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('ownerId').val() === auth.uid && !newData.parent().parent().parent().child('tokens').child($sceneId).child($tokenId).exists()) || (data.exists() && newData.exists() && root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).exists() && (root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('ownerId').val() === auth.uid || root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('controlledBy').child('ALL').val() === true || root.child('vtt_realtime').child($campaignId).child('tokens').child($sceneId).child($tokenId).child('controlledBy').child(auth.uid).val() === true)))",
+              ".validate": "newData.hasChildren(['defense', 'showBarsToPlayers']) && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || !data.exists() || (data.child('hp').exists() === newData.child('hp').exists() && data.child('mp').exists() === newData.child('mp').exists()))",
+              "defense": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || !data.parent().exists() || newData.val() === data.val())"
+              },
+              "showBarsToPlayers": {
+                ".validate": "newData.isBoolean() && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || !data.parent().exists() || newData.val() === data.val())"
+              },
+              "hp": {
+                ".validate": "newData.hasChildren(['current', 'max'])",
+                "current": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "max": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || !data.parent().parent().exists() || newData.val() === data.val())"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "mp": {
+                ".validate": "newData.hasChildren(['current', 'max'])",
+                "current": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "max": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || !data.parent().parent().exists() || newData.val() === data.val())"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "recentOps": {
+                "$opId": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           }
         },
         "fog": {
           "$sceneId": {
-            ".write": "auth != null && (auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid)"
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
+            ".validate": "newData.hasChildren(['enabled'])",
+            "enabled": {
+              ".validate": "newData.isBoolean()"
+            },
+            "areas": {
+              "$areaId": {
+                ".validate": "newData.hasChildren(['id', 'op', 'x', 'y', 'w', 'h']) && newData.child('id').val() === $areaId",
+                "id": {
+                  ".validate": "newData.isString() && newData.val() === $areaId"
+                },
+                "op": {
+                  ".validate": "newData.val() === 'reveal' || newData.val() === 'hide'"
+                },
+                "x": {
+                  ".validate": "newData.isNumber()"
+                },
+                "y": {
+                  ".validate": "newData.isNumber()"
+                },
+                "w": {
+                  ".validate": "newData.isNumber() && newData.val() > 0"
+                },
+                "h": {
+                  ".validate": "newData.isNumber() && newData.val() > 0"
+                },
+                "createdAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "$other": {
+              ".validate": false
+            }
           }
         },
         "drawings": {
           "$sceneId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
             "$drawingId": {
-              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && newData.child('authorId').val() === auth.uid && newData.child('layer').val() === 'tokens') || (data.exists() && !newData.exists() && (data.child('authorId').val() === auth.uid || data.child('createdBy').val() === auth.uid)) || (data.exists() && newData.exists() && (data.child('authorId').val() === auth.uid || data.child('createdBy').val() === auth.uid) && (!data.child('authorId').exists() || newData.child('authorId').val() === data.child('authorId').val())))"
+              ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && ((!data.exists() && newData.exists() && newData.child('authorId').val() === auth.uid && newData.child('layer').val() === 'tokens') || (data.exists() && !newData.exists() && data.child('authorId').val() === auth.uid) || (data.exists() && newData.exists() && data.child('authorId').val() === auth.uid && newData.child('authorId').val() === data.child('authorId').val() && newData.child('layer').val() === data.child('layer').val() && newData.child('type').val() === data.child('type').val()))",
+              ".validate": "newData.hasChildren(['id', 'type', 'layer', 'authorId']) && newData.child('id').val() === $drawingId && ((newData.child('type').val() === 'stroke' && newData.hasChildren(['color', 'width', 'points'])) || ((newData.child('type').val() === 'rect' || newData.child('type').val() === 'circle') && newData.hasChildren(['strokeColor', 'strokeWidth', 'hasFill', 'x', 'y', 'w', 'h', 'rotation']) && (newData.child('hasFill').val() !== true || (newData.child('fillColor').isString() && newData.child('fillColor').val().length > 0))) || (newData.child('type').val() === 'text' && newData.hasChildren(['text', 'fontSize', 'fontFamily', 'color', 'x', 'y', 'rotation'])))",
+              "id": {
+                ".validate": "newData.isString() && newData.val() === $drawingId"
+              },
+              "type": {
+                ".validate": "newData.val() === 'stroke' || newData.val() === 'rect' || newData.val() === 'circle' || newData.val() === 'text'"
+              },
+              "layer": {
+                ".validate": "(newData.val() === 'map' || newData.val() === 'objects' || newData.val() === 'tokens') && (root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid || (!data.exists() && newData.val() === 'tokens') || (data.exists() && newData.val() === data.val()))"
+              },
+              "authorId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "authorName": {
+                ".validate": "newData.isString()"
+              },
+              "createdAt": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "updatedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "updatedBy": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "color": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "width": {
+                ".validate": "newData.isNumber() && newData.val() > 0"
+              },
+              "points": {
+                "$idx": {
+                  ".validate": "newData.hasChildren(['x', 'y'])",
+                  "x": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "y": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
+              },
+              "strokeColor": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "strokeWidth": {
+                ".validate": "newData.isNumber() && newData.val() > 0"
+              },
+              "hasFill": {
+                ".validate": "newData.isBoolean()"
+              },
+              "fillColor": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "text": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "fontSize": {
+                ".validate": "newData.isNumber() && newData.val() > 0"
+              },
+              "fontFamily": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "x": {
+                ".validate": "newData.isNumber()"
+              },
+              "y": {
+                ".validate": "newData.isNumber()"
+              },
+              "w": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "h": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "rotation": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           }
         },
         "pings": {
           "$sceneId": {
+            ".read": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid",
             "$pingId": {
-              ".write": "auth != null && ((auth.token.email === 'erickteixeiractt@gmail.com' || root.child('vtt_realtime').child($campaignId).child('meta').child('gmId').val() === auth.uid) || (!data.exists() && (newData.child('authorId').val() === auth.uid || newData.child('senderId').val() === auth.uid)) || (data.exists() && !newData.exists() && (data.child('authorId').val() === auth.uid || data.child('senderId').val() === auth.uid)))"
+              ".write": "auth != null && root.child('vtt_realtime').child($campaignId).child('meta').child('members').child(auth.uid).val() === true && ((!data.exists() && newData.exists() && newData.child('authorId').val() === auth.uid) || (data.exists() && !newData.exists() && (data.child('authorId').val() === auth.uid || (data.child('createdAt').isNumber() && now > data.child('createdAt').val() + 2200))))",
+              ".validate": "newData.hasChildren(['id', 'authorId', 'kind', 'x', 'y', 'color', 'createdAt']) && newData.child('id').val() === $pingId && ((newData.child('kind').val() === 'ping' && !newData.child('from').exists()) || (newData.child('kind').val() === 'snowball' && newData.child('from').hasChildren(['x', 'y'])))",
+              "id": {
+                ".validate": "newData.isString() && newData.val() === $pingId"
+              },
+              "authorId": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "kind": {
+                ".validate": "newData.val() === 'ping' || newData.val() === 'snowball'"
+              },
+              "x": {
+                ".validate": "newData.isNumber()"
+              },
+              "y": {
+                ".validate": "newData.isNumber()"
+              },
+              "from": {
+                ".validate": "newData.hasChildren(['x', 'y'])",
+                "x": {
+                  ".validate": "newData.isNumber()"
+                },
+                "y": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "color": {
+                ".validate": "newData.isString() && newData.val().length > 0"
+              },
+              "createdAt": {
+                ".validate": "newData.isNumber() && newData.val() === now"
+              },
+              "$other": {
+                ".validate": false
+              }
             }
-          }
-        },
-        "presence": {
-          "$uid": {
-            ".write": "auth != null && auth.uid === $uid"
-          }
-        },
-        "meta": {
-          "gmId": {
-            ".write": "auth != null && (auth.token.email === 'erickteixeiractt@gmail.com' || data.val() === auth.uid)",
-            ".validate": "newData.isString()"
           }
         }
       }

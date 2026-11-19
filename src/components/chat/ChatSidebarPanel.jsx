@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import { useCampaign } from "../../contexts/CampaignContext";
+import { useMembers } from "../../contexts/MembersContext";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
 import { ROLL_KINDS } from "../../engines/combatEngine";
 import { resolveSpeakerIdentity } from "../../services/rollService";
@@ -30,7 +30,8 @@ export default function ChatSidebarPanel({
   isGM
 }) {
   const { user } = useAuth();
-  const { campaign, myPlayerProfile } = useCampaign();
+  // TRANSITION(T1): playersMap / myPlayerProfile derivados de Members até Fase 10
+  const { playersMap, myPlayerProfile } = useMembers();
   const [text, setText] = useState("");
   const [effectMenuMsgId, setEffectMenuMsgId] = useState(null);
   const [effectMenuType, setEffectMenuType] = useState("damage");
@@ -84,12 +85,16 @@ export default function ChatSidebarPanel({
   }, [speakAs, accessibleCharacters]);
 
   const { url: selectedCharAvatarUrl } = useMediaUrl(
-    currentCharacter?.avatarMediaId || currentCharacter?.defaultToken?.mediaId,
-    currentCharacter?.avatarExternalUrl || currentCharacter?.defaultToken?.externalUrl,
+    currentCharacter?.avatar?.mediaId ??
+      currentCharacter?.token?.image?.mediaId ??
+      currentCharacter?.avatarMediaId ??
+      currentCharacter?.defaultToken?.mediaId,
+    currentCharacter?.avatar?.url ??
+      currentCharacter?.token?.image?.url ??
+      currentCharacter?.avatarExternalUrl ??
+      currentCharacter?.defaultToken?.externalUrl,
     campaignId
   );
-
-  const playersMap = campaign?.players;
 
   // Resolve os dados da identidade selecionada via serviço único (nome, avatar e personagem)
   const currentIdentity = useMemo(

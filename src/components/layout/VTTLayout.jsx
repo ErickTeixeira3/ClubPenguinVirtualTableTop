@@ -1,15 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
+import { useMembers } from "../../contexts/MembersContext";
+import { usePresence } from "../../contexts/PresenceContext";
+import { useTargetSelection } from "../../contexts/TargetSelectionContext.js";
+import TargetSelectionProvider from "../../contexts/TargetSelectionProvider.jsx";
+import TurnPolicyProvider from "../../contexts/TurnPolicyProvider.jsx";
 import { useScenes } from "../../hooks/useScenes";
 import { useCharacters } from "../../hooks/useCharacters";
 import { useCompendium } from "../../hooks/useCompendium";
 import { useChatRolls } from "../../hooks/useChatRolls";
 import { useJournalNotes } from "../../hooks/useJournalNotes";
 import { useCrossWindowSync } from "../../hooks/useCrossWindowSync";
-import { useRealtimeTokens } from "../../hooks/useRealtimeTokens";
-import BoardTokensProvider from "../../contexts/BoardTokensProvider";
-import { getNoteTypeMeta } from "../../engines/aliasEngine";
+import { useFog } from "../../hooks/useFog.js";
+import { useSceneTokens } from "../../hooks/useSceneTokens.js";
+import { useTokenSecrets } from "../../hooks/useTokenSecrets.js";
+import { useBoardReconciliation } from "../../hooks/useBoardReconciliation.js";
+import { getNoteTypeMeta } from "../journal/noteTypesUi";
 import {
   ROLL_KINDS,
   doubleDiceInFormula,
@@ -61,33 +68,118 @@ const SNOWBALL_CURSOR_STYLE = {
   "--cp-snowball-cursor": `url("${getAssetUrl("icones/iconeMiraBolaDeNeve.png")}") 32 32, crosshair`
 };
 
-function buildTargetSelectionState(listOrToken) {
-  const raw = Array.isArray(listOrToken) ? listOrToken : listOrToken ? [listOrToken] : [];
-  const tokenIds = [];
-  const tokensById = {};
-  for (const tok of raw) {
-    const id = tok?.id || tok?.tokenId;
-    if (!id || tokensById[id]) continue;
-    tokenIds.push(id);
-    tokensById[id] = tok;
-  }
-  return { tokenIds, tokensById };
+export default function VTTLayout() {
+  const { campaignId, combatState, isRealGM, isGM } = useCampaign();
+  const scenesApi = useScenes();
+  const charactersApi = useCharacters();
+
+  const activeSceneId = scenesApi.activeScene?.id || null;
+  const cellSizePx = Math.max(16, Number(scenesApi.activeScene?.grid?.cellSizePx) || 64);
+
+  const fogApi = useFog(activeSceneId);
+  const tokensApi = useSceneTokens(activeSceneId, {
+    fog: fogApi.fog,
+    cellSizePx
+  });
+  const secretsByTokenId = useTokenSecrets(activeSceneId, tokensApi.publicTokens);
+
+  useBoardReconciliation({
+    sceneId: activeSceneId,
+    characters: charactersApi.allCharacters || [],
+    publicTokens: tokensApi.publicTokens,
+    hiddenTokens: tokensApi.hiddenTokens,
+    tokensLoaded: tokensApi.loaded,
+    fog: fogApi.fog,
+    cellSizePx
+  });
+
+  const liveTokensWithSecrets = useMemo(
+    () =>
+      (tokensApi.tokens || []).map((tok) => ({
+        ...tok,
+        secrets: secretsByTokenId[tok.id] || null,
+        inHiddenBucket: tokensApi.isTokenInHiddenBucket(tok.id),
+        sceneId: activeSceneId
+      })),
+    [tokensApi, secretsByTokenId, activeSceneId]
+  );
+
+  const externalTargetReceiverRef = useRef(null);
+  const broadcastTargetsRef = useRef(null);
+
+  const registerExternalTargetReceiver = useCallback((fn) => {
+    externalTargetReceiverRef.current = fn;
+    return () => {
+      if (externalTargetReceiverRef.current === fn) {
+        externalTargetReceiverRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleTargetsChange = useCallback((_ids, resolvedTokens) => {
+    broadcastTargetsRef.current?.(resolvedTokens);
+  }, []);
+
+  const handleConsumeTurnMovement = useCallback(
+    async (tokenObj, distanceMeters) => {
+      if (!combatState?.active || !isRealGM) return;
+      await consumeCampaignTurnMovement(campaignId, combatState, tokenObj, distanceMeters);
+    },
+    [campaignId, combatState, isRealGM]
+  );
+
+  return (
+    <TurnPolicyProvider
+      combatState={combatState}
+      isGM={isGM}
+      onConsumeMovement={isRealGM ? handleConsumeTurnMovement : null}
+    >
+      <TargetSelectionProvider
+        sceneId={activeSceneId}
+        sceneTokens={liveTokensWithSecrets}
+        tokensLoaded={tokensApi.loaded}
+        registerExternalReceiver={registerExternalTargetReceiver}
+        onTargetsChange={handleTargetsChange}
+      >
+        <VTTLayoutInner
+          scenesApi={scenesApi}
+          charactersApi={charactersApi}
+          fogApi={fogApi}
+          tokensApi={tokensApi}
+          secretsByTokenId={secretsByTokenId}
+          liveTokensWithSecrets={liveTokensWithSecrets}
+          externalTargetReceiverRef={externalTargetReceiverRef}
+          broadcastTargetsRef={broadcastTargetsRef}
+        />
+      </TargetSelectionProvider>
+    </TurnPolicyProvider>
+  );
 }
 
-export default function VTTLayout() {
+function VTTLayoutInner({
+  scenesApi,
+  charactersApi,
+  fogApi,
+  tokensApi,
+  secretsByTokenId,
+  liveTokensWithSecrets,
+  externalTargetReceiverRef,
+  broadcastTargetsRef
+}) {
   const { user, logout } = useAuth();
   const {
     campaignId,
     campaign,
     combatState,
-    onlineUsers,
     isRealGM,
     isGM,
     viewAsPlayer,
     setViewAsPlayer,
-    myPlayerProfile,
     firestoreError
   } = useCampaign();
+  // TRANSITION(T1): playersMap / myPlayerProfile / onlineUsers derivados de Members/Presence até Fase 11
+  const { playersMap, myPlayerProfile } = useMembers();
+  const { onlineUsers } = usePresence();
 
   const {
     scenes,
@@ -97,7 +189,7 @@ export default function VTTLayout() {
     updateScene,
     deleteScene,
     activateSceneForTable
-  } = useScenes();
+  } = scenesApi;
 
   const {
     characters,
@@ -105,17 +197,32 @@ export default function VTTLayout() {
     folders: characterFolders,
     canEditCharacter,
     canEditFolder: canEditCharacterFolder,
+    canDeleteCharacter,
+    canDeleteFolder: canDeleteCharacterFolder,
     createCharacter,
+    renameCharacter,
     updateCharacter,
     updateCharacterResource,
+    applyCharacterResourceDelta,
+    consumeCharacterItem,
+    addCharacterEntry,
+    updateCharacterEntry,
+    removeCharacterEntry,
+    reorderCharacterEntries,
+    setCharacterHotbarSlot,
+    shareCharacter,
+    transferCharacter,
+    pullCompendiumEntry,
     uploadCharacterImage,
     deleteCharacter,
     createFolder: createCharacterFolder,
+    renameFolder: renameCharacterFolder,
     updateFolder: updateCharacterFolder,
+    transferFolderOwnership: transferCharacterFolderOwnership,
     deleteFolder: deleteCharacterFolder,
     moveCharacterToFolder,
     moveFolder: moveCharacterFolder
-  } = useCharacters();
+  } = charactersApi;
 
   const {
     entries: compendiumEntries,
@@ -137,14 +244,22 @@ export default function VTTLayout() {
   const {
     accessibleNotes,
     accessibleFolders,
+    canEditNote,
+    canDeleteNote,
+    canEditFolder: canEditJournalFolder,
+    canDeleteFolder: canDeleteJournalFolder,
     createNote,
     updateNote,
+    saveNoteDraft,
     updateNodePosition,
     cloneNoteToTarget,
     shareNoteWithTarget,
     revokeNoteAccess,
     deleteNote,
     createFolder,
+    renameFolder: renameJournalFolder,
+    moveFolder: moveJournalFolder,
+    moveNoteToFolder,
     deleteFolder
   } = useJournalNotes();
 
@@ -170,18 +285,7 @@ export default function VTTLayout() {
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [snowballAimActive, setSnowballAimActive] = useState(false);
   const [selectedTokenOnBoard, setSelectedTokenOnBoard] = useState(null);
-  const [targetSelection, setTargetSelection] = useState({ tokenIds: [], tokensById: {} });
-  const targetSelectionRef = useRef(targetSelection);
-
-  useEffect(() => {
-    targetSelectionRef.current = targetSelection;
-  }, [targetSelection]);
-
-  const targetedTokens = useMemo(
-    () => targetSelection.tokenIds.map((id) => targetSelection.tokensById[id]).filter(Boolean),
-    [targetSelection]
-  );
-  const targetedToken = targetedTokens[0] || null;
+  const { targetedTokens, primaryTarget: targetedToken } = useTargetSelection();
 
   const [aoeDemarcateConfig, setAoeDemarcateConfig] = useState(null);
   const [actionBlockNotice, setActionBlockNotice] = useState(null);
@@ -210,10 +314,8 @@ export default function VTTLayout() {
     campaignId,
     targetedTokens,
     aoeDemarcateConfig,
-    onTargetsReceived: ({ targetedTokens: received }) => {
-      const nextState = buildTargetSelectionState(received);
-      targetSelectionRef.current = nextState;
-      setTargetSelection(nextState);
+    onTargetsReceived: (payload) => {
+      externalTargetReceiverRef.current?.(payload);
     },
     onAoeDemarcateReceived: (config) => {
       setAoeDemarcateConfig(config || null);
@@ -234,34 +336,9 @@ export default function VTTLayout() {
     }
   });
 
-  const setTargetedTokens = (nextListOrFn) => {
-    const currentList = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-    const resolved = typeof nextListOrFn === "function" ? nextListOrFn(currentList) : nextListOrFn;
-    const nextState = buildTargetSelectionState(resolved);
-    targetSelectionRef.current = nextState;
-    setTargetSelection(nextState);
-    broadcastTargets(nextState.tokenIds.map((id) => nextState.tokensById[id]));
-  };
-
-  // Fase 6.3 (A12): definir o alvo principal não descarta os demais alvos. Só limpa tudo
-  // quando recebe null; um token já presente vira o primeiro da lista, sem reenviar lista menor.
-  const setTargetedToken = (nextTok) => {
-    const currentList = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-    const resolved = typeof nextTok === "function" ? nextTok(currentList[0] || null) : nextTok;
-    if (!resolved) {
-      setTargetedTokens([]);
-      return;
-    }
-    const resolvedId = resolved.id || resolved.tokenId;
-    setTargetedTokens([
-      resolved,
-      ...currentList.filter((t) => (t.id || t.tokenId) !== resolvedId)
-    ]);
-  };
+  useEffect(() => {
+    broadcastTargetsRef.current = broadcastTargets;
+  }, [broadcastTargets, broadcastTargetsRef]);
 
   const handleStartAoeDemarcate = (config) => {
     const next = config || null;
@@ -272,10 +349,7 @@ export default function VTTLayout() {
   const [damageModalMsg, setDamageModalMsg] = useState(null);
   const [activeSavingThrowReq, setActiveSavingThrowReq] = useState(null);
 
-  // Fase 5: tokens da cena ativa assinados aqui e compartilhados com o BoardViewport via
-  // BoardTokensContext (substitui o boardSyncRef alimentado pelo filho via onTokensSync).
-  const boardTokensApi = useRealtimeTokens(activeScene?.id || null);
-  const boardTokensValue = { ...boardTokensApi, sceneId: activeScene?.id || null };
+  const activeSceneId = activeScene?.id || null;
   const dismissedSaveIdsRef = useRef(new Set());
   const inFlightSaveIdsRef = useRef(new Set());
   const pendingSaveClaimTimerRef = useRef(null);
@@ -307,7 +381,7 @@ export default function VTTLayout() {
   const currentDisplayName = resolveSpeakerIdentity({
     user,
     myPlayerProfile,
-    playersMap: campaign?.players
+    playersMap
   }).senderName;
 
   const activeCharacter = useMemo(() => {
@@ -356,7 +430,7 @@ export default function VTTLayout() {
   // Prioriza o token selecionado no tabuleiro; sem seleção, só aceita um token único da ficha.
   const resolveActorToken = (character, preferredTokenId = null) => {
     if (!character) return null;
-    const boardTokens = boardTokensApi.tokens || [];
+    const boardTokens = liveTokensWithSecrets || [];
     if (preferredTokenId) {
       const preferred = boardTokens.find((t) => t.id === preferredTokenId);
       if (preferred) return preferred;
@@ -368,20 +442,11 @@ export default function VTTLayout() {
     return sameCharTokens.length === 1 ? sameCharTokens[0] : null;
   };
 
-  const handleConsumeTurnMovement = async (tokenObj, distanceMeters) => {
-    if (!combatState?.active || !isRealGM) return;
-    await consumeCampaignTurnMovement(campaignId, combatState, tokenObj, distanceMeters);
-  };
-
   const handleExecuteSheetRoll = async (incomingRollParams) => {
-    const currentTargets = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-
     const activeTargets =
       Array.isArray(incomingRollParams.targetedTokens) && incomingRollParams.targetedTokens.length > 0
         ? incomingRollParams.targetedTokens
-        : currentTargets;
+        : targetedTokens;
 
     const primaryTarget = incomingRollParams.targetedToken ?? activeTargets[0] ?? null;
 
@@ -426,7 +491,7 @@ export default function VTTLayout() {
           user,
           character: payer,
           actorToken: resolveActorToken(payer),
-          sceneId: boardTokensValue.sceneId,
+          sceneId: activeSceneId,
           costs: { [resKey]: amount },
           updateCharacterResource
         });
@@ -562,10 +627,10 @@ export default function VTTLayout() {
       user,
       character: attacker,
       actorToken: resolveActorToken(attacker),
-      sceneId: boardTokensValue.sceneId,
+      sceneId: activeSceneId,
       itemsToConsume: selectedTriggers,
       updateCharacterResource,
-      updateCharacter
+      consumeCharacterItem
     });
 
     // 2. Fórmula final de dano (Normal vs Crítico + Extra + Gatilhos com dados dobrados no crítico)
@@ -691,10 +756,10 @@ export default function VTTLayout() {
         user,
         character: defenderCharacter,
         actorToken: resolveActorToken(defenderCharacter, savingThrowRequest.targetTokenId),
-        sceneId: savingThrowRequest.targetSceneId || boardTokensValue.sceneId,
+        sceneId: savingThrowRequest.targetSceneId || activeSceneId,
         itemsToConsume: selectedAssists,
         updateCharacterResource,
-        updateCharacter
+        consumeCharacterItem
       });
 
       const dc = Number(savingThrowRequest.dc) || 10;
@@ -759,7 +824,7 @@ export default function VTTLayout() {
       customValue,
       effectType,
       manualModifiers,
-      boardTokens: boardTokensApi.tokens || [],
+      boardTokens: liveTokensWithSecrets,
       targetedToken,
       selectedTokenOnBoard,
       activeScene,
@@ -785,7 +850,8 @@ export default function VTTLayout() {
         canEditCharacter,
         activeScene,
         char,
-        spawnOptions
+        spawnOptions,
+        fog: fogApi.fog
       });
     } catch (err) {
       // Fase 3.1 (V-12): falha de escrita no RTDB deixa de ser silenciosa
@@ -816,7 +882,7 @@ export default function VTTLayout() {
       character: activeCharacter,
       user,
       myPlayerProfile,
-      playersMap: campaign?.players
+      playersMap
     });
 
     // Rolagens no chat
@@ -858,7 +924,7 @@ export default function VTTLayout() {
       character: activeCharacter,
       user,
       myPlayerProfile,
-      playersMap: campaign?.players
+      playersMap
     });
 
     await sendEmoteMessage({
@@ -895,13 +961,24 @@ export default function VTTLayout() {
         combatModalsProps={combatModalsProps}
         sheetProps={{
           campaignId,
-          playersMap: campaign?.players || {},
+          playersMap,
           compendiumEntries,
           canEdit: openedSheetCharacter ? canEditCharacter(openedSheetCharacter) : false,
           isGM,
           rollVisibility,
           onChangeRollVisibility: setRollVisibility,
           onUpdateCharacter: updateCharacter,
+          onRenameCharacter: renameCharacter,
+          onUpdateCharacterResource: updateCharacterResource,
+          onAddCharacterEntry: addCharacterEntry,
+          onUpdateCharacterEntry: updateCharacterEntry,
+          onRemoveCharacterEntry: removeCharacterEntry,
+          onReorderCharacterEntries: reorderCharacterEntries,
+          onSetHotbarSlot: setCharacterHotbarSlot,
+          onShareCharacter: shareCharacter,
+          onTransferCharacter: transferCharacter,
+          onConsumeCharacterItem: consumeCharacterItem,
+          onPullCompendiumEntry: pullCompendiumEntry,
           onUploadCharacterImage: uploadCharacterImage,
           onExecuteRoll: handleExecuteSheetRoll,
           onPingSkill: handlePingSkill,
@@ -1008,7 +1085,7 @@ export default function VTTLayout() {
               onClick={() =>
                 startTurnCombat({
                   campaignId,
-                  tokens: boardTokensApi.tokens || [],
+                  tokens: liveTokensWithSecrets,
                   allCharacters
                 })
               }
@@ -1151,33 +1228,30 @@ export default function VTTLayout() {
         )}
 
         {activeDockModule === "board" && (
-          <BoardTokensProvider value={boardTokensValue}>
           <BoardViewport
             activeScene={activeScene}
             campaignId={campaignId}
-            playersMap={campaign?.players || {}}
+            playersMap={playersMap}
             isGM={isGM}
             messages={messages}
             activeCharacter={activeCharacter}
+            allCharacters={allCharacters}
+            tokensApi={tokensApi}
+            secretsByTokenId={secretsByTokenId}
+            fogApi={fogApi}
             onUpdateSceneGrid={updateScene}
             onOpenScenesManager={() => {
               setScenesModalInitialTab("scenes");
               setScenesModalOpen(true);
             }}
             onSelectedTokenChange={setSelectedTokenOnBoard}
-            targetedToken={targetedToken}
-            targetedTokens={targetedTokens}
-            onTargetedTokenChange={setTargetedToken}
-            onTargetedTokensChange={setTargetedTokens}
             aoeDemarcateConfig={aoeDemarcateConfig}
             onCloseAoeDemarcate={() => handleStartAoeDemarcate(null)}
             snowballAimActive={snowballAimActive}
             onDeactivateSnowballAim={() => setSnowballAimActive(false)}
             onSyncTokenToCharacter={handleSyncTokenToCharacter}
-            combatState={combatState}
-            onConsumeTurnMovement={isRealGM ? handleConsumeTurnMovement : null}
+            onAdjustPcResource={applyCharacterResourceDelta}
           />
-          </BoardTokensProvider>
         )}
 
         {activeDockModule === "journal" && (
@@ -1185,19 +1259,27 @@ export default function VTTLayout() {
             campaignId={campaignId}
             currentUserId={user?.uid}
             isGM={isGM}
-            playersMap={campaign?.players || {}}
+            playersMap={playersMap}
             characters={characters}
             accessibleNotes={accessibleNotes}
             accessibleFolders={accessibleFolders}
             onCreateNote={createNote}
             onUpdateNote={updateNote}
+            onSaveNoteDraft={saveNoteDraft}
             onUpdateNodePosition={updateNodePosition}
             onCloneNoteToTarget={cloneNoteToTarget}
             onShareNoteWithTarget={shareNoteWithTarget}
             onRevokeNoteAccess={revokeNoteAccess}
             onDeleteNote={deleteNote}
             onCreateFolder={createFolder}
+            onRenameFolder={renameJournalFolder}
+            onMoveFolder={moveJournalFolder}
+            onMoveNoteToFolder={moveNoteToFolder}
             onDeleteFolder={deleteFolder}
+            canEditNote={canEditNote}
+            canDeleteNote={canDeleteNote}
+            canEditFolder={canEditJournalFolder}
+            canDeleteFolder={canDeleteJournalFolder}
             onOpenCharacterSheet={(charId) => setOpenCharacterId(charId)}
           />
         )}
@@ -1289,6 +1371,7 @@ export default function VTTLayout() {
                   character={activeCharacter}
                   onExecuteRoll={handleExecuteSheetRoll}
                   onUpdateCharacter={updateCharacter}
+                  onSetHotbarSlot={setCharacterHotbarSlot}
                   onOpenSheet={(charId) => setOpenCharacterId(charId)}
                   onClose={() => setHotbarOpen(false)}
                 />
@@ -1526,9 +1609,11 @@ export default function VTTLayout() {
               campaignId={campaignId}
               isGM={isGM}
               canEditCharacter={canEditCharacter}
+              canDeleteCharacter={canDeleteCharacter}
               canEditFolder={canEditCharacterFolder}
+              canDeleteFolder={canDeleteCharacterFolder}
               currentUser={user}
-              playersMap={campaign?.players || {}}
+              playersMap={playersMap}
               gmId={campaign?.gmId}
               onlineUsers={onlineUsers}
               onCreateCharacter={createCharacter}
@@ -1536,7 +1621,9 @@ export default function VTTLayout() {
               onSpawnToken={activeScene ? handleSpawnCharacterToken : null}
               onDeleteCharacter={deleteCharacter}
               onCreateFolder={createCharacterFolder}
+              onRenameFolder={renameCharacterFolder}
               onUpdateFolder={updateCharacterFolder}
+              onTransferFolderOwnership={transferCharacterFolderOwnership}
               onDeleteFolder={deleteCharacterFolder}
               onMoveCharacterToFolder={moveCharacterToFolder}
               onMoveFolder={moveCharacterFolder}
@@ -1680,6 +1767,8 @@ export default function VTTLayout() {
           activeCharacter={activeCharacter}
           canEditCharacter={canEditCharacter}
           onUpdateCharacter={updateCharacter}
+          onAddCharacterEntry={addCharacterEntry}
+          onPullCompendiumEntry={pullCompendiumEntry}
           onCreateEntry={createEntry}
           onUpdateEntry={updateEntry}
           onDeleteEntry={deleteEntry}
@@ -1691,13 +1780,24 @@ export default function VTTLayout() {
         <CharacterSheetModal
           character={openedSheetCharacter}
           campaignId={campaignId}
-          playersMap={campaign?.players || {}}
+          playersMap={playersMap}
           compendiumEntries={compendiumEntries}
           canEdit={canEditCharacter(openedSheetCharacter)}
           isGM={isGM}
           rollVisibility={rollVisibility}
           onChangeRollVisibility={setRollVisibility}
           onUpdateCharacter={updateCharacter}
+          onRenameCharacter={renameCharacter}
+          onUpdateCharacterResource={updateCharacterResource}
+          onAddCharacterEntry={addCharacterEntry}
+          onUpdateCharacterEntry={updateCharacterEntry}
+          onRemoveCharacterEntry={removeCharacterEntry}
+          onReorderCharacterEntries={reorderCharacterEntries}
+          onSetHotbarSlot={setCharacterHotbarSlot}
+          onShareCharacter={shareCharacter}
+          onTransferCharacter={transferCharacter}
+          onConsumeCharacterItem={consumeCharacterItem}
+          onPullCompendiumEntry={pullCompendiumEntry}
           onUploadCharacterImage={uploadCharacterImage}
           onExecuteRoll={handleExecuteSheetRoll}
           onPingSkill={handlePingSkill}

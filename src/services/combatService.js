@@ -1,6 +1,10 @@
 import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { ref, set as rtdbSet, update as rtdbUpdate } from "firebase/database";
-import { db, rtdb } from "./firebase";
+import { db } from "../infra/firebase.js";
+import { consumeItem } from "./characterService.js";
+import {
+  adjustTokenResource,
+  spawnCharacterToken
+} from "./tokenService.js";
 import {
   EFFECT_TYPES,
   advanceTurnInState,
@@ -11,28 +15,24 @@ import {
   normalizeCombatState,
   regressTurnInState,
   sortTurnOrder,
-  toControlledByMap,
 } from "../engines/combatEngine";
 
 /**
- * Fase 3.1: regra única "matriz GM/NPC vs. PC" (Princípio 6). Uma ficha é matriz quando é NPC
- * ou pertence ao Mestre; um token é instância de matriz quando marcado `isGmToken` (V-17).
+ * Fase 3.1 / Fase 8: regra única "matriz GM/NPC vs. PC" (Princípio 6). Uma ficha é matriz quando é NPC
+ * ou pertence ao Mestre; um token é instância de matriz/livre quando `kind === "npc" | "free"` ou legado `isGmToken`.
  */
 export function isGmTemplateCharacter(character, campaign, token = null) {
   return Boolean(
-    token?.isGmToken ||
-      character?.type === "npc" ||
-      (campaign?.gmId && character?.ownerId && character.ownerId === campaign.gmId)
+    token?.kind === "npc" ||
+      token?.kind === "free" ||
+      character?.type === "npc"
   );
 }
 
 /**
- * Fase 3.1 (V-05): desconta custos (MP/HP) do ATOR respeitando o Princípio 6.
- * - PC: desconta na ficha (Firestore); o sync Ficha→Token espelha nos tokens da cena ativa.
- * - Matriz GM/NPC: desconta somente na instância do token (RTDB) que está agindo. Se a instância
- *   não for identificável (ex.: janela destacada sem tabuleiro, vários tokens sem seleção),
- *   nada é descontado — a ficha-matriz nunca é alterada por uso em combate.
- * `costs` = { mp?: number, hp?: number } com valores POSITIVOS a descontar.
+ * Fase 3.1 (V-05) / Fase 8 (T4): desconta custos (MP/HP) do ATOR respeitando o Princípio 6 e U3.
+ * - PC: desconta na ficha (Firestore); a projeção atualiza os tokens da cena ativa.
+ * - Matriz GM/NPC ou token livre: desconta transacionalmente em `tokenSecrets` + projeta `bars`.
  */
 export async function deductActorResources({
   campaignId,
@@ -55,18 +55,15 @@ export async function deductActorResources({
     if (template) {
       const tokenSceneId = actorToken?.sceneId || sceneId;
       if (!campaignId || !actorToken?.id || !tokenSceneId) continue;
-      const curField = resKey === "mp" ? "mpCurrent" : "hpCurrent";
-      const currentVal = Number(
-        actorToken[curField] ?? character.resources?.[resKey]?.current ?? 0
-      );
-      await rtdbUpdate(
-        ref(rtdb, `vtt_realtime/${campaignId}/tokens/${tokenSceneId}/${actorToken.id}`),
-        {
-          [curField]: Math.max(0, currentVal - amount),
-          updatedBy: user?.uid || "gm",
-          updatedAt: Date.now(),
-        }
-      );
+      await adjustTokenResource({
+        campaignId,
+        sceneId: tokenSceneId,
+        token: actorToken,
+        inHiddenBucket: Boolean(actorToken.inHiddenBucket || actorToken.hidden),
+        resourceKey: resKey,
+        delta: -amount,
+        user: user || { uid: campaign?.gmId || "gm" }
+      });
       deducted = true;
     } else if (updateCharacterResource) {
       const currentVal = Number(character.resources?.[resKey]?.current ?? 0);
@@ -94,7 +91,7 @@ export async function consumeCombatCosts({
   sceneId = null,
   itemsToConsume = [],
   updateCharacterResource,
-  updateCharacter,
+  consumeCharacterItem = null,
 }) {
   if (!character || !Array.isArray(itemsToConsume) || itemsToConsume.length === 0) {
     return { mpChanged: false, hpChanged: false, invChanged: false };
@@ -104,7 +101,7 @@ export async function consumeCombatCosts({
   let hpCost = 0;
   let mpChanged = false;
   let hpChanged = false;
-  let nextInventory = Array.isArray(character.inventory) ? [...character.inventory] : [];
+  const itemCountsToConsume = new Map();
   let invChanged = false;
 
   for (const entry of itemsToConsume) {
@@ -128,13 +125,12 @@ export async function consumeCombatCosts({
       }
     } else if (entry.sourceType === "item" && entry.consumeOnUse) {
       const targetItemId = entry.sourceId || entry.id;
-      nextInventory = nextInventory
-        .map((it) =>
-          it.id === targetItemId
-            ? { ...it, qty: Math.max(0, (Number(it.qty) || 1) - 1) }
-            : it
-        )
-        .filter((it) => (it.qty !== undefined && it.qty !== null ? Number(it.qty) : 1) > 0);
+      if (targetItemId) {
+        itemCountsToConsume.set(
+          targetItemId,
+          (itemCountsToConsume.get(targetItemId) || 0) + 1
+        );
+      }
       invChanged = true;
     }
   }
@@ -153,8 +149,21 @@ export async function consumeCombatCosts({
     });
     deductedResource = Boolean(deductRes?.deducted);
   }
-  if (invChanged && updateCharacter) {
-    await updateCharacter(character.id, { inventory: nextInventory });
+  if (invChanged) {
+    if (itemCountsToConsume.size > 0) {
+      for (const [targetItemId, count] of itemCountsToConsume.entries()) {
+        if (consumeCharacterItem) {
+          await consumeCharacterItem(character.id, targetItemId, count);
+        } else {
+          await consumeItem({
+            campaignId: campaignId || character.campaignId,
+            charId: character.id,
+            itemId: targetItemId,
+            amount: count
+          });
+        }
+      }
+    }
   }
 
   return {
@@ -166,8 +175,8 @@ export async function consumeCombatCosts({
 
 /**
  * Aplica efeito de dano/cura/PE no alvo respeitando sincronização Ficha↔Token:
- * - Players (PC): atualiza ficha no Firestore (pulando sync redundante) e token no RTDB.
- * - Mestre / NPC (Matriz): aplica o efeito somente no token individual no RTDB.
+ * - Players (PC): atualiza a ficha no Firestore; a projeção atualiza os tokens do PC (U3).
+ * - Mestre / NPC (Matriz) ou token livre: ajusta `tokenSecrets` do token individual (Fase 8, T4).
  */
 export async function applyCombatEffectToTarget({
   campaignId,
@@ -243,16 +252,13 @@ export async function applyCombatEffectToTarget({
   });
 
   const resKey = computed.resourceKey || "hp";
-  let syncedResourceValue = null;
 
-  // Fase 3.1 (V-17): a instância marcada isGmToken também é tratada como matriz,
-  // mesma regra de syncTokenUpdatesToCharacter.
+  // Fase 3.1 (V-17) / Fase 8: instância de matriz/livre segue a mesma regra de syncTokenUpdatesToCharacter.
   const isGmTemplate = Boolean(
     isGmTemplateCharacter(targetChar, campaign, liveToken) &&
       (liveToken || targetTokenId)
   );
 
-  const effectiveTokenId = liveToken?.id || targetTokenId;
   const effectiveSceneId =
     liveToken?.sceneId ||
     targetSceneId ||
@@ -260,7 +266,6 @@ export async function applyCombatEffectToTarget({
     campaign?.activeSceneId;
 
   const isTokenResource = resKey === "hp" || resKey === "mp";
-  let tokensSyncedFromSheet = false;
 
   if (targetChar && resKey && !isGmTemplate && updateCharacterResource) {
     const resObj = targetChar.resources?.[resKey] || { current: 20, max: 20 };
@@ -269,45 +274,25 @@ export async function applyCombatEffectToTarget({
       0,
       Math.min(maxVal, (Number(resObj.current) || 0) + computed.resourceDelta)
     );
-    // Fase 3.1 (V-14): sem skipTokenSync — o sync Ficha→Token (useCharacters) espelha o novo
-    // valor em TODOS os tokens deste PC na cena ativa da mesa, não só no token atingido.
+    // Fase 3.1 (V-14) / Fase 8: a ficha é a autoridade do PC; a projeção espelha nos tokens.
     await updateCharacterResource(targetChar.id, resKey, nextVal);
-    syncedResourceValue = nextVal;
-    tokensSyncedFromSheet = Boolean(
-      isTokenResource && effectiveSceneId && effectiveSceneId === campaign?.activeSceneId
-    );
-  }
-
-  // Escrita direta no token: matriz GM/NPC (instância individual) ou token de PC fora da cena
-  // ativa da mesa (o sync Ficha→Token só alcança a cena ativa).
-  if (
+  } else if (
+    isGmTemplate &&
     isTokenResource &&
-    effectiveTokenId &&
+    liveToken &&
     effectiveSceneId &&
     campaignId &&
-    !tokensSyncedFromSheet
+    computed.resourceDelta !== 0
   ) {
-    const curField = resKey === "mp" ? "mpCurrent" : "hpCurrent";
-    const maxField = resKey === "mp" ? "mpMax" : "hpMax";
-    const curTokVal = Number(
-      liveToken?.[curField] ?? targetChar?.resources?.[resKey]?.current ?? 20
-    );
-    const maxTokVal =
-      Number(liveToken?.[maxField] ?? targetChar?.resources?.[resKey]?.max ?? 9999) ||
-      9999;
-    const nextTokVal =
-      syncedResourceValue !== null
-        ? syncedResourceValue
-        : Math.max(0, Math.min(maxTokVal, curTokVal + computed.resourceDelta));
-
-    const tokRef = ref(
-      rtdb,
-      `vtt_realtime/${campaignId}/tokens/${effectiveSceneId}/${effectiveTokenId}`
-    );
-    await rtdbUpdate(tokRef, {
-      [curField]: nextTokVal,
-      updatedBy: user?.uid || "gm",
-      updatedAt: Date.now(),
+    // Fase 8 (T4): NPC/token livre ajusta `tokenSecrets` transacionalmente e projeta `bars`.
+    await adjustTokenResource({
+      campaignId,
+      sceneId: effectiveSceneId,
+      token: liveToken,
+      inHiddenBucket: Boolean(liveToken.inHiddenBucket || liveToken.hidden),
+      resourceKey: resKey,
+      delta: computed.resourceDelta,
+      user: user || { uid: campaign?.gmId || "gm" }
     });
   }
 
@@ -340,7 +325,7 @@ export async function applyCombatEffectToTarget({
 }
 
 /**
- * Instancia o token de uma ficha no centro da cena ativa no RTDB.
+ * Instancia o token de uma ficha no centro da cena ativa no RTDB (v2).
  */
 export async function spawnCharacterTokenToScene({
   campaignId,
@@ -351,83 +336,26 @@ export async function spawnCharacterTokenToScene({
   activeScene,
   char,
   spawnOptions = {},
+  fog = null,
 }) {
-  const targetSceneId = activeScene?.id || campaign?.activeSceneId;
-  if (!char || !targetSceneId || !user || !campaignId) return null;
   if (!isGM && !canEditCharacter?.(char)) return null;
-
-  const tokenId = `tok_${char.id}_${Date.now().toString().slice(-4)}`;
-  const tokenRef = ref(
-    rtdb,
-    `vtt_realtime/${campaignId}/tokens/${targetSceneId}/${tokenId}`
-  );
-
-  const cellSizePx = Number(activeScene?.grid?.cellSizePx) || 64;
-  const widthPx = Number(activeScene?.mapImage?.widthPx) || 1920;
-  const heightPx = Number(activeScene?.mapImage?.heightPx) || 1080;
-  const startX = Math.round(widthPx / 2 / cellSizePx) * cellSizePx;
-  const startY = Math.round(heightPx / 2 / cellSizePx) * cellSizePx;
-
-  const showName =
-    spawnOptions?.showName !== undefined
-      ? Boolean(spawnOptions.showName)
-      : char.defaultToken?.showName !== false;
-
-  const visibleToPlayers =
-    spawnOptions?.visibleToPlayers !== undefined
-      ? Boolean(spawnOptions.visibleToPlayers)
-      : char.type !== "npc" || isGM;
-
-  const isGmToken = isGmTemplateCharacter(char, campaign);
-
-  // Fase 3.1 (V-12): quem não é Mestre só pode criar token cujo ownerId seja ele mesmo
-  // (database.rules.json). Quem está em `editableBy` de uma ficha alheia vira dono da
-  // instância; o dono da ficha continua controlando o token via controlledBy.
-  const tokenOwnerId = isGM ? char.ownerId || null : user.uid;
-  const controlledBy = toControlledByMap([
-    campaign?.gmId,
-    char.ownerId,
-    isGM ? null : user.uid,
-  ]);
-
-  const payload = {
-    id: tokenId,
+  return spawnCharacterToken({
     campaignId,
-    sceneId: targetSceneId,
-    characterId: char.id,
-    isGmToken,
-    layer: "tokens",
-    name: char.name || "Pinguim",
-    showName,
-    mediaId: char.defaultToken?.mediaId || char.avatarMediaId || null,
-    externalUrl:
-      char.defaultToken?.externalUrl || char.avatarExternalUrl || null,
-    x: startX,
-    y: startY,
-    sizeInCells: Number(char.defaultToken?.sizeInCells) || 1,
-    rotation: 0,
-    ringColor: char.cardColor || "#3090f0",
-    visibleToPlayers,
-    controlledBy,
-    ownerId: tokenOwnerId,
-    characterType: char.type || "pc",
-    defense: Number(char.defense ?? 12),
-    hpCurrent: Number(char.resources?.hp?.current ?? 20),
-    hpMax: Number(char.resources?.hp?.max ?? 20),
-    mpCurrent: Number(char.resources?.mp?.current ?? 15),
-    mpMax: Number(char.resources?.mp?.max ?? 15),
-    showBarsToPlayers: true,
-    updatedBy: user.uid,
-    updatedAt: Date.now(),
-  };
-
-  await rtdbSet(tokenRef, payload);
-  return payload;
+    campaign,
+    scene: activeScene,
+    char,
+    user,
+    isGM,
+    canEditCharacter,
+    spawnOptions,
+    fog,
+  });
 }
 
 /**
  * Sincroniza alterações feitas no Token (Tabuleiro) de volta para a Ficha (Firestore)
  * exclusivamente para personagens de jogadores (PCs). Tokens/fichas matrizes do Mestre permanecem isolados.
+ * INT-06: sem `skipTokenSync` — a atualização da ficha (autoridade U3) projeta em todos os tokens do PC.
  */
 export async function syncTokenUpdatesToCharacter({
   token,
@@ -445,7 +373,9 @@ export async function syncTokenUpdatesToCharacter({
 
   const charUpdates = {};
 
-  if ("name" in updatedFields && updatedFields.name) {
+  if ("label" in updatedFields && updatedFields.label) {
+    charUpdates.name = updatedFields.label;
+  } else if ("name" in updatedFields && updatedFields.name) {
     charUpdates.name = updatedFields.name;
   }
   if (
@@ -459,73 +389,82 @@ export async function syncTokenUpdatesToCharacter({
     charUpdates.cardColor = updatedFields.ringColor;
   }
 
-  for (const [resKey, curField, maxField, defaultLabel, defaultMax] of [
-    ["hp", "hpCurrent", "hpMax", "Vida", 25],
-    ["mp", "mpCurrent", "mpMax", "Energia", 15],
+  for (const [resKey, curField, maxField, defaultMax] of [
+    ["hp", "hpCurrent", "hpMax", 25],
+    ["mp", "mpCurrent", "mpMax", 15],
   ]) {
-    if (!(curField in updatedFields) && !(maxField in updatedFields)) continue;
+    const hasBars =
+      updatedFields.bars &&
+      (curField in updatedFields.bars || maxField in updatedFields.bars);
+    const hasFlat = curField in updatedFields || maxField in updatedFields;
+    if (!hasBars && !hasFlat) continue;
+    const srcObj = hasBars ? updatedFields.bars : updatedFields;
     const existingRes = char.resources?.[resKey];
     if (!existingRes) {
       const nextCurrent =
-        curField in updatedFields && updatedFields[curField] !== null
-          ? Number(updatedFields[curField])
+        curField in srcObj && srcObj[curField] !== null
+          ? Number(srcObj[curField])
           : defaultMax;
       const nextMax =
-        maxField in updatedFields && updatedFields[maxField] !== null
-          ? Number(updatedFields[maxField])
+        maxField in srcObj && srcObj[maxField] !== null
+          ? Number(srcObj[maxField])
           : defaultMax;
       charUpdates[`resources.${resKey}`] = {
-        label: defaultLabel,
         current: Math.max(0, nextCurrent),
         max: Math.max(0, nextMax),
       };
       continue;
     }
-    if (curField in updatedFields && updatedFields[curField] !== null) {
+    if (curField in srcObj && srcObj[curField] !== null) {
       charUpdates[`resources.${resKey}.current`] = Math.max(
         0,
-        Number(updatedFields[curField])
+        Number(srcObj[curField])
       );
     }
-    if (maxField in updatedFields && updatedFields[maxField] !== null) {
+    if (maxField in srcObj && srcObj[maxField] !== null) {
       charUpdates[`resources.${resKey}.max`] = Math.max(
         0,
-        Number(updatedFields[maxField])
+        Number(srcObj[maxField])
       );
     }
   }
 
-  if (
-    "showName" in updatedFields ||
-    "sizeInCells" in updatedFields ||
-    "mediaId" in updatedFields ||
-    "externalUrl" in updatedFields ||
-    "ringColor" in updatedFields
-  ) {
-    const nextDefaultToken = { ...(char.defaultToken || {}) };
-    if ("showName" in updatedFields) {
-      nextDefaultToken.showName = updatedFields.showName !== false;
-    }
-    if ("sizeInCells" in updatedFields && updatedFields.sizeInCells) {
-      nextDefaultToken.sizeInCells = Math.max(
-        1,
-        Math.min(8, Number(updatedFields.sizeInCells) || 1)
-      );
-    }
-    if ("mediaId" in updatedFields) {
-      nextDefaultToken.mediaId = updatedFields.mediaId || null;
-    }
-    if ("externalUrl" in updatedFields) {
-      nextDefaultToken.externalUrl = updatedFields.externalUrl || null;
-    }
-    if ("ringColor" in updatedFields && updatedFields.ringColor) {
-      nextDefaultToken.ringColor = updatedFields.ringColor;
-    }
-    charUpdates.defaultToken = nextDefaultToken;
+  if ("showName" in updatedFields) {
+    charUpdates["token.showName"] = updatedFields.showName !== false;
+  }
+  if ("sizeInCells" in updatedFields && updatedFields.sizeInCells) {
+    charUpdates["token.sizeInCells"] = Math.max(
+      1,
+      Math.min(8, Number(updatedFields.sizeInCells) || 1)
+    );
+  }
+  if ("image" in updatedFields && updatedFields.image && typeof updatedFields.image === "object") {
+    const nextMediaId = updatedFields.image.mediaId || null;
+    const nextUrl = nextMediaId ? null : updatedFields.image.url || null;
+    charUpdates["token.image"] = {
+      mediaId: nextMediaId,
+      url: nextUrl,
+    };
+  } else if ("mediaId" in updatedFields || "externalUrl" in updatedFields) {
+    const nextMediaId =
+      "mediaId" in updatedFields
+        ? updatedFields.mediaId || null
+        : updatedFields.externalUrl
+          ? null
+          : char.token?.image?.mediaId || null;
+    const nextUrl = nextMediaId
+      ? null
+      : "externalUrl" in updatedFields
+        ? updatedFields.externalUrl || null
+        : char.token?.image?.url || null;
+    charUpdates["token.image"] = {
+      mediaId: nextMediaId,
+      url: nextUrl,
+    };
   }
 
   if (Object.keys(charUpdates).length > 0) {
-    await updateCharacter(char.id, charUpdates, { skipTokenSync: true });
+    await updateCharacter(char.id, charUpdates);
   }
 }
 

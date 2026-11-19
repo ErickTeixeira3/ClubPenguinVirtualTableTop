@@ -1,11 +1,13 @@
 import {
   collection,
+  deleteField,
   doc,
   getDocs,
   writeBatch,
   serverTimestamp
 } from "firebase/firestore";
-import { db, DEFAULT_CAMPAIGN_ID } from "./firebase";
+import { computeAudience } from "../domain/audience.js";
+import { db, DEFAULT_CAMPAIGN_ID } from "../infra/firebase.js";
 import { normalizeText } from "../utils/stringUtils";
 import { isCustomAttributeShortcutIcon } from "./rollService";
 import { withRequiredAudience } from "./visibilityService";
@@ -26,8 +28,8 @@ function audienceRepair(visibleTo, { gmUid, ownerId }) {
 }
 
 /**
- * Fase 6.2 (A6): cenas e compêndio — `visibleToPlayers` (quando booleano) é a fonte da verdade.
- * Devolve o visibleTo correto quando o atual está ausente, vazio ou divergente; senão, null.
+ * Fase 4: scenes e compêndio usam apenas `visibleTo`. Se ainda restar `visibleToPlayers`
+ * legado, calcula a audiência canônica pela regra A6 para remoção pelo chamador.
  */
 function releasedAudienceRepair(data, gmUid) {
   const vis = Array.isArray(data.visibleTo) ? data.visibleTo : [];
@@ -39,16 +41,12 @@ function releasedAudienceRepair(data, gmUid) {
   return diverges ? expected : null;
 }
 
-/**
- * Fase 3.1 (V-07): permissões de edição padrão de uma pasta quando o documento legado
- * não traz `editableBy`. Espelha createFolder (fichas) e buildJournalPermissions (diário).
- */
 function defaultFolderEditableBy({ folderType, scope, ownerId, gmUid }) {
-  if (folderType === "journal") {
-    if (scope === "party") return ["ALL"];
-    if (scope === "gm") return [gmUid].filter(Boolean);
-  }
-  return Array.from(new Set([gmUid, ownerId].filter(Boolean)));
+  return computeAudience({
+    ownerId: ownerId || gmUid,
+    scope: folderType === "journal" ? scope || "player" : undefined,
+    gmId: gmUid
+  }).editableBy;
 }
 
 function normalizeFormula(formula) {
@@ -559,10 +557,12 @@ export async function runCampaignMigrations({
       if (typeof data.isDeleted !== "boolean") {
         updates.isDeleted = false;
       }
-      // Fase 6.2 (A6): recalcula sempre que visibleTo diverge de visibleToPlayers, não só quando falta
       const releasedVis = releasedAudienceRepair(data, gmUid);
       if (releasedVis) {
         updates.visibleTo = releasedVis;
+      }
+      if (Object.hasOwn(data, "visibleToPlayers")) {
+        updates.visibleToPlayers = deleteField();
       }
       if (Object.keys(updates).length > 0) {
         await queueUpdate(d.ref, updates);
@@ -581,12 +581,16 @@ export async function runCampaignMigrations({
       if (typeof data.isDeleted !== "boolean") {
         updates.isDeleted = false;
       }
-      // Fase 6.2 (A6): recalcula sempre que visibleTo diverge de visibleToPlayers, não só quando falta
       const releasedVis = releasedAudienceRepair(data, gmUid);
       if (releasedVis) {
         updates.visibleTo = releasedVis;
       }
-      if (isLegacyFishItem(data)) {
+      if (Object.hasOwn(data, "visibleToPlayers")) {
+        updates.visibleToPlayers = deleteField();
+      }
+      const isV2CompendiumDoc =
+        data.cost && typeof data.cost === "object" && !Array.isArray(data.cost);
+      if (!isV2CompendiumDoc && isLegacyFishItem(data)) {
         updates.icon = "fluffy_fish";
       }
       if (Object.keys(updates).length > 0) {

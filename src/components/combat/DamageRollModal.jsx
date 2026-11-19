@@ -39,7 +39,8 @@ export default function DamageRollModal({
     if (!character) return [];
     const list = [];
 
-    const abilities = Array.isArray(character.abilities) ? character.abilities : [];
+    // Fase 5 (T2): fichas v2 guardam habilidades e inventário em mapas.
+    const abilities = Object.values(character.abilities || {});
     abilities.forEach((ab) => {
       const trig = ab.trigger || "active";
       const isHitTrigger = trig === "on_hit" || trig === "on_crit";
@@ -67,7 +68,7 @@ export default function DamageRollModal({
       });
     });
 
-    const inventory = Array.isArray(character.inventory) ? character.inventory : [];
+    const inventory = Object.values(character.inventory || {});
     inventory.forEach((it) => {
       const trig = it.trigger || "active";
       const isHitTrigger = trig === "on_hit" || trig === "on_crit";

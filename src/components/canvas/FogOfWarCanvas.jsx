@@ -1,29 +1,31 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { getOrderedFogAreas } from "../../domain/models/fog.js";
+import { BOARD_Z_LAYERS } from "./boardConstants.js";
 
 export default function FogOfWarCanvas({
   widthPx,
   heightPx,
-  fogEnabled,
-  fogAreas,
-  isGM,
-  draftRect
+  fog = null,
+  isGM = false,
+  draftRect = null
 }) {
   const canvasRef = useRef(null);
+  const fogEnabled = Boolean(fog?.enabled);
+  const orderedAreas = useMemo(() => getOrderedFogAreas(fog), [fog]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     ctx.clearRect(0, 0, widthPx, heightPx);
 
     if (!fogEnabled) return;
 
-    // 1. Preenche toda a cena com a camada escura da Névoa de Guerra
     ctx.fillStyle = "#040d1a";
     ctx.fillRect(0, 0, widthPx, heightPx);
 
-    // 2. Aplica cada operação de revelar ou ocultar em ordem cronológica
-    for (const area of fogAreas || []) {
+    for (const area of orderedAreas) {
       if (area.op === "reveal") {
         ctx.clearRect(area.x, area.y, area.w, area.h);
       } else if (area.op === "hide") {
@@ -31,7 +33,7 @@ export default function FogOfWarCanvas({
         ctx.fillRect(area.x, area.y, area.w, area.h);
       }
     }
-  }, [widthPx, heightPx, fogEnabled, fogAreas]);
+  }, [widthPx, heightPx, fogEnabled, orderedAreas]);
 
   if (!fogEnabled && !draftRect) return null;
 
@@ -46,7 +48,7 @@ export default function FogOfWarCanvas({
           inset: 0,
           pointerEvents: "none",
           opacity: isGM ? 0.54 : 1,
-          zIndex: 12,
+          zIndex: BOARD_Z_LAYERS.fog,
           transition: "opacity 0.2s ease"
         }}
       />
@@ -68,11 +70,10 @@ export default function FogOfWarCanvas({
                 ? "rgba(0, 240, 255, 0.16)"
                 : "rgba(255, 42, 85, 0.22)",
             pointerEvents: "none",
-            zIndex: 15
+            zIndex: BOARD_Z_LAYERS.fogDraft
           }}
         />
       )}
     </>
   );
 }
-
