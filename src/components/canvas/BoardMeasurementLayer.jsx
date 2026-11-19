@@ -1,17 +1,66 @@
+function MeasurementGuideLine({
+  startX,
+  startY,
+  endX,
+  endY,
+  primary = false
+}) {
+  return (
+    <>
+      <line
+        x1={startX}
+        y1={startY}
+        x2={endX}
+        y2={endY}
+        stroke="#001b3a"
+        strokeWidth={primary ? "6" : "4"}
+        strokeLinecap="round"
+      />
+      <line
+        x1={startX}
+        y1={startY}
+        x2={endX}
+        y2={endY}
+        stroke={primary ? "#ffcc00" : "#00f0ff"}
+        strokeWidth={primary ? "3.5" : "2"}
+        strokeDasharray={primary ? "10 6" : "8 5"}
+        strokeLinecap="round"
+      />
+      <circle
+        cx={startX}
+        cy={startY}
+        r="6"
+        fill="#ffcc00"
+        stroke="#001b3a"
+        strokeWidth="2"
+      />
+      <circle
+        cx={endX}
+        cy={endY}
+        r={primary ? "7" : "6"}
+        fill="#00f0ff"
+        stroke="#001b3a"
+        strokeWidth="2"
+      />
+    </>
+  );
+}
+
 /**
- * Fase 5: régua tática (linha, cone 45°/60° e círculo; 1 célula = 1,5m) na camada SVG do tabuleiro,
- * extraída de BoardViewport.jsx com JSX inalterado.
+ * Régua tática (linha, cone 45°/60° e círculo; 1 célula = 1,5m).
+ * Recebe `measureStats` calculado exclusivamente por `computeRulerStats` de `engines/geometry`.
  */
 export default function BoardMeasurementLayer({
   measureShape,
   measureStats,
   measureLine
 }) {
+  if (!measureLine || !measureStats) return null;
+
   return (
     <g pointerEvents="none">
       {measureShape === "cone" ? (
         <>
-          {/* Setor do Cone */}
           {measureStats.distPx > 2 && (
             <>
               <path
@@ -30,47 +79,15 @@ export default function BoardMeasurementLayer({
               />
             </>
           )}
-          {/* Linha guia central pontilhada */}
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#001b3a"
-            strokeWidth="4"
-            strokeLinecap="round"
-          />
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#00f0ff"
-            strokeWidth="2"
-            strokeDasharray="8 5"
-            strokeLinecap="round"
-          />
-          {/* Origem e Alvo */}
-          <circle
-            cx={measureLine.startX}
-            cy={measureLine.startY}
-            r="6"
-            fill="#ffcc00"
-            stroke="#001b3a"
-            strokeWidth="2"
-          />
-          <circle
-            cx={measureLine.endX}
-            cy={measureLine.endY}
-            r="6"
-            fill="#00f0ff"
-            stroke="#001b3a"
-            strokeWidth="2"
+          <MeasurementGuideLine
+            startX={measureLine.startX}
+            startY={measureLine.startY}
+            endX={measureLine.endX}
+            endY={measureLine.endY}
           />
         </>
       ) : measureShape === "circle" ? (
         <>
-          {/* Círculo */}
           {measureStats.radiusPx > 2 && (
             <>
               <circle
@@ -91,83 +108,21 @@ export default function BoardMeasurementLayer({
               />
             </>
           )}
-          {/* Linha do Raio */}
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#001b3a"
-            strokeWidth="4"
-            strokeLinecap="round"
-          />
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#00f0ff"
-            strokeWidth="2"
-            strokeDasharray="8 5"
-            strokeLinecap="round"
-          />
-          {/* Centro e Perímetro */}
-          <circle
-            cx={measureLine.startX}
-            cy={measureLine.startY}
-            r="6"
-            fill="#ffcc00"
-            stroke="#001b3a"
-            strokeWidth="2"
-          />
-          <circle
-            cx={measureLine.endX}
-            cy={measureLine.endY}
-            r="6"
-            fill="#00f0ff"
-            stroke="#001b3a"
-            strokeWidth="2"
+          <MeasurementGuideLine
+            startX={measureLine.startX}
+            startY={measureLine.startY}
+            endX={measureLine.endX}
+            endY={measureLine.endY}
           />
         </>
       ) : (
-        <>
-          {/* Linha Reta Padrão */}
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#001b3a"
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
-          <line
-            x1={measureLine.startX}
-            y1={measureLine.startY}
-            x2={measureLine.endX}
-            y2={measureLine.endY}
-            stroke="#ffcc00"
-            strokeWidth="3.5"
-            strokeDasharray="10 6"
-            strokeLinecap="round"
-          />
-          <circle
-            cx={measureLine.startX}
-            cy={measureLine.startY}
-            r="6"
-            fill="#ffcc00"
-            stroke="#001b3a"
-            strokeWidth="2"
-          />
-          <circle
-            cx={measureLine.endX}
-            cy={measureLine.endY}
-            r="7"
-            fill="#00f0ff"
-            stroke="#001b3a"
-            strokeWidth="2"
-          />
-        </>
+        <MeasurementGuideLine
+          startX={measureLine.startX}
+          startY={measureLine.startY}
+          endX={measureLine.endX}
+          endY={measureLine.endY}
+          primary={true}
+        />
       )}
     </g>
   );

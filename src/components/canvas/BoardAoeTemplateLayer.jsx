@@ -1,12 +1,15 @@
+import { BOARD_Z_LAYERS } from "./boardConstants.js";
+
 /**
- * Fase 5: template visual de demarcação de área (AoE: alcance, círculo e cone) sobre o tabuleiro,
- * extraído de BoardViewport.jsx com JSX inalterado.
+ * Template visual de demarcação de área (AoE: alcance, círculo e cone) sobre o tabuleiro.
  */
 export default function BoardAoeTemplateLayer({
   widthPx,
   heightPx,
   aoePreview
 }) {
+  if (!aoePreview) return null;
+
   return (
     <svg
       width={widthPx}
@@ -15,7 +18,7 @@ export default function BoardAoeTemplateLayer({
         position: "absolute",
         inset: 0,
         pointerEvents: "none",
-        zIndex: 18
+        zIndex: BOARD_Z_LAYERS.aoeTemplate
       }}
     >
       {aoePreview.type === "cone" ? (

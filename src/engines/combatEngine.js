@@ -225,41 +225,53 @@ export function hasControlledByAccess(controlledBy, uid) {
 export function resolveTokenTargetData({ targetedToken, allCharacters = [] }) {
   if (!targetedToken) return null;
 
+  const tokenDisplayName = targetedToken.label || targetedToken.name || "";
   const linkedChar = targetedToken.characterId
     ? allCharacters.find((c) => c.id === targetedToken.characterId) || null
-    : targetedToken.name
+    : tokenDisplayName && !targetedToken.kind
     ? allCharacters.find(
-        (c) => c.name?.trim().toLowerCase() === targetedToken.name?.trim().toLowerCase()
+        (c) => c.name?.trim().toLowerCase() === tokenDisplayName.trim().toLowerCase()
       ) || null
     : null;
 
   const isNpcOrGmInstance =
+    targetedToken.kind === "npc" ||
+    targetedToken.kind === "free" ||
     Boolean(targetedToken.isGmToken) ||
     linkedChar?.type === "npc" ||
     targetedToken.characterType === "npc";
+  const rawTokenDefense =
+    targetedToken.secrets?.defense !== undefined && targetedToken.secrets?.defense !== null
+      ? targetedToken.secrets.defense
+      : targetedToken.defense;
   const hasTokenDefense =
-    targetedToken.defense !== undefined &&
-    targetedToken.defense !== null &&
-    targetedToken.defense !== "";
+    rawTokenDefense !== undefined &&
+    rawTokenDefense !== null &&
+    rawTokenDefense !== "";
 
-  // Fase 6.7 (A22): instâncias de NPC/Mestre têm a Defesa do token como fonte autoritativa em cena;
-  // PCs mantêm prioridade da ficha (sincronizada com o token quando visível).
+  // Fase 6.7 (A22) / Fase 8: instâncias de NPC/Mestre/livre têm a Defesa em `tokenSecrets` como fonte autoritativa;
+  // PCs mantêm prioridade da ficha (Firestore).
   const defense = isNpcOrGmInstance
     ? hasTokenDefense
-      ? Number(targetedToken.defense) || 0
+      ? Number(rawTokenDefense) || 0
       : Number(linkedChar?.defense ?? 10) || 0
     : linkedChar?.defense !== undefined && linkedChar?.defense !== null
     ? Number(linkedChar.defense) || 0
     : hasTokenDefense
-    ? Number(targetedToken.defense) || 0
+    ? Number(rawTokenDefense) || 0
     : 10;
 
   return {
     tokenId: targetedToken.id || targetedToken.tokenId,
     sceneId: targetedToken.sceneId || null,
     characterId: linkedChar?.id || targetedToken.characterId || null,
-    name: linkedChar?.name || targetedToken.name || "Alvo",
-    imageUrl: linkedChar?.avatarUrl || targetedToken.imageUrl || "",
+    name: linkedChar?.name || tokenDisplayName || "Alvo",
+    imageUrl:
+      linkedChar?.avatar?.url ||
+      linkedChar?.avatarUrl ||
+      targetedToken.image?.url ||
+      targetedToken.imageUrl ||
+      "",
     defense,
     ownerId: linkedChar?.ownerId || targetedToken.ownerId || null,
     visibleTo: Array.isArray(linkedChar?.visibleTo)
@@ -273,7 +285,10 @@ export function resolveTokenTargetData({ targetedToken, allCharacters = [] }) {
       ? targetedToken.editableBy
       : [],
     controlledBy: normalizeControlledByList(targetedToken.controlledBy),
-    characterType: linkedChar?.type || targetedToken.characterType || "npc",
+    characterType:
+      linkedChar?.type ||
+      (targetedToken.kind === "pc" ? "pc" : targetedToken.characterType) ||
+      "npc",
   };
 }
 
@@ -454,8 +469,20 @@ export function collectEntityCombatModifiers(entity, phase = "incoming", effectT
   const collected = [];
 
   const scanList = (items, sourceTag) => {
-    if (!Array.isArray(items)) return;
-    items.forEach((entry) => {
+    const list = Array.isArray(items)
+      ? items
+      : items && typeof items === "object"
+        ? Object.entries(items)
+            .map(([key, val]) =>
+              val && typeof val === "object" && !Array.isArray(val)
+                ? val.id
+                  ? val
+                  : { id: key, ...val }
+                : null
+            )
+            .filter(Boolean)
+        : [];
+    list.forEach((entry) => {
       if (!entry || entry.enabled === false) return;
       const mods = Array.isArray(entry.combatModifiers) ? entry.combatModifiers : [];
       mods.forEach((mod) => {
