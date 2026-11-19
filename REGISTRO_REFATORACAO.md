@@ -2020,6 +2020,14 @@ Verificações independentes (consultas ao Firebase de produção somente leitur
 
 Plano: `PLANO_REFATORACAO_2.md`. Cada fase registra o que foi feito, os IDs do catálogo (Seção 9) com evidência, as decisões e os desvios, e os adaptadores de transição.
 
+## Adaptadores de transição (Seção 7.3)
+
+| ID | Arquivo | Motivo | Criado na | Remover na |
+| :--- | :--- | :--- | :--- | :--- |
+| T-ENG-3 | `src/engines/diceEngine.js` | Engine legado de dados (`window`, `Math.random`) mantido em uso até a migração das rolagens para `src/engines/dice/`. | Fase 1 (TRANSITION) | Fase 9 |
+| T-ENG-4 | `src/engines/formulaEngine.js` | Engine legado de fórmulas mantido em uso até a migração de fichas/rolagens para `src/engines/formula/`. | Fase 1 (TRANSITION) | Fase 9 |
+| T-ENG-5 | `src/engines/combatEngine.js` | Engine legado de combate/turno (`Date.now`, `Math.random`, registro global) mantido até a substituição dos consumidores para `src/engines/{combat,turn}/`. | Fase 1 (TRANSITION) | Fase 11 (máx. Fase 13) |
+
 ## Fase 0 — Fundação e rede de segurança (2026-11-17)
 
 ### Instruções do usuário para esta fase
@@ -2179,6 +2187,87 @@ Nenhuma dependência existente mudou de versão no lockfile (conferido pacote a 
 - os emuladores sobem;
 - o `dev:emu` funciona com o seed real;
 - a produção não foi alterada.
+
+---
+
+## Fase 1 — Domínio e engines puros (2026-11-18)
+
+### Instruções do usuário para esta fase
+- Executar a Fase 1 completa (todos os 15 entregáveis) e parar no **Gate G1** para revisão do modelo de domínio e dos valores padrão unificados.
+- Sem commits e sem deploy (diretriz global e instrução do projeto).
+- Padronizar os valores padrão já existentes em `src/domain/defaults.js` com helpers puros de fábrica/cálculo para facilitar futuras alterações nas fórmulas de cálculo.
+- Devido ao estouro de cota no subagente `teamwork`, os testes finais, a consolidação de documentação e a validação final foram concluídos diretamente sem `teamwork`.
+
+### O que foi feito
+
+**1. Fundação de domínio e contratos (`src/domain/`):**
+- `src/domain/constants.js`: constantes puras do domínio (`METERS_PER_CELL = 1.5`, `PING_LIFETIME_MS = 2200`, `DEFAULT_MOVEMENT_BUDGET_METERS = 9`, `MIN_GRID_CELL_SIZE_PX = 8`, `DEFAULT_CELL_SIZE_PX = 64`, `DEFAULT_MAP_DIMENSIONS`, `CHAT_PAGE_SIZE`, `RECENT_OPS_LIMIT`), enumerações congeladas (`ROLL_KINDS`, `EFFECT_TYPES`, `EFFECT_TYPE_META`, `TRIGGER_TYPES`, `SKILL_RANGE_TYPES`, `SKILL_AOE_TYPES`, `NOTE_TYPES`, `CHARACTER_TYPES`, `TOKEN_KINDS`, `FOLDER_DOMAINS`, `NOTE_SCOPES`, `DRAWING_TYPES`, `PING_KINDS`, `LAYER_NAMES`, `COMPENDIUM_TYPES`, `MESSAGE_TYPES`, `MESSAGE_VISIBILITY`, `MESSAGE_STATUS`, `HIT_EVALUATION_STATUS`, `PENDING_COST_STATUS`, `PRESENCE_KINDS`, `RESOURCE_KEYS`, `ROLL_SOURCE_TYPES`), atributos base (`DEFAULT_ATTRIBUTES`, `SAVE_ATTRIBUTES`), `RESERVED_FORMULA_KEYS` e `ID_PREFIXES` / `VALID_ID_PREFIXES`.
+- `src/domain/errors.js`: `ERROR_CODES`, `AppError`, `validationOk()`, `validationFail()`.
+- `src/domain/defaults.js`: fonte única de valores padrão e funções puras de fábrica (`createDefaultCharacterResources`, `calculateDefaultCharacterDefense`, `createDefaultAttributesMap`, `createDefaultHotbar`, `createDefaultSavingThrow`, `createDefaultRange`, `createDefaultAoe`, `createDefaultAbilityCost`, `createDefaultRollGroup`, `createDefaultCharacterDefaults`, `createDefaultTokenDefaults`, `createDefaultSceneDefaults`, `createDefaultCompendiumDefaults`), unificando:
+  - Personagem: HP `25/25`, MP `15/15`, Defesa `12`, deslocamento `9` m, atributos iniciais `2`.
+  - Token livre: Defesa `10`, `hp: null`, `mp: null`, `showBarsToPlayers: true`.
+  - Salvaguarda (`savingThrow`): `{ enabled: false, dcFormula: "12", attributeKey: "resistencia", effectDescription: "" }`.
+  - Alcance (`range`): `{ type: "ranged", distanceMeters: 9 }`.
+  - AoE (`aoe`): `{ type: "single", radiusMeters: 6, coneAngleDeg: 45 }`.
+  - Custo de habilidade (`cost`): `{ resource: "mp", amount: 0 }`.
+  - Grupo de rolagens padrão: id `grp_combate`, nome `"Ações de Combate"`.
+  - Grade (`cellSizePx: 64`, `color: "#ffffff"`, `opacity: 0.28`) e Névoa (`enabled: false`, `defaultOpaque: false`).
+- `src/domain/audience.js`: `computeAudience` e `assertAudience` como fonte única de cálculo e invariante de audiência.
+- `src/domain/permissions.js`: predicados únicos de permissão e visibilidade (`normalizeControlledByList`, `toControlledByMap`, `hasControlledByAccess`, `canReadResource`, `canEditResource`, `canDeleteResource`, `canManageResourceAccess`, `canControlToken`, `canEditDrawing`, `canSeeSecret`, `canSeeTargetOutcome`, `isUserResponsibleForSavingThrow`).
+
+**2. Modelos de domínio (`src/domain/models/` — 21 entidades + barrel `index.js`):**
+- `imageRef.js`, `campaign.js`, `member.js`, `invite.js`, `character.js`, `folder.js`, `note.js`, `scene.js`, `compendiumEntry.js`, `message.js`, `media.js`, `turnState.js`, `chatState.js`, `pendingCost.js`, `token.js`, `drawing.js`, `ping.js`, `fog.js`, `presence.js`, `appConfig.js`, `platformAdmin.js` e `index.js`.
+- Cada entidade implementa `normalize*` (aplicando defaults uma única vez), `validate*` (invariantes da Seção 6.3) e `to*Doc` / `from*Doc`, além de `splitTokenDoc` / `combineToken` / `projectPublicBars` em `token.js` e expansão de audiência em `media.js`.
+
+**3. Infraestrutura de IDs (`src/infra/ids.js`):**
+- `createId(prefix, { now, random })` validando `ID_PREFIXES` com injeção opcional de relógio/RNG e `createDeterministicSaveId(msgId)`.
+
+**4. Engines puros (`src/engines/*/` — 11 pacotes, todos sem acesso a SDK/DOM/globais):**
+- `src/engines/formula/` (`normalize.js`, `variables.js`, `parser.js`, `evaluator.js`, `index.js`): normalização única (`normalizeFormulaKey`, `stripAccents`), chaves explícitas, bloqueio de colisão entre atributo e perícia, chaves reservadas (`RESERVED_FORMULA_KEYS`), erros sinalizados `{ ok: false, error }` para variável desconhecida, token inválido (ex.: `"2x3"`) e divisão por zero (INT-11).
+- `src/engines/dice/` (`dice.js`, `index.js`): `rollSingleDie` e `evaluateDiceToken` com RNG injetado.
+- `src/engines/rolls/` (`rollClassifier.js`, `shortcutResolver.js`, `damageComposer.js`, `index.js`): classificação estrutural consistente incluindo `MP_HEAL`/`MP_DAMAGE`; resolução de atalhos exclusivamente por id; composição de dano respeitando `critFormula` sem fallback `|| "1d6"`.
+- `src/engines/combat/` (`effectPipeline.js`, `targetResolution.js`, `triggersAndAssists.js`, `savingThrow.js`, `index.js`): pipeline de efeitos, resolução de alvo exclusivamente por id sem casar por nome (SEG-08), normalização única de gatilhos e assistências sem descartar d20 por regex, e `evaluateDcFormula` / `evaluateSavingThrowOutcome` preservando CD `0` sem `|| 10`.
+- `src/engines/geometry/` (`coords.js`, `aoe.js`, `hitTest.js`, `textBounds.js`, `index.js`): centro/raio de token, cone, círculo, distância/régua com `METERS_PER_CELL`, hit-test de desenhos e `getTextBounds` considerando rotação.
+- `src/engines/fog/` (`fog.js`, `index.js`): `isPointRevealed` e `partitionTokensByFog` (público/oculto).
+- `src/engines/folders/` (`folders.js`, `index.js`): `buildFolderTree`, `collectDescendantFolderIds` com conjunto de visitados, `validateFolderMove` (ciclos e compatibilidade), `validateFolderName`, `validateItemFolderPlacement` e `getFolderDisplayPath`.
+- `src/engines/journal/` (`sections.js`, `aliasMatcher.js`, `graph.js`, `index.js`): extração de texto a partir de `sections`, matcher único insensível a acentos respeitando `ignoredAliases` e grafo por leitor sem menções persistidas.
+- `src/engines/chat/` (`chatCommandParser.js`, `index.js`): `parseChatInput` único para `/r` e `/roll`.
+- `src/engines/compendium/` (`compendiumMapper.js`, `index.js`): `mapCompendiumEntryToCharacterEntry`, `normalizeSkillKey` e `resolveUniqueSkillKey` unificados.
+- `src/engines/turn/` (`turnState.js`, `index.js`): máquina de turno pura extraída do `combatEngine` com comportamento U1 preservado (incluindo `actionsMax: 0 → 1`), sem registro global de hooks e sem rolagem embutida em `evaluateDcFormula`.
+
+**5. Testes unitários (`tests/unit/` — 39 arquivos):**
+- Cobertura de unidade para `domain/*`, todos os 21 modelos, `infra/ids.js`, todos os 11 pacotes em `engines/*/` e carregamento dos barrels em ESM (`tests/unit/engines/barrels.test.js`).
+
+### Evidências
+- **App v1 intacto:** nenhum arquivo legado do aplicativo em funcionamento foi modificado nesta fase; os 5 engines legados permanecem ativos apenas para o v1 e registrados acima como `TRANSITION` (`T-ENG-1` a `T-ENG-5`).
+- **Suíte de testes e cobertura dos módulos novos** (`npx vitest run --coverage --coverage.include="src/domain/**" --coverage.include="src/engines/*/**" --coverage.include="src/infra/ids.js" --coverage.reporter=text`):
+  - **52 arquivos de teste, 442 testes passaram** (39 suítes unitárias da Fase 1 + 13 suítes de caracterização/regressão/tooling da Fase 0).
+  - **Cobertura consolidada nos módulos novos:** `98.71%` Stmts | `94.79%` Branch | `100%` Funcs | `98.70%` Lines.
+  - Por pacote: `domain` (`100%` branch), `domain/models` (`92.71%` branch), `engines/chat` (`100%`), `engines/combat` (`94.41%`), `engines/compendium` (`95.93%`), `engines/dice` (`100%`), `engines/fog` (`100%`), `engines/folders` (`91.28%`), `engines/formula` (`96.70%`), `engines/geometry` (`100%`), `engines/journal` (`97.54%`), `engines/rolls` (`97.93%`), `engines/turn` (`100%`), `infra/ids.js` (`100%`).
+- **Camadas e pureza (`npm run lint:layers`):** 152 arquivos analisados; **0 violações** de camada ou pureza em `src/domain/**`, `src/engines/*/**` e `src/infra/ids.js` (mantidas apenas as 72 violações pré-existentes no código legado v1).
+- **Importação direta em Node ESM:** todos os módulos de domínio, engines puros e `src/infra/ids.js` utilizam extensões `.js` explícitas para consumo futuro pelos scripts de migração/auditoria.
+
+### IDs do catálogo
+- **EST-02:** núcleos puros isolados em `src/domain/**`, `src/engines/*/**` e `src/infra/ids.js` com 0 violações de pureza; engines legados isolados sob controle `TRANSITION` (`T-ENG-1` a `T-ENG-5`).
+- **EST-05 (parcial):** lógica duplicada consolidada nos novos módulos puros (`audience`, `permissions`, `savingThrow`, `rollClassifier`, `triggersAndAssists`, `geometry`, `fog`, `chatCommandParser`, `compendiumMapper`); remoção nos componentes/serviços ocorre nas fases seguintes.
+- **EST-06 (motores):** `rollClassifier` estrutural sem heurística textual/regex para classificar rolagem.
+- **EST-11:** geração de IDs centralizada em `src/infra/ids.js` + `ID_PREFIXES` em `src/domain/constants.js`.
+- **INT-11 (motor):** `src/engines/formula/` resolve normalização única, chaves explícitas, bloqueio de colisão atributo/perícia, chaves reservadas e erro sinalizado `{ ok: false, error }` para variável desconhecida, token inválido e divisão por zero.
+- **MOD-11:** `src/domain/defaults.js` unifica os valores padrão por entidade (ficha, token livre, savingThrow, AoE, alcance, grupo de rolagens, grade e névoa).
+- **SEG-08 (motor):** `src/engines/combat/targetResolution.js` resolve alvos exclusivamente por identificador, sem casar por nome.
+- **FUN-07 (motor):** `damageComposer`, `triggersAndAssists` e `savingThrow` respeitam `critFormula`, não usam fallback `|| "1d6"` nem `|| 10` sobre `0`, e não descartam assistências com d20 por regex.
+- **FUN-28:** `src/engines/journal/aliasMatcher.js` implementa matcher único insensível a acentos respeitando `ignoredAliases`.
+- **FUN-31 (motor):** `src/engines/geometry/` unifica métricas com `METERS_PER_CELL`, raio de token e cálculos de círculo/cone.
+- **FUN-32 (motor):** `src/engines/geometry/textBounds.js` calcula bounds de texto considerando rotação.
+
+### Decisões e desvios
+- **`AUDIT_VALIDATORS` mantido vazio na Fase 1:** `scripts/migrations/lib/auditValidators.mjs` permanece com `[]` porque os dados no emulador/snapshot ainda estão no formato v1 e o teste `tests/emulator/ops-scripts.test.js` verifica que `audit-v2.mjs` retorna código `2` (inconclusiva) sem validadores; os validadores de schema v2 entram nas fases de migração (Fase 3+).
+- **Extensões `.js` explícitas:** mantidas em todas as importações relativas de `src/domain/**`, `src/engines/*/**` e `src/infra/ids.js` para compatibilidade direta com Node ESM sem bundler.
+- **Extensibilidade dos cálculos padrão:** defaults em `src/domain/defaults.js` foram organizados com funções puras (`calculateDefaultCharacterDefense`, `createDefaultCharacterResources`, etc.) conforme orientação do usuário para facilitar a futura refatoração do sistema de cálculos.
+
+**Aceite da Fase 1 (pendente Gate G1):**
+- cobertura de ramos >= 90% (`94.79%` global, >= 90% por pacote) e 0 violações de pureza nos módulos novos;
+- caracterização da Fase 0 e suíte completa verdes após a última edição.
 
 ---
 
