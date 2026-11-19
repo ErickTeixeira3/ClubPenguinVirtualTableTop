@@ -1,25 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
 import {
   buildHotbarSlotFromRoll,
   buildShortcutRollParams,
   resolveDynamicRollEntry,
   resolveHotbarSlot
-} from "../../services/rollService";
+} from "../../engines/rolls";
+import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
+import ConfirmDialog from "../ui/ConfirmDialog";
 
 export default function QuickActionsHotbar({
   character,
   onExecuteRoll,
   onUpdateCharacter,
+  onSetHotbarSlot = null,
   onOpenSheet,
   onClose
 }) {
   const containerRef = useRef(null);
   const [pickingSlotIndex, setPickingSlotIndex] = useState(null);
+  const [confirmClearSlotIdx, setConfirmClearSlotIdx] = useState(null);
 
   // Fecha ao clicar fora do componente
   useEffect(() => {
     const handlePointerDownOutside = (e) => {
+      if (confirmClearSlotIdx !== null) return;
       if (containerRef.current && !containerRef.current.contains(e.target)) {
         onClose();
       }
@@ -28,16 +32,22 @@ export default function QuickActionsHotbar({
     return () => {
       document.removeEventListener("mousedown", handlePointerDownOutside);
     };
-  }, [onClose]);
+  }, [onClose, confirmClearSlotIdx]);
 
   // Lista consolidada e resolvida dinamicamente de todas as rolagens disponíveis na ficha
   const allRolls = useMemo(() => {
-    const rollGroups = Array.isArray(character?.rollGroups) ? character.rollGroups : [];
+    const rawGroups = character?.rollGroups;
+    const rollGroups = Object.values(rawGroups || {}).sort(
+      (a, b) => (a?.order ?? 0) - (b?.order ?? 0)
+    );
     const list = [];
     for (const grp of rollGroups) {
-      for (const r of grp.rolls || []) {
+      const rollsList = Object.values(grp?.rolls || {}).sort(
+        (a, b) => (a?.order ?? 0) - (b?.order ?? 0)
+      );
+      for (const r of rollsList) {
         const resolved = resolveDynamicRollEntry(r, character) || r;
-        list.push({ ...resolved, groupName: grp.name });
+        list.push({ ...resolved, rollGroupId: grp.id, groupName: grp.name });
       }
     }
     return list;
@@ -45,10 +55,11 @@ export default function QuickActionsHotbar({
 
   // Garante array de 9 posições já resolvidas dinamicamente contra a ficha atual
   const hotbarSlots = useMemo(() => {
-    const raw = Array.isArray(character?.hotbar) ? character.hotbar : [];
+    const raw = character?.hotbar;
     const slots = [];
     for (let i = 0; i < 9; i++) {
-      slots.push(resolveHotbarSlot(raw[i], character));
+      const slotEntry = raw?.[String(i + 1)] ?? null;
+      slots.push(resolveHotbarSlot(slotEntry, character));
     }
     return slots;
   }, [character]);
@@ -56,11 +67,10 @@ export default function QuickActionsHotbar({
   const handleRollSlot = (slotData) => {
     if (!slotData) return;
     const latest = resolveHotbarSlot(slotData, character) || slotData;
-    // Fase 3.1 (V-03 / V-09b): mesma montagem da aba Rolagens (ROLL_KINDS.SAVE inexistente removido)
     const params = buildShortcutRollParams(latest, character);
     onExecuteRoll({
       ...params,
-      icon: latest.icon || slotData.icon || latest.name
+      icon: latest.icon || slotData.icon || "sword"
     });
     onClose?.();
   };
@@ -71,9 +81,6 @@ export default function QuickActionsHotbar({
   });
 
   // Atalhos numéricos 1–9 e Escape enquanto a barra rápida está aberta.
-  // Fase 3.1 (V-10): o listener roda na fase de CAPTURA do window e, quando consome a tecla,
-  // interrompe a propagação — os listeners de bolha do tabuleiro (régua 1/2/3, Esc da mira)
-  // não recebem a mesma tecla. Barra aberta tem prioridade sobre 1–9 e Esc.
   useEffect(() => {
     if (!character) return;
     const handleKeyDown = (e) => {
@@ -82,6 +89,7 @@ export default function QuickActionsHotbar({
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) {
         return;
       }
+      if (confirmClearSlotIdx !== null) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -104,26 +112,69 @@ export default function QuickActionsHotbar({
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [character, hotbarSlots, pickingSlotIndex, onClose]);
+  }, [character, hotbarSlots, pickingSlotIndex, confirmClearSlotIdx, onClose]);
 
-  const handleAssignRoll = (roll, slotIdx) => {
-    if (!character || !onUpdateCharacter) return;
+  const handleAssignRoll = async (roll, slotIdx) => {
+    if (!character) return;
+    const slotKey = String(slotIdx + 1);
     const resolvedRoll = resolveDynamicRollEntry(roll, character) || roll;
-    const next = Array.isArray(character?.hotbar) ? [...character.hotbar] : [];
-    while (next.length < 9) next.push(null);
-    // Fase 3.1 (V-09b): montagem única do slot (mesma da ficha)
-    next[slotIdx] = buildHotbarSlotFromRoll(resolvedRoll);
-    onUpdateCharacter(character.id, { hotbar: next });
-    setPickingSlotIndex(null);
+    try {
+      if (onSetHotbarSlot) {
+        await onSetHotbarSlot(character.id, slotKey, {
+          rollGroupId: roll.rollGroupId || resolvedRoll.rollGroupId,
+          rollId: roll.id || resolvedRoll.id
+        });
+      } else if (onUpdateCharacter) {
+        if (Array.isArray(character?.hotbar)) {
+          const next = [...character.hotbar];
+          while (next.length < 9) next.push(null);
+          next[slotIdx] = buildHotbarSlotFromRoll(
+            resolvedRoll,
+            roll.rollGroupId || resolvedRoll.rollGroupId
+          );
+          await onUpdateCharacter(character.id, { hotbar: next });
+        } else {
+          await onUpdateCharacter(character.id, {
+            [`hotbar.${slotKey}`]: buildHotbarSlotFromRoll(
+              resolvedRoll,
+              roll.rollGroupId || resolvedRoll.rollGroupId
+            )
+          });
+        }
+      }
+      setPickingSlotIndex(null);
+    } catch {
+      // Erro já notificado pelo hook
+    }
   };
 
   const handleClearSlot = (slotIdx, e) => {
     e.stopPropagation();
-    if (!character || !onUpdateCharacter) return;
-    const next = Array.isArray(character?.hotbar) ? [...character.hotbar] : [];
-    while (next.length < 9) next.push(null);
-    next[slotIdx] = null;
-    onUpdateCharacter(character.id, { hotbar: next });
+    if (!character) return;
+    setConfirmClearSlotIdx(slotIdx);
+  };
+
+  const confirmClearSlot = async () => {
+    if (!character || confirmClearSlotIdx === null) return;
+    const slotKey = String(confirmClearSlotIdx + 1);
+    const idx = confirmClearSlotIdx;
+    setConfirmClearSlotIdx(null);
+    try {
+      if (onSetHotbarSlot) {
+        await onSetHotbarSlot(character.id, slotKey, null);
+      } else if (onUpdateCharacter) {
+        if (Array.isArray(character?.hotbar)) {
+          const next = [...character.hotbar];
+          while (next.length < 9) next.push(null);
+          next[idx] = null;
+          await onUpdateCharacter(character.id, { hotbar: next });
+        } else {
+          await onUpdateCharacter(character.id, { [`hotbar.${slotKey}`]: null });
+        }
+      }
+    } catch {
+      // Erro já notificado pelo hook
+    }
   };
 
   if (!character) {
@@ -213,7 +264,7 @@ export default function QuickActionsHotbar({
                   onMouseLeave={(e) => (e.currentTarget.style.background = "#f8fafc")}
                 >
                   <div style={{ width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    {renderCpFlashIcon(r.icon || r.name, 20)}
+                    {renderCpFlashIcon(r.icon || "sword", 20)}
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: "11px", fontWeight: 800, color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -291,7 +342,7 @@ export default function QuickActionsHotbar({
                 </span>
 
                 <div style={{ width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-                  {renderCpFlashIcon(latest.icon || latest.name, 30)}
+                  {renderCpFlashIcon(latest.icon || "sword", 30)}
                 </div>
 
                 {/* Fase 3.1 (V-09c): origem do atalho removida da ficha */}
@@ -339,6 +390,16 @@ export default function QuickActionsHotbar({
           />
         </svg>
       </div>
+
+      {confirmClearSlotIdx !== null && (
+        <ConfirmDialog
+          title="Remover atalho da barra?"
+          question={`Limpar o slot ${confirmClearSlotIdx + 1}?`}
+          confirmLabel="Remover"
+          onConfirm={confirmClearSlot}
+          onCancel={() => setConfirmClearSlotIdx(null)}
+        />
+      )}
     </div>
   );
 }

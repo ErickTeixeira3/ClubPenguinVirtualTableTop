@@ -13,10 +13,19 @@ export default function CombatModals({
   setActiveSavingThrowReq,
   dismissedSaveIdsRef,
   allCharacters,
-  activeCharacter,
   handleExecuteDamageRoll,
   handleExecuteSavingThrow
 }) {
+  const damageCharacterId =
+    damageModalMsg?.sender?.characterId || damageModalMsg?.characterId || null;
+  const damageCharacter = damageCharacterId
+    ? allCharacters.find((character) => character.id === damageCharacterId) || null
+    : null;
+  const defenderCharacterId = activeSavingThrowReq?.targetCharacterId || null;
+  const defenderCharacter = defenderCharacterId
+    ? allCharacters.find((character) => character.id === defenderCharacterId) || null
+    : null;
+
   return (
     <>
         {/* Janela de Rolagem de Dano (Normal / Crítico / Extra / Gatilho) */}
@@ -24,10 +33,11 @@ export default function CombatModals({
           open={Boolean(damageModalMsg)}
           onClose={() => setDamageModalMsg(null)}
           attackMessage={damageModalMsg}
-          character={
-            (damageModalMsg?.characterId &&
-              allCharacters.find((c) => c.id === damageModalMsg.characterId)) ||
-            activeCharacter
+          character={damageCharacter}
+          characterResolutionError={
+            damageModalMsg && !damageCharacter
+              ? "A ficha que originou esta rolagem não está disponível."
+              : null
           }
           onExecuteDamageRoll={handleExecuteDamageRoll}
         />
@@ -42,12 +52,11 @@ export default function CombatModals({
             setActiveSavingThrowReq(null);
           }}
           savingThrowRequest={activeSavingThrowReq}
-          defenderCharacter={
-            (activeSavingThrowReq?.targetCharacterId &&
-              allCharacters.find(
-                (c) => c.id === activeSavingThrowReq.targetCharacterId
-              )) ||
-            activeCharacter
+          defenderCharacter={defenderCharacter}
+          characterResolutionError={
+            activeSavingThrowReq && !defenderCharacter
+              ? "A ficha responsável por esta resistência não está disponível."
+              : null
           }
           onExecuteSavingThrow={handleExecuteSavingThrow}
         />

@@ -1,45 +1,46 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCampaign } from "../../contexts/CampaignContext";
+import { useMembers } from "../../contexts/MembersContext";
+import { usePresence } from "../../contexts/PresenceContext";
+import { useTargetSelection } from "../../contexts/TargetSelectionContext.js";
+import TargetSelectionProvider from "../../contexts/TargetSelectionProvider.jsx";
+import TurnPolicyProvider from "../../contexts/TurnPolicyProvider.jsx";
 import { useScenes } from "../../hooks/useScenes";
 import { useCharacters } from "../../hooks/useCharacters";
 import { useCompendium } from "../../hooks/useCompendium";
 import { useChatRolls } from "../../hooks/useChatRolls";
 import { useJournalNotes } from "../../hooks/useJournalNotes";
 import { useCrossWindowSync } from "../../hooks/useCrossWindowSync";
-import { useRealtimeTokens } from "../../hooks/useRealtimeTokens";
-import BoardTokensProvider from "../../contexts/BoardTokensProvider";
-import { getNoteTypeMeta } from "../../engines/aliasEngine";
+import { useFog } from "../../hooks/useFog.js";
+import { useSceneTokens } from "../../hooks/useSceneTokens.js";
+import { useTokenSecrets } from "../../hooks/useTokenSecrets.js";
+import { useBoardReconciliation } from "../../hooks/useBoardReconciliation.js";
+import { useAllyCostsProcessor } from "../../hooks/useAllyCostsProcessor.js";
+import { useRefereeLoop } from "../../hooks/useRefereeLoop.js";
+import { useTurnPolicy } from "../../contexts/TurnPolicyContext.js";
+import { isUserResponsibleForSavingThrow } from "../../domain/permissions.js";
+import { getNoteTypeMeta } from "../journal/noteTypesUi";
 import {
   ROLL_KINDS,
   doubleDiceInFormula,
-  evaluateActorAct,
   getActiveCombatant,
-  hasControlledByAccess,
-  isUserResponsibleForSavingThrow
+  hasControlledByAccess
 } from "../../engines/combatEngine";
 import {
   advanceCampaignTurn,
-  applyCombatEffectToTarget,
+  applyCombatEffect,
   consumeCampaignTurnAction,
   consumeCampaignTurnMovement,
   consumeCombatCosts,
   deductActorResources,
-  hasOpenStandaloneSheet,
-  isSavingThrowAnswered,
-  markSavingThrowAnswered,
-  registerOpenStandaloneSheet,
   regressCampaignTurn,
-  rollbackSavingThrowSubmission,
   spawnCharacterTokenToScene,
   startTurnCombat,
   stopTurnCombat,
-  syncTokenUpdatesToCharacter,
-  tryBeginSavingThrowSubmission,
-  tryClaimSavingThrowModal,
-  unregisterOpenStandaloneSheet
+  syncTokenUpdatesToCharacter
 } from "../../services/combatService";
-import { resolveSpeakerIdentity } from "../../services/rollService";
+import { resolveSpeakerIdentity } from "../../domain/speakerIdentity.js";
 import { getAssetUrl } from "../../utils/stringUtils";
 import GMPanelModal from "../gm/GMPanelModal";
 import BoardViewport from "../canvas/BoardViewport";
@@ -61,33 +62,119 @@ const SNOWBALL_CURSOR_STYLE = {
   "--cp-snowball-cursor": `url("${getAssetUrl("icones/iconeMiraBolaDeNeve.png")}") 32 32, crosshair`
 };
 
-function buildTargetSelectionState(listOrToken) {
-  const raw = Array.isArray(listOrToken) ? listOrToken : listOrToken ? [listOrToken] : [];
-  const tokenIds = [];
-  const tokensById = {};
-  for (const tok of raw) {
-    const id = tok?.id || tok?.tokenId;
-    if (!id || tokensById[id]) continue;
-    tokenIds.push(id);
-    tokensById[id] = tok;
-  }
-  return { tokenIds, tokensById };
+export default function VTTLayout() {
+  const { campaignId, combatState, isRealGM, isGM } = useCampaign();
+  const scenesApi = useScenes();
+  const charactersApi = useCharacters();
+
+  const activeSceneId = scenesApi.activeScene?.id || null;
+  const cellSizePx = Math.max(16, Number(scenesApi.activeScene?.grid?.cellSizePx) || 64);
+
+  const fogApi = useFog(activeSceneId);
+  const tokensApi = useSceneTokens(activeSceneId, {
+    fog: fogApi.fog,
+    cellSizePx
+  });
+  const secretsByTokenId = useTokenSecrets(activeSceneId, tokensApi.publicTokens);
+
+  useBoardReconciliation({
+    sceneId: activeSceneId,
+    characters: charactersApi.allCharacters || [],
+    publicTokens: tokensApi.publicTokens,
+    hiddenTokens: tokensApi.hiddenTokens,
+    tokensLoaded: tokensApi.loaded,
+    fog: fogApi.fog,
+    cellSizePx
+  });
+
+  const liveTokensWithSecrets = useMemo(
+    () =>
+      (tokensApi.tokens || []).map((tok) => ({
+        ...tok,
+        secrets: secretsByTokenId[tok.id] || null,
+        inHiddenBucket: tokensApi.isTokenInHiddenBucket(tok.id),
+        sceneId: activeSceneId
+      })),
+    [tokensApi, secretsByTokenId, activeSceneId]
+  );
+
+  const externalTargetReceiverRef = useRef(null);
+  const broadcastTargetsRef = useRef(null);
+
+  const registerExternalTargetReceiver = useCallback((fn) => {
+    externalTargetReceiverRef.current = fn;
+    return () => {
+      if (externalTargetReceiverRef.current === fn) {
+        externalTargetReceiverRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleTargetsChange = useCallback((_ids, resolvedTokens) => {
+    broadcastTargetsRef.current?.(resolvedTokens);
+  }, []);
+
+  const handleConsumeTurnMovement = useCallback(
+    async (tokenObj, distanceMeters) => {
+      if (!combatState?.active || !isRealGM) return;
+      await consumeCampaignTurnMovement(campaignId, combatState, tokenObj, distanceMeters);
+    },
+    [campaignId, combatState, isRealGM]
+  );
+
+  return (
+    <TurnPolicyProvider
+      combatState={combatState}
+      isGM={isGM}
+      onConsumeMovement={isRealGM ? handleConsumeTurnMovement : null}
+    >
+      <TargetSelectionProvider
+        sceneId={activeSceneId}
+        sceneTokens={liveTokensWithSecrets}
+        tokensLoaded={tokensApi.loaded}
+        registerExternalReceiver={registerExternalTargetReceiver}
+        onTargetsChange={handleTargetsChange}
+      >
+        <VTTLayoutInner
+          scenesApi={scenesApi}
+          charactersApi={charactersApi}
+          fogApi={fogApi}
+          tokensApi={tokensApi}
+          secretsByTokenId={secretsByTokenId}
+          liveTokensWithSecrets={liveTokensWithSecrets}
+          externalTargetReceiverRef={externalTargetReceiverRef}
+          broadcastTargetsRef={broadcastTargetsRef}
+        />
+      </TargetSelectionProvider>
+    </TurnPolicyProvider>
+  );
 }
 
-export default function VTTLayout() {
+function VTTLayoutInner({
+  scenesApi,
+  charactersApi,
+  fogApi,
+  tokensApi,
+  secretsByTokenId,
+  liveTokensWithSecrets,
+  externalTargetReceiverRef,
+  broadcastTargetsRef
+}) {
   const { user, logout } = useAuth();
   const {
     campaignId,
     campaign,
     combatState,
-    onlineUsers,
     isRealGM,
     isGM,
     viewAsPlayer,
     setViewAsPlayer,
-    myPlayerProfile,
     firestoreError
   } = useCampaign();
+  // TRANSITION(T1): playersMap / myPlayerProfile / onlineUsers derivados de Members/Presence até Fase 11
+  const { playersMap, myPlayerProfile } = useMembers();
+  const { onlineUsers, hasSheetOpen } = usePresence();
+  const turnPolicy = useTurnPolicy();
 
   const {
     scenes,
@@ -97,7 +184,7 @@ export default function VTTLayout() {
     updateScene,
     deleteScene,
     activateSceneForTable
-  } = useScenes();
+  } = scenesApi;
 
   const {
     characters,
@@ -105,17 +192,32 @@ export default function VTTLayout() {
     folders: characterFolders,
     canEditCharacter,
     canEditFolder: canEditCharacterFolder,
+    canDeleteCharacter,
+    canDeleteFolder: canDeleteCharacterFolder,
     createCharacter,
+    renameCharacter,
     updateCharacter,
     updateCharacterResource,
+    applyCharacterResourceDelta,
+    consumeCharacterItem,
+    addCharacterEntry,
+    updateCharacterEntry,
+    removeCharacterEntry,
+    reorderCharacterEntries,
+    setCharacterHotbarSlot,
+    shareCharacter,
+    transferCharacter,
+    pullCompendiumEntry,
     uploadCharacterImage,
     deleteCharacter,
     createFolder: createCharacterFolder,
+    renameFolder: renameCharacterFolder,
     updateFolder: updateCharacterFolder,
+    transferFolderOwnership: transferCharacterFolderOwnership,
     deleteFolder: deleteCharacterFolder,
     moveCharacterToFolder,
     moveFolder: moveCharacterFolder
-  } = useCharacters();
+  } = charactersApi;
 
   const {
     entries: compendiumEntries,
@@ -130,21 +232,28 @@ export default function VTTLayout() {
     sendEmoteMessage,
     sendSkillPing,
     executeRoll,
-    updateMessageRollData,
     deleteMessage
   } = useChatRolls();
 
   const {
     accessibleNotes,
     accessibleFolders,
+    canEditNote,
+    canDeleteNote,
+    canEditFolder: canEditJournalFolder,
+    canDeleteFolder: canDeleteJournalFolder,
     createNote,
     updateNote,
+    saveNoteDraft,
     updateNodePosition,
     cloneNoteToTarget,
     shareNoteWithTarget,
     revokeNoteAccess,
     deleteNote,
     createFolder,
+    renameFolder: renameJournalFolder,
+    moveFolder: moveJournalFolder,
+    moveNoteToFolder,
     deleteFolder
   } = useJournalNotes();
 
@@ -170,18 +279,7 @@ export default function VTTLayout() {
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [snowballAimActive, setSnowballAimActive] = useState(false);
   const [selectedTokenOnBoard, setSelectedTokenOnBoard] = useState(null);
-  const [targetSelection, setTargetSelection] = useState({ tokenIds: [], tokensById: {} });
-  const targetSelectionRef = useRef(targetSelection);
-
-  useEffect(() => {
-    targetSelectionRef.current = targetSelection;
-  }, [targetSelection]);
-
-  const targetedTokens = useMemo(
-    () => targetSelection.tokenIds.map((id) => targetSelection.tokensById[id]).filter(Boolean),
-    [targetSelection]
-  );
-  const targetedToken = targetedTokens[0] || null;
+  const { targetedTokens, primaryTarget: targetedToken } = useTargetSelection();
 
   const [aoeDemarcateConfig, setAoeDemarcateConfig] = useState(null);
   const [actionBlockNotice, setActionBlockNotice] = useState(null);
@@ -200,68 +298,21 @@ export default function VTTLayout() {
     };
   }, []);
 
-  const {
-    windowId,
-    broadcastTargets,
-    broadcastAoeDemarcate,
-    broadcastSaveClaimed,
-    broadcastSaveAnswered
-  } = useCrossWindowSync({
+  const { broadcastTargets, broadcastAoeDemarcate } = useCrossWindowSync({
     campaignId,
     targetedTokens,
     aoeDemarcateConfig,
-    onTargetsReceived: ({ targetedTokens: received }) => {
-      const nextState = buildTargetSelectionState(received);
-      targetSelectionRef.current = nextState;
-      setTargetSelection(nextState);
+    onTargetsReceived: (payload) => {
+      externalTargetReceiverRef.current?.(payload);
     },
     onAoeDemarcateReceived: (config) => {
       setAoeDemarcateConfig(config || null);
-    },
-    onSaveClaimReceived: ({ saveId, ownerWindowId, priority = 1 }) => {
-      if (!saveId || !ownerWindowId) return;
-      setActiveSavingThrowReq((prev) => {
-        if (prev?.id !== saveId) return prev;
-        const myPriority =
-          standaloneSheetId && prev.targetCharacterId === standaloneSheetId ? 2 : 1;
-        return priority >= myPriority ? null : prev;
-      });
-    },
-    onSaveAnsweredReceived: ({ saveId }) => {
-      if (!saveId) return;
-      dismissedSaveIdsRef.current.add(saveId);
-      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
     }
   });
 
-  const setTargetedTokens = (nextListOrFn) => {
-    const currentList = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-    const resolved = typeof nextListOrFn === "function" ? nextListOrFn(currentList) : nextListOrFn;
-    const nextState = buildTargetSelectionState(resolved);
-    targetSelectionRef.current = nextState;
-    setTargetSelection(nextState);
-    broadcastTargets(nextState.tokenIds.map((id) => nextState.tokensById[id]));
-  };
-
-  // Fase 6.3 (A12): definir o alvo principal não descarta os demais alvos. Só limpa tudo
-  // quando recebe null; um token já presente vira o primeiro da lista, sem reenviar lista menor.
-  const setTargetedToken = (nextTok) => {
-    const currentList = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-    const resolved = typeof nextTok === "function" ? nextTok(currentList[0] || null) : nextTok;
-    if (!resolved) {
-      setTargetedTokens([]);
-      return;
-    }
-    const resolvedId = resolved.id || resolved.tokenId;
-    setTargetedTokens([
-      resolved,
-      ...currentList.filter((t) => (t.id || t.tokenId) !== resolvedId)
-    ]);
-  };
+  useEffect(() => {
+    broadcastTargetsRef.current = broadcastTargets;
+  }, [broadcastTargets, broadcastTargetsRef]);
 
   const handleStartAoeDemarcate = (config) => {
     const next = config || null;
@@ -272,42 +323,43 @@ export default function VTTLayout() {
   const [damageModalMsg, setDamageModalMsg] = useState(null);
   const [activeSavingThrowReq, setActiveSavingThrowReq] = useState(null);
 
-  // Fase 5: tokens da cena ativa assinados aqui e compartilhados com o BoardViewport via
-  // BoardTokensContext (substitui o boardSyncRef alimentado pelo filho via onTokensSync).
-  const boardTokensApi = useRealtimeTokens(activeScene?.id || null);
-  const boardTokensValue = { ...boardTokensApi, sceneId: activeScene?.id || null };
+  const activeSceneId = activeScene?.id || null;
   const dismissedSaveIdsRef = useRef(new Set());
   const inFlightSaveIdsRef = useRef(new Set());
-  const pendingSaveClaimTimerRef = useRef(null);
-  const mountTimestampRef = useRef(Date.now());
 
-  useEffect(() => {
-    if (!campaignId || !standaloneSheetId || !windowId) return;
-    registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
+  const editableCharacterIds = useMemo(
+    () =>
+      allCharacters
+        .filter((character) => canEditCharacter(character))
+        .map((character) => character.id),
+    [allCharacters, canEditCharacter]
+  );
+  useAllyCostsProcessor({
+    campaignId,
+    uid: user?.uid || null,
+    isGM: isRealGM,
+    editableCharacterIds,
+    enabled: Boolean(campaignId && user)
+  });
+  useRefereeLoop({
+    campaignId,
+    isRealGM,
+    isMainWindow: !standaloneSheetId,
+    tokens: liveTokensWithSecrets,
+    tokenSecretsById: secretsByTokenId,
+    characters: allCharacters
+  });
+
     // Revisão pós-6.8 (A20): renova o registro enquanto a ficha destacada estiver aberta. Sem isso,
     // ele expirava em OPEN_SHEET_TTL_MS (30 min) e a janela principal deixava de ceder a vez,
     // abrindo o pop-up por um instante antes de a ficha destacada assumi-lo.
-    const heartbeat = setInterval(
-      () => registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId),
-      5 * 60 * 1000
-    );
-    const cleanup = () => unregisterOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
-    window.addEventListener("pagehide", cleanup);
-    window.addEventListener("beforeunload", cleanup);
-    return () => {
-      clearInterval(heartbeat);
-      window.removeEventListener("pagehide", cleanup);
-      window.removeEventListener("beforeunload", cleanup);
-      cleanup();
-    };
-  }, [campaignId, standaloneSheetId, windowId]);
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   // Fase 3.1 (errata Fase 3 §4.2): nome do jogador resolvido pelo ponto único resolveSpeakerIdentity
   const currentDisplayName = resolveSpeakerIdentity({
     user,
     myPlayerProfile,
-    playersMap: campaign?.players
+    playersMap
   }).senderName;
 
   const activeCharacter = useMemo(() => {
@@ -322,12 +374,6 @@ export default function VTTLayout() {
         if (selectedTokenOnBoard.characterId) {
           const charFromToken = characters.find((c) => c.id === selectedTokenOnBoard.characterId);
           if (charFromToken && canEditCharacter(charFromToken)) return charFromToken;
-        }
-        if (selectedTokenOnBoard.name) {
-          const charByName = characters.find(
-            (c) => c.name?.trim().toLowerCase() === selectedTokenOnBoard.name.trim().toLowerCase()
-          );
-          if (charByName && canEditCharacter(charByName)) return charByName;
         }
       }
     }
@@ -356,7 +402,7 @@ export default function VTTLayout() {
   // Prioriza o token selecionado no tabuleiro; sem seleção, só aceita um token único da ficha.
   const resolveActorToken = (character, preferredTokenId = null) => {
     if (!character) return null;
-    const boardTokens = boardTokensApi.tokens || [];
+    const boardTokens = liveTokensWithSecrets || [];
     if (preferredTokenId) {
       const preferred = boardTokens.find((t) => t.id === preferredTokenId);
       if (preferred) return preferred;
@@ -368,30 +414,15 @@ export default function VTTLayout() {
     return sameCharTokens.length === 1 ? sameCharTokens[0] : null;
   };
 
-  const handleConsumeTurnMovement = async (tokenObj, distanceMeters) => {
-    if (!combatState?.active || !isRealGM) return;
-    await consumeCampaignTurnMovement(campaignId, combatState, tokenObj, distanceMeters);
-  };
-
   const handleExecuteSheetRoll = async (incomingRollParams) => {
-    const currentTargets = targetSelectionRef.current.tokenIds
-      .map((id) => targetSelectionRef.current.tokensById[id])
-      .filter(Boolean);
-
     const activeTargets =
       Array.isArray(incomingRollParams.targetedTokens) && incomingRollParams.targetedTokens.length > 0
         ? incomingRollParams.targetedTokens
-        : currentTargets;
+        : targetedTokens;
 
     const primaryTarget = incomingRollParams.targetedToken ?? activeTargets[0] ?? null;
 
-    // Fase 6.3 (A15): rolagem personalizada antiga só de acerto (sem `rollKind` salvo) é ataque
-    // quando há alvo, como no 711451e; sem alvo continua teste.
-    const { attackWhenTargeted, ...baseRollParams } = incomingRollParams;
-    const rollParams =
-      attackWhenTargeted && primaryTarget
-        ? { ...baseRollParams, rollKind: ROLL_KINDS.ATTACK, primaryLabel: "Acerto" }
-        : baseRollParams;
+    const rollParams = incomingRollParams;
 
     const actor = rollParams.character || activeCharacter;
     const resolvedActionKind =
@@ -401,7 +432,7 @@ export default function VTTLayout() {
         : rollParams.rollKind === ROLL_KINDS.CHECK
           ? "check"
           : "active");
-    const actCheck = evaluateActorAct(combatState, actor, resolvedActionKind, {
+    const actCheck = turnPolicy.canActorAct(actor, resolvedActionKind, {
       isGM,
       isFollowUp: Boolean(rollParams.isFollowUp || rollParams.parentMessageId)
     });
@@ -411,6 +442,9 @@ export default function VTTLayout() {
     }
     const sentMsg = await executeRoll({
       ...rollParams,
+      character: actor,
+      actorToken: resolveActorToken(actor),
+      sceneId: activeSceneId,
       targetedToken: primaryTarget,
       targetedTokens: activeTargets.length > 0 ? activeTargets : (primaryTarget ? [primaryTarget] : []),
       allCharacters,
@@ -426,9 +460,10 @@ export default function VTTLayout() {
           user,
           character: payer,
           actorToken: resolveActorToken(payer),
-          sceneId: boardTokensValue.sceneId,
+          sceneId: activeSceneId,
           costs: { [resKey]: amount },
-          updateCharacterResource
+          updateCharacterResource,
+          opId: meta.opId || null
         });
       }
     });
@@ -466,10 +501,6 @@ export default function VTTLayout() {
 
   // Detecta automaticamente novos pedidos de Teste de Resistência direcionados ao jogador / Mestre
   useEffect(() => {
-    if (pendingSaveClaimTimerRef.current) {
-      clearTimeout(pendingSaveClaimTimerRef.current);
-      pendingSaveClaimTimerRef.current = null;
-    }
     if (!user || !Array.isArray(messages) || messages.length === 0) return;
 
     const answeredSaveIds = new Set(
@@ -479,9 +510,6 @@ export default function VTTLayout() {
     );
 
     // Fase 6.4 (A20): fecha o pop-up automaticamente assim que a resposta chegar ao chat.
-    for (const ansId of answeredSaveIds) {
-      markSavingThrowAnswered(campaignId, ansId);
-    }
     setActiveSavingThrowReq((prev) =>
       prev?.id && answeredSaveIds.has(prev.id) ? null : prev
     );
@@ -491,16 +519,23 @@ export default function VTTLayout() {
       const m = messages[i];
       const req = m?.rollData?.savingThrowRequest;
       if (!req || !req.id) continue;
-      if ((m.timestampMs || 0) < mountTimestampRef.current - 15000) continue;
       if (answeredSaveIds.has(req.id) || dismissedSaveIdsRef.current.has(req.id)) continue;
-      if (isSavingThrowAnswered(campaignId, req.id)) continue;
+
+      const targetCharacter = req.targetCharacterId
+        ? allCharacters.find((character) => character.id === req.targetCharacterId) || null
+        : null;
+      const targetToken = req.targetTokenId
+        ? liveTokensWithSecrets.find((token) => token.id === req.targetTokenId) || null
+        : null;
 
       if (
         !isUserResponsibleForSavingThrow({
-          user,
+          uid: user.uid,
           isGM,
           savingThrowRequest: req,
-          campaignGMId: campaign?.gmId
+          campaignGmId: campaign?.gmId,
+          targetCharacter,
+          targetToken
         })
       ) {
         continue;
@@ -511,39 +546,29 @@ export default function VTTLayout() {
         continue;
       }
 
-      const priority = standaloneSheetId && req.targetCharacterId === standaloneSheetId ? 2 : 1;
-      const openForThisWindow = () => {
-        const claim = tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority });
-        if (!claim.claimed) return;
-        broadcastSaveClaimed(req.id, { priority });
-        setActiveSavingThrowReq((prev) => (prev?.id === req.id ? prev : req));
-      };
-
       // Se a janela principal detectar que a ficha destacada do alvo está aberta, dá preferência
       // a ela antes de reivindicar o pop-up para evitar abertura dupla entre janelas.
-      if (!standaloneSheetId && hasOpenStandaloneSheet(campaignId, req.targetCharacterId)) {
-        pendingSaveClaimTimerRef.current = setTimeout(() => {
-          pendingSaveClaimTimerRef.current = null;
-          openForThisWindow();
-        }, 120);
-      } else {
-        openForThisWindow();
-      }
+      if (!standaloneSheetId && hasSheetOpen(user.uid, req.targetCharacterId)) continue;
+      setActiveSavingThrowReq((prev) =>
+        prev?.id === req.id ? prev : { ...req, parentMessageId: m.id }
+      );
       break;
     }
-
-    return () => {
-      if (pendingSaveClaimTimerRef.current) {
-        clearTimeout(pendingSaveClaimTimerRef.current);
-        pendingSaveClaimTimerRef.current = null;
-      }
-    };
-  }, [messages, user, isGM, campaign?.gmId, campaignId, standaloneSheetId, windowId, broadcastSaveClaimed]);
+  }, [
+    messages,
+    user,
+    isGM,
+    campaign?.gmId,
+    standaloneSheetId,
+    allCharacters,
+    liveTokensWithSecrets,
+    hasSheetOpen
+  ]);
 
   const handleExecuteDamageRoll = async ({
     isCrit,
     baseFormula,
-    critFormula: _critFormula,
+    critFormula,
     extraDamage,
     selectedTriggers = [],
     attackMessage,
@@ -551,25 +576,17 @@ export default function VTTLayout() {
   }) => {
     const attacker =
       character ||
-      allCharacters.find((c) => c.id === attackMessage?.characterId) ||
+      allCharacters.find(
+        (c) => c.id === (attackMessage?.sender?.characterId || attackMessage?.characterId)
+      ) ||
       activeCharacter;
 
     // 1. Deduz custos de recursos ou itens dos gatilhos selecionados
     // (Fase 3.1 / V-05: MP/HP de matriz GM/NPC saem da instância do token atacante)
-    await consumeCombatCosts({
-      campaignId,
-      campaign,
-      user,
-      character: attacker,
-      actorToken: resolveActorToken(attacker),
-      sceneId: boardTokensValue.sceneId,
-      itemsToConsume: selectedTriggers,
-      updateCharacterResource,
-      updateCharacter
-    });
-
     // 2. Fórmula final de dano (Normal vs Crítico + Extra + Gatilhos com dados dobrados no crítico)
-    const coreFormula = isCrit ? doubleDiceInFormula(baseFormula) : baseFormula;
+    const coreFormula = isCrit
+      ? String(critFormula || "").trim() || doubleDiceInFormula(baseFormula)
+      : baseFormula;
     const formattedExtra = isCrit && extraDamage
       ? doubleDiceInFormula(extraDamage)
       : extraDamage;
@@ -577,7 +594,7 @@ export default function VTTLayout() {
       .map((t) => (isCrit && t.formula ? doubleDiceInFormula(t.formula) : t.formula))
       .filter(Boolean);
     const parts = [coreFormula, formattedExtra, ...triggerFormulas].filter(Boolean);
-    const combinedFormula = parts.join(" + ") || "1d6";
+    const combinedFormula = parts.join(" + ");
 
     // 3. Verifica se algum gatilho exige Teste de Resistência
     const triggerWithSave = selectedTriggers.find(
@@ -633,7 +650,29 @@ export default function VTTLayout() {
             isHit: null
           }
         : null,
-      parentMessageId: attackMessage?.id || null
+      parentMessageId: attackMessage?.id || null,
+      costs: [
+        {
+          kind: "combat_items",
+          characterId: attacker?.id || null,
+          actorTokenId: resolveActorToken(attacker)?.id || null,
+          sceneId: activeSceneId,
+          items: selectedTriggers
+        }
+      ],
+      executeEffects: ({ opId }) =>
+        consumeCombatCosts({
+          campaignId,
+          campaign,
+          user,
+          character: attacker,
+          actorToken: resolveActorToken(attacker),
+          sceneId: activeSceneId,
+          itemsToConsume: selectedTriggers,
+          updateCharacterResource,
+          consumeCharacterItem,
+          opId
+        })
     });
 
     setSidebarOpen(true);
@@ -642,14 +681,27 @@ export default function VTTLayout() {
 
   const handleOpenSavingThrowModal = (req) => {
     if (!req?.id) return;
+    if (messages.some((m) => m.rollData?.respondedToSaveId === req.id)) {
+      return;
+    }
+    const targetCharacter = req.targetCharacterId
+      ? allCharacters.find((character) => character.id === req.targetCharacterId) || null
+      : null;
+    const targetToken = req.targetTokenId
+      ? liveTokensWithSecrets.find((token) => token.id === req.targetTokenId) || null
+      : null;
     if (
-      messages.some((m) => m.rollData?.respondedToSaveId === req.id) ||
-      isSavingThrowAnswered(campaignId, req.id)
+      !isUserResponsibleForSavingThrow({
+        uid: user?.uid,
+        isGM,
+        savingThrowRequest: req,
+        campaignGmId: campaign?.gmId,
+        targetCharacter,
+        targetToken
+      })
     ) {
       return;
     }
-    tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority: 3, forceManual: true });
-    broadcastSaveClaimed(req.id, { priority: 3, manual: true });
     setActiveSavingThrowReq(req);
   };
 
@@ -664,17 +716,10 @@ export default function VTTLayout() {
     if (!savingThrowRequest || !saveId) return false;
     if (inFlightSaveIdsRef.current.has(saveId)) return false;
 
-    const alreadyAnswered =
-      messages.some((m) => m.rollData?.respondedToSaveId === saveId) ||
-      isSavingThrowAnswered(campaignId, saveId);
+    const alreadyAnswered = messages.some(
+      (m) => m.rollData?.respondedToSaveId === saveId
+    );
     if (alreadyAnswered) {
-      dismissedSaveIdsRef.current.add(saveId);
-      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
-      return false;
-    }
-
-    const beginClaim = tryBeginSavingThrowSubmission(campaignId, saveId, windowId);
-    if (!beginClaim.allowed) {
       dismissedSaveIdsRef.current.add(saveId);
       setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
       return false;
@@ -685,19 +730,8 @@ export default function VTTLayout() {
 
     try {
       // Fase 3.1 (V-05): MP/HP de matriz GM/NPC saem da instância do token defensor
-      await consumeCombatCosts({
-        campaignId,
-        campaign,
-        user,
-        character: defenderCharacter,
-        actorToken: resolveActorToken(defenderCharacter, savingThrowRequest.targetTokenId),
-        sceneId: savingThrowRequest.targetSceneId || boardTokensValue.sceneId,
-        itemsToConsume: selectedAssists,
-        updateCharacterResource,
-        updateCharacter
-      });
-
-      const dc = Number(savingThrowRequest.dc) || 10;
+      const parsedDc = Number(savingThrowRequest.dc);
+      const dc = Number.isFinite(parsedDc) ? parsedDc : 10;
 
       await executeRoll({
         title: `Resistência (${attributeLabel}) — ${savingThrowRequest.sourceRollName || "Teste"}`,
@@ -716,25 +750,46 @@ export default function VTTLayout() {
         rollKind: ROLL_KINDS.SAVING_THROW,
         deferSecondaryDamage: false,
         respondedToSaveId: saveId,
-        parentMessageId: savingThrowRequest.parentMessageId || null,
+        requestMessageId: savingThrowRequest.parentMessageId,
+        parentMessageId: savingThrowRequest.parentMessageId,
         savingThrowOutcome: {
           dc,
           attribute: attributeLabel,
           effectDescription: savingThrowRequest.effectDescription || ""
-        }
+        },
+        costs: [
+          {
+            kind: "combat_items",
+            characterId: defenderCharacter?.id || null,
+            actorTokenId: savingThrowRequest.targetTokenId || null,
+            sceneId: savingThrowRequest.targetSceneId || activeSceneId,
+            items: selectedAssists
+          }
+        ],
+        executeEffects: ({ opId }) =>
+          consumeCombatCosts({
+            campaignId,
+            campaign,
+            user,
+            character: defenderCharacter,
+            actorToken: resolveActorToken(
+              defenderCharacter,
+              savingThrowRequest.targetTokenId
+            ),
+            sceneId: savingThrowRequest.targetSceneId || activeSceneId,
+            itemsToConsume: selectedAssists,
+            updateCharacterResource,
+            consumeCharacterItem,
+            opId
+          })
       });
 
-      markSavingThrowAnswered(campaignId, saveId, windowId);
-      broadcastSaveAnswered(saveId);
       setActiveSavingThrowReq(null);
       if (!standaloneSheetId) {
         setSidebarOpen(true);
         setActiveSidebarTab("chat");
       }
       return true;
-    } catch (err) {
-      rollbackSavingThrowSubmission(campaignId, saveId, windowId);
-      throw err;
     } finally {
       inFlightSaveIdsRef.current.delete(saveId);
     }
@@ -748,24 +803,28 @@ export default function VTTLayout() {
     effectType = "damage",
     manualModifiers = []
   }) => {
-    await applyCombatEffectToTarget({
+    const targetRef = msg?.roll?.targets?.[0] || null;
+    const targetToken = targetRef?.tokenId
+      ? liveTokensWithSecrets.find((token) => token.id === targetRef.tokenId) || null
+      : null;
+    const targetCharacter = targetRef?.characterId
+      ? allCharacters.find((character) => character.id === targetRef.characterId) || null
+      : null;
+    const sourceCharacter = msg?.sender?.characterId
+      ? allCharacters.find((character) => character.id === msg.sender.characterId) || null
+      : null;
+    await applyCombatEffect({
       campaignId,
-      campaign,
       user,
-      isGM,
-      msg,
+      message: msg,
       baseValue,
       scaleMode,
       customValue,
       effectType,
       manualModifiers,
-      boardTokens: boardTokensApi.tokens || [],
-      targetedToken,
-      selectedTokenOnBoard,
-      activeScene,
-      allCharacters,
-      updateCharacterResource,
-      updateMessageRollData
+      sourceCharacter,
+      targetCharacter,
+      targetToken
     });
   };
 
@@ -785,7 +844,8 @@ export default function VTTLayout() {
         canEditCharacter,
         activeScene,
         char,
-        spawnOptions
+        spawnOptions,
+        fog: fogApi.fog
       });
     } catch (err) {
       // Fase 3.1 (V-12): falha de escrita no RTDB deixa de ser silenciosa
@@ -816,7 +876,7 @@ export default function VTTLayout() {
       character: activeCharacter,
       user,
       myPlayerProfile,
-      playersMap: campaign?.players
+      playersMap
     });
 
     // Rolagens no chat
@@ -858,7 +918,7 @@ export default function VTTLayout() {
       character: activeCharacter,
       user,
       myPlayerProfile,
-      playersMap: campaign?.players
+      playersMap
     });
 
     await sendEmoteMessage({
@@ -881,7 +941,6 @@ export default function VTTLayout() {
     setActiveSavingThrowReq,
     dismissedSaveIdsRef,
     allCharacters,
-    activeCharacter,
     handleExecuteDamageRoll,
     handleExecuteSavingThrow
   };
@@ -895,13 +954,24 @@ export default function VTTLayout() {
         combatModalsProps={combatModalsProps}
         sheetProps={{
           campaignId,
-          playersMap: campaign?.players || {},
+          playersMap,
           compendiumEntries,
           canEdit: openedSheetCharacter ? canEditCharacter(openedSheetCharacter) : false,
           isGM,
           rollVisibility,
           onChangeRollVisibility: setRollVisibility,
           onUpdateCharacter: updateCharacter,
+          onRenameCharacter: renameCharacter,
+          onUpdateCharacterResource: updateCharacterResource,
+          onAddCharacterEntry: addCharacterEntry,
+          onUpdateCharacterEntry: updateCharacterEntry,
+          onRemoveCharacterEntry: removeCharacterEntry,
+          onReorderCharacterEntries: reorderCharacterEntries,
+          onSetHotbarSlot: setCharacterHotbarSlot,
+          onShareCharacter: shareCharacter,
+          onTransferCharacter: transferCharacter,
+          onConsumeCharacterItem: consumeCharacterItem,
+          onPullCompendiumEntry: pullCompendiumEntry,
           onUploadCharacterImage: uploadCharacterImage,
           onExecuteRoll: handleExecuteSheetRoll,
           onPingSkill: handlePingSkill,
@@ -1008,7 +1078,7 @@ export default function VTTLayout() {
               onClick={() =>
                 startTurnCombat({
                   campaignId,
-                  tokens: boardTokensApi.tokens || [],
+                  tokens: liveTokensWithSecrets,
                   allCharacters
                 })
               }
@@ -1151,33 +1221,30 @@ export default function VTTLayout() {
         )}
 
         {activeDockModule === "board" && (
-          <BoardTokensProvider value={boardTokensValue}>
           <BoardViewport
             activeScene={activeScene}
             campaignId={campaignId}
-            playersMap={campaign?.players || {}}
+            playersMap={playersMap}
             isGM={isGM}
             messages={messages}
             activeCharacter={activeCharacter}
+            allCharacters={allCharacters}
+            tokensApi={tokensApi}
+            secretsByTokenId={secretsByTokenId}
+            fogApi={fogApi}
             onUpdateSceneGrid={updateScene}
             onOpenScenesManager={() => {
               setScenesModalInitialTab("scenes");
               setScenesModalOpen(true);
             }}
             onSelectedTokenChange={setSelectedTokenOnBoard}
-            targetedToken={targetedToken}
-            targetedTokens={targetedTokens}
-            onTargetedTokenChange={setTargetedToken}
-            onTargetedTokensChange={setTargetedTokens}
             aoeDemarcateConfig={aoeDemarcateConfig}
             onCloseAoeDemarcate={() => handleStartAoeDemarcate(null)}
             snowballAimActive={snowballAimActive}
             onDeactivateSnowballAim={() => setSnowballAimActive(false)}
             onSyncTokenToCharacter={handleSyncTokenToCharacter}
-            combatState={combatState}
-            onConsumeTurnMovement={isRealGM ? handleConsumeTurnMovement : null}
+            onAdjustPcResource={applyCharacterResourceDelta}
           />
-          </BoardTokensProvider>
         )}
 
         {activeDockModule === "journal" && (
@@ -1185,19 +1252,27 @@ export default function VTTLayout() {
             campaignId={campaignId}
             currentUserId={user?.uid}
             isGM={isGM}
-            playersMap={campaign?.players || {}}
+            playersMap={playersMap}
             characters={characters}
             accessibleNotes={accessibleNotes}
             accessibleFolders={accessibleFolders}
             onCreateNote={createNote}
             onUpdateNote={updateNote}
+            onSaveNoteDraft={saveNoteDraft}
             onUpdateNodePosition={updateNodePosition}
             onCloneNoteToTarget={cloneNoteToTarget}
             onShareNoteWithTarget={shareNoteWithTarget}
             onRevokeNoteAccess={revokeNoteAccess}
             onDeleteNote={deleteNote}
             onCreateFolder={createFolder}
+            onRenameFolder={renameJournalFolder}
+            onMoveFolder={moveJournalFolder}
+            onMoveNoteToFolder={moveNoteToFolder}
             onDeleteFolder={deleteFolder}
+            canEditNote={canEditNote}
+            canDeleteNote={canDeleteNote}
+            canEditFolder={canEditJournalFolder}
+            canDeleteFolder={canDeleteJournalFolder}
             onOpenCharacterSheet={(charId) => setOpenCharacterId(charId)}
           />
         )}
@@ -1289,6 +1364,7 @@ export default function VTTLayout() {
                   character={activeCharacter}
                   onExecuteRoll={handleExecuteSheetRoll}
                   onUpdateCharacter={updateCharacter}
+                  onSetHotbarSlot={setCharacterHotbarSlot}
                   onOpenSheet={(charId) => setOpenCharacterId(charId)}
                   onClose={() => setHotbarOpen(false)}
                 />
@@ -1526,9 +1602,11 @@ export default function VTTLayout() {
               campaignId={campaignId}
               isGM={isGM}
               canEditCharacter={canEditCharacter}
+              canDeleteCharacter={canDeleteCharacter}
               canEditFolder={canEditCharacterFolder}
+              canDeleteFolder={canDeleteCharacterFolder}
               currentUser={user}
-              playersMap={campaign?.players || {}}
+              playersMap={playersMap}
               gmId={campaign?.gmId}
               onlineUsers={onlineUsers}
               onCreateCharacter={createCharacter}
@@ -1536,7 +1614,9 @@ export default function VTTLayout() {
               onSpawnToken={activeScene ? handleSpawnCharacterToken : null}
               onDeleteCharacter={deleteCharacter}
               onCreateFolder={createCharacterFolder}
+              onRenameFolder={renameCharacterFolder}
               onUpdateFolder={updateCharacterFolder}
+              onTransferFolderOwnership={transferCharacterFolderOwnership}
               onDeleteFolder={deleteCharacterFolder}
               onMoveCharacterToFolder={moveCharacterToFolder}
               onMoveFolder={moveCharacterFolder}
@@ -1680,6 +1760,8 @@ export default function VTTLayout() {
           activeCharacter={activeCharacter}
           canEditCharacter={canEditCharacter}
           onUpdateCharacter={updateCharacter}
+          onAddCharacterEntry={addCharacterEntry}
+          onPullCompendiumEntry={pullCompendiumEntry}
           onCreateEntry={createEntry}
           onUpdateEntry={updateEntry}
           onDeleteEntry={deleteEntry}
@@ -1691,13 +1773,24 @@ export default function VTTLayout() {
         <CharacterSheetModal
           character={openedSheetCharacter}
           campaignId={campaignId}
-          playersMap={campaign?.players || {}}
+          playersMap={playersMap}
           compendiumEntries={compendiumEntries}
           canEdit={canEditCharacter(openedSheetCharacter)}
           isGM={isGM}
           rollVisibility={rollVisibility}
           onChangeRollVisibility={setRollVisibility}
           onUpdateCharacter={updateCharacter}
+          onRenameCharacter={renameCharacter}
+          onUpdateCharacterResource={updateCharacterResource}
+          onAddCharacterEntry={addCharacterEntry}
+          onUpdateCharacterEntry={updateCharacterEntry}
+          onRemoveCharacterEntry={removeCharacterEntry}
+          onReorderCharacterEntries={reorderCharacterEntries}
+          onSetHotbarSlot={setCharacterHotbarSlot}
+          onShareCharacter={shareCharacter}
+          onTransferCharacter={transferCharacter}
+          onConsumeCharacterItem={consumeCharacterItem}
+          onPullCompendiumEntry={pullCompendiumEntry}
           onUploadCharacterImage={uploadCharacterImage}
           onExecuteRoll={handleExecuteSheetRoll}
           onPingSkill={handlePingSkill}

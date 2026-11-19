@@ -1,5 +1,7 @@
-import { EFFECT_TYPES, ROLL_KINDS, buildTargetInfo, canUserSeeTargetDefense, canUserSeeTargetOutcome, computeModifiedEffectValue } from "../../engines/combatEngine";
-import { isAttackRollMessage } from "../../services/rollService";
+import { EFFECT_TYPES, ROLL_KINDS, canUserSeeTargetDefense, canUserSeeTargetOutcome, computeModifiedEffectValue } from "../../engines/combatEngine";
+import { isUserResponsibleForSavingThrow } from "../../domain/permissions.js";
+import { isAttackRollMessage } from "../../engines/rolls/rollClassifier.js";
+import { adaptMessageForLegacyChat } from "../../engines/chat/messageSelector.js";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
 import MessageAvatar from "./MessageAvatar";
 
@@ -8,7 +10,7 @@ import MessageAvatar from "./MessageAvatar";
  * aplicação de efeito do Mestre, extraído de ChatSidebarPanel.jsx (JSX e lógica inalterados).
  */
 export default function RollMessageCard({
-  msg,
+  msg: rawMessage,
   targetedToken,
   allCharacters,
   user,
@@ -31,58 +33,19 @@ export default function RollMessageCard({
   setEffectCustomVal,
   setEffectFlatMod
 }) {
-  const primaryRoll =
-    msg.rollData.primary || msg.rollData.rolls?.[0] || null;
-  const primaryTotal =
-    primaryRoll?.total !== undefined && primaryRoll?.total !== null
-      ? Number(primaryRoll.total)
-      : null;
-
+  const msg = adaptMessageForLegacyChat(rawMessage);
+  if (!msg.rollData) return null;
   const isDamageRollMessage =
     msg.rollData.rollKind === ROLL_KINDS.DAMAGE ||
     Boolean(
       msg.rollData.parentMessageId && !msg.rollData.savingThrowOutcome
     );
 
-  const isAttackMessage = isAttackRollMessage({
-    rollData: msg.rollData,
-    targetedToken
-  });
+  const isAttackMessage = isAttackRollMessage({ roll: msg.roll });
 
-  let targetInfo = msg.rollData.targetInfo || null;
-  if (isAttackMessage) {
-    if (targetInfo) {
-      const rebuilt = buildTargetInfo({
-        targetedToken: {
-          ...targetInfo,
-          id: targetInfo.tokenId || targetInfo.id
-        },
-        allCharacters,
-        attackTotal: primaryTotal,
-        isAttackRoll: true
-      });
-      if (rebuilt) {
-        targetInfo = {
-          ...rebuilt,
-          ...targetInfo,
-          defense: targetInfo.defense ?? rebuilt.defense,
-          isHit:
-            targetInfo.isHit !== null &&
-            targetInfo.isHit !== undefined
-              ? targetInfo.isHit
-              : rebuilt.isHit,
-          isAttackRoll: true
-        };
-      }
-    } else if (targetedToken) {
-      targetInfo = buildTargetInfo({
-        targetedToken,
-        allCharacters,
-        attackTotal: primaryTotal,
-        isAttackRoll: true
-      });
-    }
-  }
+  // FUN-06/SEG-08: o card nunca consulta o alvo selecionado por quem está vendo.
+  // Alvo e avaliação são fatos imutáveis da mensagem v2.
+  const targetInfo = msg.rollData.targetInfo || null;
 
   const showTargetOutcome = Boolean(
     targetInfo &&
@@ -168,10 +131,29 @@ export default function RollMessageCard({
     ? allCharacters.find((c) => c.id === msg.characterId) || null
     : null;
   const targetCharId =
-    targetInfo?.characterId || targetedToken?.characterId || null;
+    targetInfo?.characterId || null;
   const targetChar = targetCharId
     ? allCharacters.find((c) => c.id === targetCharId) || null
     : null;
+  const messageTargetToken = targetInfo
+    ? targetedToken?.id === (targetInfo.tokenId || targetInfo.id)
+      ? targetedToken
+      : {
+          id: targetInfo.tokenId || targetInfo.id || null,
+          characterId: targetInfo.characterId || null,
+          label: targetInfo.name || targetInfo.label || "Alvo"
+        }
+    : null;
+  const canRespondToSave = saveReq
+    ? isUserResponsibleForSavingThrow({
+        uid: user?.uid,
+        isGM,
+        savingThrowRequest: saveReq,
+        targetCharacter: saveReq.targetCharacterId
+          ? allCharacters.find((character) => character.id === saveReq.targetCharacterId) || null
+          : null
+      })
+    : false;
 
   const manualMods =
     effectFlatMod !== "" && Number(effectFlatMod) !== 0
@@ -193,7 +175,7 @@ export default function RollMessageCard({
         effectType: effectMenuType,
         sourceCharacter: sourceChar,
         targetCharacter: targetChar,
-        targetToken: targetedToken,
+        targetToken: messageTargetToken,
         manualModifiers: manualMods
       })
     : null;
@@ -205,7 +187,7 @@ export default function RollMessageCard({
         effectType: effectMenuType,
         sourceCharacter: sourceChar,
         targetCharacter: targetChar,
-        targetToken: targetedToken,
+        targetToken: messageTargetToken,
         manualModifiers: manualMods
       })
     : null;
@@ -421,6 +403,23 @@ export default function RollMessageCard({
               : targetInfo.name}
           </span>
         )}
+        {isAttackMessage && !targetInfo && (
+          <span
+            style={{
+              fontFamily: "var(--font-body)",
+              fontSize: "10px",
+              fontWeight: 800,
+              background: "rgba(100, 116, 139, 0.14)",
+              color: isSecret ? "#cbd5e1" : "#475569",
+              border: "1px solid rgba(100, 116, 139, 0.35)",
+              borderRadius: "999px",
+              padding: "1px 7px",
+              flexShrink: 0
+            }}
+          >
+            SEM AVALIAÇÃO
+          </span>
+        )}
       </div>
 
       <div
@@ -568,9 +567,11 @@ export default function RollMessageCard({
         <div style={{ marginTop: "6px" }}>
           <button
             type="button"
-            disabled={Boolean(saveResponseMsg)}
+            disabled={Boolean(saveResponseMsg) || !canRespondToSave}
             onClick={() => {
-              if (!saveResponseMsg) onOpenSavingThrowModal?.(saveReq);
+              if (!saveResponseMsg && canRespondToSave) {
+                onOpenSavingThrowModal?.({ ...saveReq, parentMessageId: msg.id });
+              }
             }}
             style={{
               width: "100%",
@@ -585,7 +586,8 @@ export default function RollMessageCard({
               color: "#ffffff",
               fontWeight: 900,
               fontSize: "11px",
-              cursor: saveResponseMsg ? "default" : "pointer",
+              cursor: saveResponseMsg || !canRespondToSave ? "default" : "pointer",
+              opacity: canRespondToSave ? 1 : 0.65,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -602,7 +604,9 @@ export default function RollMessageCard({
                       ? "PASSOU"
                       : "FALHOU"
                   } (${saveResponseMsg.rollData?.rolls?.[0]?.total ?? ""})`
-                : "ROLAR"}
+                : canRespondToSave
+                  ? "ROLAR"
+                  : "AGUARDANDO"}
             </span>
           </button>
         </div>
@@ -678,8 +682,7 @@ export default function RollMessageCard({
             <span>
               🎯{" "}
               {targetInfo?.name ||
-                targetedToken?.name ||
-                "Selecionar Alvo (T)"}
+                "Sem alvo da mensagem"}
             </span>
             <select
               value={effectMenuType}

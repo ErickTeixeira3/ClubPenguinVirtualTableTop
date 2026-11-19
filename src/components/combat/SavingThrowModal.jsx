@@ -10,6 +10,7 @@ export default function SavingThrowModal({
   onClose,
   savingThrowRequest,
   defenderCharacter,
+  characterResolutionError = null,
   onExecuteSavingThrow,
 }) {
   const [selectedAttrKey, setSelectedAttrKey] = useState("vigor");
@@ -20,8 +21,9 @@ export default function SavingThrowModal({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (savingThrowRequest?.attribute) {
-      const normalized = normalizeKey(savingThrowRequest.attribute);
+    const rawAttr = savingThrowRequest?.attributeKey || savingThrowRequest?.attribute;
+    if (rawAttr) {
+      const normalized = normalizeKey(rawAttr);
       setSelectedAttrKey(normalized || "vigor");
     } else {
       setSelectedAttrKey("vigor");
@@ -30,7 +32,7 @@ export default function SavingThrowModal({
     setExtraBonus("");
     setSelectedAssistIds([]);
     setAssistDropdownId("");
-  }, [savingThrowRequest?.id, savingThrowRequest?.attribute]);
+  }, [savingThrowRequest?.id, savingThrowRequest?.attributeKey, savingThrowRequest?.attribute]);
 
   // Opções de Atributos + Perícias da ficha do defensor
   const attributeOptions = useMemo(() => {
@@ -40,18 +42,16 @@ export default function SavingThrowModal({
     });
 
     if (defenderCharacter) {
-      const skills = Array.isArray(defenderCharacter.skills)
-        ? defenderCharacter.skills
-        : [];
+      const skills = Object.values(defenderCharacter.skills || {});
       skills.forEach((sk) => {
         if (!sk?.name) return;
-        const key = normalizeKey(sk.name);
-        const attrKey = sk.attribute || sk.attr || "";
+        const key = sk.key || normalizeKey(sk.name);
+        const attrKey = sk.attributeKey || sk.attribute || sk.attr || "";
         if (!map.has(key)) {
           map.set(key, {
             id: key,
             label: sk.name,
-            formula: attrKey ? `@${attrKey} + @${key}` : `@${key}`,
+            formula: attrKey ? `@${attrKey} + ${Number(sk.bonus) || 0}` : `${Number(sk.bonus) || 0}`,
           });
         }
       });
@@ -64,20 +64,18 @@ export default function SavingThrowModal({
     return (
       attributeOptions.find((o) => o.id === selectedAttrKey) || {
         id: selectedAttrKey,
-        label: savingThrowRequest?.attribute || "Resistência",
+        label: savingThrowRequest?.attributeKey || savingThrowRequest?.attribute || "Resistência",
         formula: `@${selectedAttrKey}`,
       }
     );
-  }, [attributeOptions, selectedAttrKey, savingThrowRequest?.attribute]);
+  }, [attributeOptions, selectedAttrKey, savingThrowRequest?.attributeKey, savingThrowRequest?.attribute]);
 
   // Habilidades e itens que o defensor pode acionar no teste
   const availableAssists = useMemo(() => {
     if (!defenderCharacter) return [];
     const list = [];
 
-    const abilities = Array.isArray(defenderCharacter.abilities)
-      ? defenderCharacter.abilities
-      : [];
+    const abilities = Object.values(defenderCharacter.abilities || {});
     abilities.forEach((ab) => {
       const costRes = ab.cost?.resource || "mp";
       const costAmt = Number(ab.cost?.amount ?? ab.costMp ?? 0);
@@ -98,9 +96,7 @@ export default function SavingThrowModal({
       });
     });
 
-    const inventory = Array.isArray(defenderCharacter.inventory)
-      ? defenderCharacter.inventory
-      : [];
+    const inventory = Object.values(defenderCharacter.inventory || {});
     inventory.forEach((it) => {
       list.push({
         uid: `it_${it.id}`,
@@ -139,7 +135,26 @@ export default function SavingThrowModal({
 
   if (!open || !savingThrowRequest) return null;
 
-  const dc = Number(savingThrowRequest.dc) || 10;
+  if (characterResolutionError) {
+    return (
+      <WindowModal
+        variant="cp"
+        onClose={onClose}
+        zIndex={Z_LAYERS.modalCombat}
+        maxWidth="440px"
+      >
+        <div style={{ color: "#b91c1c", fontWeight: 800 }} role="alert">
+          {characterResolutionError}
+        </div>
+        <button type="button" className="cp-btn" onClick={onClose}>
+          Fechar
+        </button>
+      </WindowModal>
+    );
+  }
+
+  const parsedDc = Number(savingThrowRequest.dc);
+  const dc = Number.isFinite(parsedDc) ? parsedDc : 10;
 
   const handleAddAssist = (uid) => {
     if (!uid) return;

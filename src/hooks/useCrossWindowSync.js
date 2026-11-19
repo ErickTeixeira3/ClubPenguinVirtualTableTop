@@ -1,71 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createWindowId,
+  openCampaignCrossWindowChannel
+} from "../services/crossWindowService.js";
 
-const CHANNEL_PREFIX = "cp_vtt_sync_v1_";
-// Fase 6.3 (A13): chave do localStorage usada como transporte alternativo (evento `storage`)
-// quando o navegador não tem BroadcastChannel.
-const STORAGE_KEY_PREFIX = "cp_vtt_sync_v1_packet_";
 const legacyKeysCleanedForCampaigns = new Set();
 
-function createWindowId() {
-  return `win_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function getLocalStorage() {
-  try {
-    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Fase 6.3 (A13): abre o transporte entre janelas da mesma origem.
- * 1. BroadcastChannel, quando existe;
- * 2. senão, localStorage + evento `storage` (disparado nas OUTRAS janelas a cada gravação).
- * Devolve { post(packet), close() } ou null quando nenhum dos dois está disponível.
- */
-function openCrossWindowTransport(channelName, onPacket) {
-  if (typeof window === "undefined") return null;
-
-  if (typeof window.BroadcastChannel === "function") {
-    try {
-      const channel = new window.BroadcastChannel(channelName);
-      channel.onmessage = (event) => onPacket(event?.data);
-      return {
-        kind: "broadcast",
-        post: (packet) => channel.postMessage(packet),
-        close: () => channel.close(),
-      };
-    } catch {
-      // segue para o transporte por localStorage
-    }
-  }
-
-  const storage = getLocalStorage();
-  if (!storage || typeof window.addEventListener !== "function") return null;
-
-  const storageKey = `${STORAGE_KEY_PREFIX}${channelName}`;
-  const handleStorage = (event) => {
-    if (event?.key !== storageKey || !event.newValue) return;
-    try {
-      onPacket(JSON.parse(event.newValue));
-    } catch {
-      // pacote inválido: ignora
-    }
-  };
-  window.addEventListener("storage", handleStorage);
-
-  return {
-    kind: "storage",
-    post: (packet) => {
-      // `nonce` garante valor novo a cada envio (o evento só dispara quando o valor muda)
-      storage.setItem(
-        storageKey,
-        JSON.stringify({ ...packet, nonce: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}` })
-      );
-    },
-    close: () => window.removeEventListener("storage", handleStorage),
-  };
+function isValidCampaignScope(campaignId) {
+  return (
+    typeof campaignId === "string" &&
+    campaignId.trim().length > 0 &&
+    campaignId.trim().toLowerCase() !== "default"
+  );
 }
 
 /**
@@ -79,73 +25,76 @@ export function useCrossWindowSync({
   aoeDemarcateConfig = null,
   onTargetsReceived,
   onAoeDemarcateReceived,
-  onSaveClaimReceived,
-  onSaveAnsweredReceived,
+  onTransportError = null
 }) {
-  const [windowId] = useState(createWindowId);
+  const [windowId] = useState(() => createWindowId());
   const transportRef = useRef(null);
 
   const latestStateRef = useRef({
     targetedTokens,
-    aoeDemarcateConfig,
+    aoeDemarcateConfig
   });
 
   const callbacksRef = useRef({
     onTargetsReceived,
     onAoeDemarcateReceived,
-    onSaveClaimReceived,
-    onSaveAnsweredReceived,
+    onTransportError
   });
 
   useEffect(() => {
     latestStateRef.current = {
       targetedTokens,
-      aoeDemarcateConfig,
+      aoeDemarcateConfig
     };
     callbacksRef.current = {
       onTargetsReceived,
       onAoeDemarcateReceived,
-      onSaveClaimReceived,
-      onSaveAnsweredReceived,
+      onTransportError
     };
   });
 
-  // Limpeza de chaves legadas de alvo/AoE do localStorage (pré-Fase 3).
-  // Fase 3.1 (errata Fase 3 §3): roda uma vez por sessão e por campanha e também remove as
-  // chaves com sufixo "_default" que o código antigo gravava quando campaignId era vazio.
+  // Limpeza de chaves legadas de alvo/AoE do localStorage (pré-Fase 3; removida na Fase 13).
   useEffect(() => {
-    const storage = getLocalStorage();
-    if (!storage || !campaignId) return;
+    if (!isValidCampaignScope(campaignId)) return;
     if (legacyKeysCleanedForCampaigns.has(campaignId)) return;
     legacyKeysCleanedForCampaigns.add(campaignId);
+    const rawStorage = typeof window !== "undefined" ? window.localStorage : null;
+    if (!rawStorage) return;
     try {
       for (const suffix of [campaignId, "default"]) {
-        storage.removeItem(`cp_vtt_targeted_tokens_${suffix}`);
-        storage.removeItem(`cp_vtt_targeted_token_${suffix}`);
-        storage.removeItem(`cp_vtt_aoe_demarcate_${suffix}`);
+        rawStorage.removeItem(`cp_vtt_targeted_tokens_${suffix}`);
+        rawStorage.removeItem(`cp_vtt_targeted_token_${suffix}`);
+        rawStorage.removeItem(`cp_vtt_aoe_demarcate_${suffix}`);
       }
-    } catch {
-      // ignore storage errors
+    } catch (err) {
+      callbacksRef.current.onTransportError?.(err, { action: "cleanupLegacyKeys", campaignId });
     }
   }, [campaignId]);
 
-  const postPacket = useCallback((type, payload = null) => {
-    const transport = transportRef.current;
-    if (!transport) return false;
-    try {
-      transport.post({
-        type,
-        senderWindowId: windowId,
-        payload,
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }, [windowId]);
+  const postPacket = useCallback(
+    (type, payload = null) => {
+      const transport = transportRef.current;
+      if (!transport) return false;
+      try {
+        transport.post({
+          type,
+          senderWindowId: windowId,
+          payload
+        });
+        return true;
+      } catch (err) {
+        callbacksRef.current.onTransportError?.(err, { action: "postPacket", type });
+        return false;
+      }
+    },
+    [windowId]
+  );
 
   useEffect(() => {
-    const channelName = `${CHANNEL_PREFIX}${campaignId || "default"}`;
+    if (!isValidCampaignScope(campaignId)) {
+      transportRef.current = null;
+      return undefined;
+    }
 
     const handlePacket = (data) => {
       if (!data || data.senderWindowId === windowId) return;
@@ -160,21 +109,24 @@ export function useCrossWindowSync({
           postPacket("SYNC_STATE", {
             targetedTokenIds: tokenIds,
             targetedTokens: curTargets || [],
-            aoeDemarcateConfig: curAoe || null,
+            aoeDemarcateConfig: curAoe || null
           });
         }
         return;
       }
 
       if (data.type === "SYNC_STATE" && data.payload) {
-        const { targetedTokenIds, targetedTokens: nextTokens, aoeDemarcateConfig: nextAoe } =
-          data.payload;
+        const {
+          targetedTokenIds,
+          targetedTokens: nextTokens,
+          aoeDemarcateConfig: nextAoe
+        } = data.payload;
         if (Array.isArray(nextTokens) || Array.isArray(targetedTokenIds)) {
           callbacksRef.current.onTargetsReceived?.({
             targetedTokenIds: Array.isArray(targetedTokenIds)
               ? targetedTokenIds
               : (nextTokens || []).map((t) => t?.id || t?.tokenId).filter(Boolean),
-            targetedTokens: Array.isArray(nextTokens) ? nextTokens : [],
+            targetedTokens: Array.isArray(nextTokens) ? nextTokens : []
           });
         }
         if (nextAoe !== undefined) {
@@ -189,7 +141,7 @@ export function useCrossWindowSync({
           targetedTokenIds: Array.isArray(targetedTokenIds)
             ? targetedTokenIds
             : (nextTokens || []).map((t) => t?.id || t?.tokenId).filter(Boolean),
-          targetedTokens: Array.isArray(nextTokens) ? nextTokens : [],
+          targetedTokens: Array.isArray(nextTokens) ? nextTokens : []
         });
         return;
       }
@@ -199,20 +151,21 @@ export function useCrossWindowSync({
         return;
       }
 
-      if (data.type === "SAVE_MODAL_CLAIMED" && data.payload) {
-        callbacksRef.current.onSaveClaimReceived?.(data.payload);
-        return;
-      }
+    };
 
-      if (data.type === "SAVE_MODAL_ANSWERED" && data.payload) {
-        callbacksRef.current.onSaveAnsweredReceived?.(data.payload);
-      }
+    const reportError = (err, context) => {
+      callbacksRef.current.onTransportError?.(err, context);
     };
 
     let transport = null;
     try {
-      transport = openCrossWindowTransport(channelName, handlePacket);
-    } catch {
+      transport = openCampaignCrossWindowChannel({
+        campaignId,
+        onPacket: handlePacket,
+        onError: reportError
+      });
+    } catch (err) {
+      reportError(err, { action: "openTransport", campaignId });
       transport = null;
     }
     transportRef.current = transport;
@@ -224,8 +177,8 @@ export function useCrossWindowSync({
       if (transport) {
         try {
           transport.close();
-        } catch {
-          // ignore close errors
+        } catch (err) {
+          reportError(err, { action: "closeTransport", campaignId });
         }
       }
       if (transportRef.current === transport) {
@@ -240,7 +193,7 @@ export function useCrossWindowSync({
       const tokenIds = safeTokens.map((t) => t.id || t.tokenId).filter(Boolean);
       return postPacket("TARGETS_UPDATED", {
         targetedTokenIds: tokenIds,
-        targetedTokens: safeTokens,
+        targetedTokens: safeTokens
       });
     },
     [postPacket]
@@ -253,34 +206,9 @@ export function useCrossWindowSync({
     [postPacket]
   );
 
-  const broadcastSaveClaimed = useCallback(
-    (saveId, extra = {}) => {
-      if (!saveId) return false;
-      return postPacket("SAVE_MODAL_CLAIMED", {
-        saveId,
-        ownerWindowId: windowId,
-        ...extra,
-      });
-    },
-    [postPacket, windowId]
-  );
-
-  const broadcastSaveAnswered = useCallback(
-    (saveId) => {
-      if (!saveId) return false;
-      return postPacket("SAVE_MODAL_ANSWERED", {
-        saveId,
-        answeredByWindowId: windowId,
-      });
-    },
-    [postPacket, windowId]
-  );
-
   return {
     windowId,
     broadcastTargets,
-    broadcastAoeDemarcate,
-    broadcastSaveClaimed,
-    broadcastSaveAnswered,
+    broadcastAoeDemarcate
   };
 }

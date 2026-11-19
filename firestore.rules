@@ -6,19 +6,51 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isAuthorizedGMByEmail() {
+    function hasVerifiedEmail() {
       return isSignedIn() &&
         'email' in request.auth.token &&
-        request.auth.token.email == 'erickteixeiractt@gmail.com';
+        request.auth.token.email is string &&
+        request.auth.token.email.size() > 0 &&
+        'email_verified' in request.auth.token &&
+        request.auth.token.email_verified == true;
+    }
+
+    function authEmailLower() {
+      return request.auth.token.email.lower();
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/platformAdmins/$(request.auth.uid));
+    }
+
+    function isMember(campaignId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/campaigns/$(campaignId)/members/$(request.auth.uid));
     }
 
     function isGM(campaignId) {
-      return isAuthorizedGMByEmail() || (
-        isSignedIn() &&
+      return isMember(campaignId) &&
         exists(/databases/$(database)/documents/campaigns/$(campaignId)) &&
         'gmId' in get(/databases/$(database)/documents/campaigns/$(campaignId)).data &&
-        get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid
-      );
+        get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid;
+    }
+
+    function isValidImageRef(img) {
+      return img is map &&
+        img.keys().hasAll(['mediaId', 'url']) &&
+        img.keys().hasOnly(['mediaId', 'url']) &&
+        (img.mediaId == null || (img.mediaId is string && img.mediaId.size() > 0)) &&
+        (img.url == null || (img.url is string && img.url.size() > 0 && img.url.size() < 2048 && img.url.matches('(?i)^https?://[^\\s]+$'))) &&
+        !(img.mediaId != null && img.url != null);
+    }
+
+    function hasValidPendingInvite(campaignId, uid) {
+      let emailLower = authEmailLower();
+      let invitePath = /databases/$(database)/documents/campaigns/$(campaignId)/invites/$(emailLower);
+      return exists(invitePath) &&
+        get(invitePath).data.acceptedBy == null &&
+        getAfter(invitePath).data.acceptedBy == uid;
     }
 
     // Fase 3.1 (D-3): Soft Delete (alterar isDeleted/deletedAt/deletedBy) é exclusivo do dono.
@@ -32,125 +64,770 @@ service cloud.firestore {
       return 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid;
     }
 
+    // Fase 4: visibilidade canônica exclusiva por visibleTo (sem fallback de visibleToPlayers/ownerId/scope party)
+    // e isolamento estrito de scope == 'gm' ao Mestre atual (invariantes 6.3.1 / 6.3.2).
     function canSeeResource(campaignId, resourceData) {
-      return isGM(campaignId) ||
-        ('visibleTo' in resourceData && (
-          'ALL' in resourceData.visibleTo ||
-          request.auth.uid in resourceData.visibleTo
-        )) ||
-        ('visibleToPlayers' in resourceData && resourceData.visibleToPlayers == true) ||
-        ('ownerId' in resourceData && resourceData.ownerId == request.auth.uid) ||
-        ('scope' in resourceData && resourceData.scope == 'party');
+      return isGM(campaignId) || (
+        (!('scope' in resourceData) || resourceData.scope != 'gm') &&
+        'visibleTo' in resourceData &&
+        ('ALL' in resourceData.visibleTo || request.auth.uid in resourceData.visibleTo)
+      );
+    }
+
+    function hasValidOwnerAudience(data) {
+      return 'ownerId' in data &&
+        data.ownerId is string &&
+        data.ownerId.size() > 0 &&
+        'visibleTo' in data &&
+        data.visibleTo is list &&
+        data.ownerId in data.visibleTo &&
+        'editableBy' in data &&
+        data.editableBy is list &&
+        data.ownerId in data.editableBy;
+    }
+
+    function hasValidScopedAudience(data) {
+      return 'scope' in data &&
+        'ownerId' in data &&
+        data.ownerId is string &&
+        data.ownerId.size() > 0 &&
+        'visibleTo' in data &&
+        data.visibleTo is list &&
+        'editableBy' in data &&
+        data.editableBy is list && (
+          (data.scope == 'gm' &&
+            !('ALL' in data.visibleTo) &&
+            !('ALL' in data.editableBy)) ||
+          (data.scope == 'party' &&
+            hasValidOwnerAudience(data) &&
+            'ALL' in data.visibleTo &&
+            'ALL' in data.editableBy) ||
+          (data.scope == 'player' &&
+            hasValidOwnerAudience(data) &&
+            !('ALL' in data.editableBy))
+        );
+    }
+
+    function hasValidFolderAudience(data) {
+      return ('scope' in data && data.scope != null)
+        ? hasValidScopedAudience(data)
+        : hasValidOwnerAudience(data);
+    }
+
+    // Administradores da plataforma (D-DER-7): criação somente via Admin SDK.
+    match /platformAdmins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Configuração de runtime e versão mínima de cliente: escrita somente via Admin SDK.
+    match /appConfig/runtime {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
     match /campaigns/{campaignId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() &&
-        (isAuthorizedGMByEmail() || request.resource.data.gmId == request.auth.uid);
-      allow update: if isGM(campaignId) || (
-        isSignedIn() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'updatedAt']) &&
-        (!('players' in resource.data) ||
-          request.resource.data.players.diff(resource.data.players).affectedKeys().hasOnly([request.auth.uid]))
-      );
-      allow delete: if isGM(campaignId);
+      allow read: if isMember(campaignId);
+      allow create: if isPlatformAdmin() &&
+        request.resource.data.campaignId == campaignId &&
+        request.resource.data.gmId == request.auth.uid &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        (!('activeSceneId' in request.resource.data) ||
+          request.resource.data.activeSceneId == null ||
+          request.resource.data.activeSceneId is string) &&
+        !('players' in request.resource.data) &&
+        !('authorizedUsers' in request.resource.data) &&
+        !('authorizedEmails' in request.resource.data) &&
+        !('combatState' in request.resource.data) &&
+        existsAfter(/databases/$(database)/documents/campaigns/$(campaignId)/members/$(request.auth.uid));
+      allow update: if isGM(campaignId) &&
+        request.resource.data.campaignId == campaignId &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.gmId is string &&
+        request.resource.data.gmId.size() > 0 &&
+        (request.resource.data.gmId == resource.data.gmId ||
+          exists(/databases/$(database)/documents/campaigns/$(campaignId)/members/$(request.resource.data.gmId))) &&
+        !('players' in request.resource.data) &&
+        !('authorizedUsers' in request.resource.data) &&
+        !('authorizedEmails' in request.resource.data);
+      allow delete: if false;
+
+      // Membros da campanha (sem papel gravado; Mestre é campaign.gmId)
+      match /members/{uid} {
+        allow read: if isMember(campaignId);
+        allow create: if isSignedIn() &&
+          request.auth.uid == uid &&
+          request.resource.data.uid == uid &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.displayName is string &&
+          request.resource.data.displayName.size() > 0 &&
+          isValidImageRef(request.resource.data.avatar) &&
+          (!('activeCharacterId' in request.resource.data) ||
+            request.resource.data.activeCharacterId == null ||
+            request.resource.data.activeCharacterId is string) &&
+          !('role' in request.resource.data) &&
+          !('email' in request.resource.data) &&
+          !('avatarMediaId' in request.resource.data) &&
+          !('photoURL' in request.resource.data) &&
+          !('avatarRemoved' in request.resource.data) &&
+          (
+            (
+              isPlatformAdmin() &&
+              !exists(/databases/$(database)/documents/campaigns/$(campaignId)) &&
+              getAfter(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == uid
+            ) ||
+            (
+              hasVerifiedEmail() &&
+              hasValidPendingInvite(campaignId, uid)
+            )
+          );
+        allow update: if (
+          isGM(campaignId) ||
+          (
+            isMember(campaignId) &&
+            request.auth.uid == uid &&
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['displayName', 'avatar', 'activeCharacterId', 'updatedAt'])
+          )
+        ) &&
+          request.resource.data.uid == uid &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.displayName is string &&
+          request.resource.data.displayName.size() > 0 &&
+          isValidImageRef(request.resource.data.avatar) &&
+          (!('activeCharacterId' in request.resource.data) ||
+            request.resource.data.activeCharacterId == null ||
+            request.resource.data.activeCharacterId is string) &&
+          !('role' in request.resource.data) &&
+          !('email' in request.resource.data) &&
+          !('avatarMediaId' in request.resource.data) &&
+          !('photoURL' in request.resource.data) &&
+          !('avatarRemoved' in request.resource.data);
+        allow delete: if isGM(campaignId) &&
+          uid != get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId;
+      }
+
+      // Convites por e-mail normalizado
+      match /invites/{emailLower} {
+        allow read: if isGM(campaignId) ||
+          (hasVerifiedEmail() && authEmailLower() == emailLower);
+        allow create: if isGM(campaignId) &&
+          emailLower == emailLower.lower() &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.email == emailLower &&
+          request.resource.data.acceptedBy == null &&
+          request.resource.data.defaultDisplayName is string &&
+          request.resource.data.defaultDisplayName.size() > 0 &&
+          !('role' in request.resource.data);
+        allow update: if (
+          isGM(campaignId) &&
+          emailLower == emailLower.lower() &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.email == emailLower &&
+          request.resource.data.defaultDisplayName is string &&
+          request.resource.data.defaultDisplayName.size() > 0 &&
+          !('role' in request.resource.data)
+        ) || (
+          hasVerifiedEmail() &&
+          authEmailLower() == emailLower &&
+          resource.data.acceptedBy == null &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy', 'updatedAt']) &&
+          request.resource.data.acceptedBy == request.auth.uid &&
+          existsAfter(/databases/$(database)/documents/campaigns/$(campaignId)/members/$(request.auth.uid))
+        );
+        allow delete: if isGM(campaignId);
+      }
+
+      // Estado sequencial do chat (U5 / B1.8)
+      match /state/chat {
+        allow read: if isMember(campaignId);
+        allow create: if (
+          isGM(campaignId) ||
+          (isPlatformAdmin() &&
+            !exists(/databases/$(database)/documents/campaigns/$(campaignId)) &&
+            getAfter(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId == request.auth.uid)
+        ) &&
+          request.resource.data.keys().hasOnly(['campaignId', 'lastSeq', 'lastMessageId']) &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.lastSeq == 0 &&
+          (!('lastMessageId' in request.resource.data) || request.resource.data.lastMessageId == null);
+        allow update: if isMember(campaignId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeq', 'lastMessageId']) &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.lastSeq is int &&
+          resource.data.lastSeq is int &&
+          request.resource.data.lastSeq == resource.data.lastSeq + 1 &&
+          request.resource.data.lastMessageId is string &&
+          request.resource.data.lastMessageId.size() > 0 &&
+          existsAfter(/databases/$(database)/documents/campaigns/$(campaignId)/messages/$(request.resource.data.lastMessageId)) &&
+          getAfter(/databases/$(database)/documents/campaigns/$(campaignId)/messages/$(request.resource.data.lastMessageId)).data.seq == request.resource.data.lastSeq;
+        allow delete: if false;
+      }
 
       // Mapas / Cenas
       match /scenes/{sceneId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow write: if isGM(campaignId);
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create, update: if isGM(campaignId) &&
+          !('visibleToPlayers' in request.resource.data);
+        allow delete: if isGM(campaignId);
       }
 
       // Fichas de Personagem
       match /characters/{characterId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow create: if isGM(campaignId) ||
-          (isSignedIn() && request.resource.data.ownerId == request.auth.uid);
-        allow update: if isGM(campaignId) || (
-          isSignedIn() &&
-          (('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
-            ('editableBy' in resource.data &&
-              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'ownerId', 'visibleTo', 'editableBy', 'type', 'campaignId'
-          ]) &&
-          (!touchesSoftDeleteFields() || isResourceOwner())
-        );
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create: if (
+            isGM(campaignId) &&
+            hasValidOwnerAudience(request.resource.data) &&
+            !('scope' in request.resource.data) &&
+            !('visibleToPlayers' in request.resource.data)
+          ) || (
+            isMember(campaignId) &&
+            request.resource.data.ownerId == request.auth.uid &&
+            (!('campaignId' in request.resource.data) || request.resource.data.campaignId == campaignId) &&
+            (!('type' in request.resource.data) || request.resource.data.type == 'pc') &&
+            !('scope' in request.resource.data) &&
+            hasValidOwnerAudience(request.resource.data) &&
+            !('visibleToPlayers' in request.resource.data)
+          );
+        allow update: if (
+            isGM(campaignId) &&
+            hasValidOwnerAudience(request.resource.data) &&
+            !('visibleToPlayers' in request.resource.data)
+          ) || (
+            isMember(campaignId) &&
+            'ownerId' in resource.data &&
+            resource.data.ownerId is string &&
+            resource.data.ownerId.size() > 0 &&
+            'ownerId' in request.resource.data &&
+            !('scope' in request.resource.data) &&
+            !('visibleToPlayers' in request.resource.data) &&
+            (resource.data.ownerId == request.auth.uid ||
+              ('editableBy' in resource.data &&
+                resource.data.editableBy is list &&
+                ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'ownerId', 'visibleTo', 'editableBy', 'type', 'campaignId', 'scope'
+            ]) &&
+            (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['folderId']) || isResourceOwner()) &&
+            (!touchesSoftDeleteFields() || isResourceOwner())
+          );
         // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
         allow delete: if isGM(campaignId);
       }
 
       // Compêndio (Habilidades, Magias, Itens)
       match /compendium/{itemId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow write: if isGM(campaignId);
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create, update: if isGM(campaignId) &&
+          !('visibleToPlayers' in request.resource.data);
+        allow delete: if isGM(campaignId);
       }
 
-      // Chat e Rolagens (Imutáveis para players após enviadas)
+      // Chat e Rolagens (endurecido na Fase 9)
       match /messages/{messageId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
-        allow update, delete: if isGM(campaignId);
+        function isValidMessageSender(sender) {
+          return sender is map &&
+            sender.keys().hasOnly(['uid', 'characterId', 'displayName', 'image']) &&
+            sender.uid is string && sender.uid.size() > 0 &&
+            (sender.characterId == null ||
+              (sender.characterId is string && sender.characterId.size() > 0)) &&
+            sender.displayName is string && sender.displayName.size() > 0 &&
+            isValidImageRef(sender.image);
+        }
+
+        function isValidHitEvaluation(hitEvaluation) {
+          return hitEvaluation is map &&
+            hitEvaluation.keys().hasOnly(['status', 'results']) &&
+            hitEvaluation.status in ['pending', 'done', 'none'] &&
+            hitEvaluation.results is list &&
+            hitEvaluation.results.size() <= 4 &&
+            isValidHitResultAt(hitEvaluation.results, 0) &&
+            isValidHitResultAt(hitEvaluation.results, 1) &&
+            isValidHitResultAt(hitEvaluation.results, 2) &&
+            isValidHitResultAt(hitEvaluation.results, 3);
+        }
+
+        function isValidHitResultAt(results, index) {
+          return index >= results.size() || (
+            results[index] is map &&
+            results[index].keys().hasOnly(['tokenId', 'hit', 'crit', 'fumble']) &&
+            results[index].tokenId is string && results[index].tokenId.size() > 0 &&
+            results[index].hit is bool &&
+            results[index].crit is bool &&
+            results[index].fumble is bool
+          );
+        }
+
+        function isValidTargetAt(targets, index) {
+          return index >= targets.size() || (
+            targets[index] is map &&
+            targets[index].keys().hasOnly(['tokenId', 'sceneId', 'characterId', 'label']) &&
+            targets[index].tokenId is string && targets[index].tokenId.size() > 0 &&
+            (targets[index].sceneId == null || targets[index].sceneId is string) &&
+            (targets[index].characterId == null || targets[index].characterId is string) &&
+            targets[index].label is string && targets[index].label.size() > 0
+          );
+        }
+
+        function hasValidTargets(targets) {
+          return targets is list && targets.size() <= 4 &&
+            isValidTargetAt(targets, 0) && isValidTargetAt(targets, 1) &&
+            isValidTargetAt(targets, 2) && isValidTargetAt(targets, 3);
+        }
+
+        function isValidSavingThrowRequest(saveRequest) {
+          return saveRequest == null || (
+            saveRequest is map &&
+            saveRequest.keys().hasOnly([
+              'id', 'targetCharacterId', 'targetTokenId', 'targetSceneId',
+              'dc', 'attributeKey', 'effectDescription', 'sourceName'
+            ]) &&
+            saveRequest.id is string && saveRequest.id.size() > 0 &&
+            (saveRequest.targetCharacterId == null || saveRequest.targetCharacterId is string) &&
+            (saveRequest.targetTokenId == null || saveRequest.targetTokenId is string) &&
+            (saveRequest.targetSceneId == null || saveRequest.targetSceneId is string) &&
+            saveRequest.dc is number &&
+            saveRequest.attributeKey is string && saveRequest.attributeKey.size() > 0 &&
+            saveRequest.effectDescription is string &&
+            saveRequest.sourceName is string
+          );
+        }
+
+        function isValidRespondsTo(respondsTo) {
+          return respondsTo == null || (
+            respondsTo is map &&
+            respondsTo.keys().hasOnly(['messageId', 'saveId']) &&
+            respondsTo.messageId is string && respondsTo.messageId.size() > 0 &&
+            respondsTo.saveId is string && respondsTo.saveId.size() > 0
+          );
+        }
+
+        function isValidRollPayload(roll) {
+          return roll is map &&
+            roll.keys().hasOnly([
+              'kind', 'title', 'icon', 'color', 'rolls', 'costs', 'targets',
+              'hitEvaluation', 'savingThrowRequest', 'respondsTo', 'secondary',
+              'allyCostOps', 'appliedEffects'
+            ]) &&
+            roll.kind in [
+              'attack', 'damage', 'heal', 'mp_damage', 'mp_heal',
+              'saving_throw', 'check', 'utility'
+            ] &&
+            roll.title is string && roll.title.size() > 0 &&
+            (roll.icon == null || roll.icon is string) &&
+            roll.color is string && roll.color.size() > 0 &&
+            roll.rolls is list && roll.costs is list && hasValidTargets(roll.targets) &&
+            isValidHitEvaluation(roll.hitEvaluation) &&
+            isValidSavingThrowRequest(roll.savingThrowRequest) &&
+            isValidRespondsTo(roll.respondsTo) &&
+            (roll.secondary == null || roll.secondary is map) &&
+            roll.allyCostOps is list && roll.appliedEffects is map;
+        }
+
+        function hasValidMessageAudience(data) {
+          return data.visibleTo is list && data.visibleTo.size() > 0 && (
+            (data.visibility == 'public' && 'ALL' in data.visibleTo) ||
+            (data.visibility == 'gm_only' &&
+              !('ALL' in data.visibleTo) &&
+              data.sender.uid in data.visibleTo &&
+              get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId in data.visibleTo &&
+              data.visibleTo.size() ==
+                (data.sender.uid == get(/databases/$(database)/documents/campaigns/$(campaignId)).data.gmId ? 1 : 2))
+          );
+        }
+
+        function isValidMessageShape(data) {
+          return data is map &&
+            data.keys().hasOnly([
+              'campaignId', 'type', 'seq', 'visibility', 'visibleTo', 'sender',
+              'status', 'opId', 'content', 'emote', 'skillPing', 'roll',
+              'isDeleted', 'deletedAt', 'deletedBy', 'createdAt', 'updatedAt'
+            ]) &&
+            data.campaignId == campaignId &&
+            data.type in ['text', 'emote', 'skill_ping', 'roll'] &&
+            data.seq is int && data.seq > 0 &&
+            data.visibility in ['public', 'gm_only'] &&
+            isValidMessageSender(data.sender) &&
+            hasValidMessageAudience(data) &&
+            data.status in ['committed', 'pending', 'failed'] &&
+            (data.opId == null || (data.opId is string && data.opId.size() > 0)) &&
+            (data.status != 'pending' || data.opId is string) &&
+            data.content is string &&
+            data.isDeleted is bool &&
+            (data.deletedAt == null || data.deletedAt is timestamp) &&
+            (data.deletedBy == null || data.deletedBy is string) &&
+            data.createdAt is timestamp && data.updatedAt is timestamp &&
+            (data.type != 'text' || data.content.size() > 0) &&
+            (data.type != 'emote' ||
+              ('emote' in data && data.emote is map && data.emote.icon is string && data.emote.icon.size() > 0)) &&
+            (data.type != 'skill_ping' ||
+              ('skillPing' in data && data.skillPing is map && data.skillPing.name is string && data.skillPing.name.size() > 0)) &&
+            (data.type != 'roll' || ('roll' in data && isValidRollPayload(data.roll)));
+        }
+
+        function isLinkedToChatCounter(data) {
+          let chatPath = /databases/$(database)/documents/campaigns/$(campaignId)/state/chat;
+          return exists(chatPath) &&
+            get(chatPath).data.lastSeq is int &&
+            data.seq == get(chatPath).data.lastSeq + 1 &&
+            data.seq == getAfter(chatPath).data.lastSeq &&
+            getAfter(chatPath).data.lastMessageId == messageId;
+        }
+
+        function canRespondForCharacter(characterId) {
+          let characterPath = /databases/$(database)/documents/campaigns/$(campaignId)/characters/$(characterId);
+          return exists(characterPath) && (
+            (get(characterPath).data.type == 'npc' && isGM(campaignId)) ||
+            (get(characterPath).data.type == 'pc' && (
+              get(characterPath).data.ownerId == request.auth.uid ||
+              ('editableBy' in get(characterPath).data &&
+                (request.auth.uid in get(characterPath).data.editableBy ||
+                 'ALL' in get(characterPath).data.editableBy))
+            ))
+          );
+        }
+
+        function isAuthorizedSavingThrowResponse(data) {
+          let response = data.roll.respondsTo;
+          let sourcePath = /databases/$(database)/documents/campaigns/$(campaignId)/messages/$(response.messageId);
+          let source = get(sourcePath).data;
+          let saveRequest = source.roll.savingThrowRequest;
+          return messageId == 'save_' + response.saveId &&
+            exists(sourcePath) &&
+            source.type == 'roll' && source.roll is map &&
+            saveRequest is map && saveRequest.id == response.saveId && (
+              (saveRequest.targetCharacterId is string &&
+                saveRequest.targetCharacterId.size() > 0 &&
+                canRespondForCharacter(saveRequest.targetCharacterId)) ||
+              ((saveRequest.targetCharacterId == null || saveRequest.targetCharacterId == '') &&
+                isGM(campaignId))
+            );
+        }
+
+        function isSenderStatusTransition() {
+          return resource.data.sender.uid == request.auth.uid &&
+            resource.data.status == 'pending' &&
+            request.resource.data.status in ['committed', 'failed'] &&
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'updatedAt']) &&
+            request.resource.data.updatedAt == request.time;
+        }
+
+        function isGmMessageMutation() {
+          let changed = request.resource.data.diff(resource.data).affectedKeys();
+          return isGM(campaignId) &&
+            changed.hasOnly(['roll', 'isDeleted', 'deletedAt', 'deletedBy', 'updatedAt']) &&
+            request.resource.data.updatedAt == request.time &&
+            (!changed.hasAny(['isDeleted', 'deletedAt', 'deletedBy']) ||
+              (resource.data.isDeleted == false &&
+               request.resource.data.isDeleted == true &&
+               request.resource.data.deletedAt == request.time &&
+               request.resource.data.deletedBy == request.auth.uid)) &&
+            (!changed.hasAny(['roll']) ||
+              (resource.data.type == 'roll' &&
+               request.resource.data.roll.diff(resource.data.roll).affectedKeys()
+                 .hasOnly(['hitEvaluation', 'appliedEffects']) &&
+               request.resource.data.roll.appliedEffects.keys()
+                 .hasAll(resource.data.roll.appliedEffects.keys()) &&
+               isValidHitEvaluation(request.resource.data.roll.hitEvaluation) &&
+               (request.resource.data.roll.hitEvaluation == resource.data.roll.hitEvaluation ||
+                 (resource.data.roll.hitEvaluation.status == 'pending' &&
+                  request.resource.data.roll.hitEvaluation.status == 'done'))));
+        }
+
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create: if isMember(campaignId) &&
+          isValidMessageShape(request.resource.data) &&
+          request.resource.data.sender.uid == request.auth.uid &&
+          request.resource.data.status in ['committed', 'pending'] &&
+          request.resource.data.isDeleted == false &&
+          request.resource.data.deletedAt == null &&
+          request.resource.data.deletedBy == null &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.updatedAt == request.time &&
+          isLinkedToChatCounter(request.resource.data) &&
+          (request.resource.data.type != 'roll' ||
+            request.resource.data.roll.appliedEffects.size() == 0) &&
+          (request.resource.data.type != 'roll' ||
+            request.resource.data.roll.respondsTo == null ||
+            isAuthorizedSavingThrowResponse(request.resource.data));
+        allow update: if isMember(campaignId) &&
+          (isSenderStatusTransition() || isGmMessageMutation());
+        allow delete: if isGM(campaignId);
+      }
+
+      // Custos de assistências de aliados (D-DER-3 / INT-13)
+      match /pendingCosts/{opId} {
+        function characterPath(characterId) {
+          return /databases/$(database)/documents/campaigns/$(campaignId)/characters/$(characterId);
+        }
+
+        function canEditPendingCostCharacter(characterId) {
+          return characterId is string && characterId.size() > 0 &&
+            exists(characterPath(characterId)) && (
+              get(characterPath(characterId)).data.ownerId == request.auth.uid ||
+              ('editableBy' in get(characterPath(characterId)).data &&
+                (request.auth.uid in get(characterPath(characterId)).data.editableBy ||
+                 'ALL' in get(characterPath(characterId)).data.editableBy))
+            );
+        }
+
+        function isValidPendingCost(data) {
+          return data is map &&
+            data.keys().hasAll([
+              'opId', 'campaignId', 'characterId', 'sourceMessageId', 'costs',
+              'itemId', 'createdBy', 'status', 'appliedBy', 'appliedAt', 'createdAt'
+            ]) &&
+            data.keys().hasOnly([
+              'opId', 'campaignId', 'characterId', 'sourceMessageId', 'costs',
+              'itemId', 'createdBy', 'status', 'appliedBy', 'appliedAt', 'createdAt'
+            ]) &&
+            data.opId == opId && data.campaignId == campaignId &&
+            data.characterId is string && data.characterId.size() > 0 &&
+            data.sourceMessageId is string && data.sourceMessageId.size() > 0 &&
+            data.costs is map && data.costs.keys().hasOnly(['hp', 'mp']) &&
+            (!('hp' in data.costs) || (data.costs.hp is number && data.costs.hp >= 0)) &&
+            (!('mp' in data.costs) || (data.costs.mp is number && data.costs.mp >= 0)) &&
+            (data.itemId == null || (data.itemId is string && data.itemId.size() > 0)) &&
+            data.createdBy is string && data.createdBy.size() > 0 &&
+            data.status in ['pending', 'applied'] &&
+            (data.appliedBy == null || data.appliedBy is string) &&
+            (data.appliedAt == null || data.appliedAt is timestamp) &&
+            data.createdAt is timestamp;
+        }
+
+        function wasAppliedAtomically(data) {
+          let path = characterPath(data.characterId);
+          return exists(path) &&
+            getAfter(path).data.rev is int && get(path).data.rev is int &&
+            getAfter(path).data.rev > get(path).data.rev &&
+            getAfter(path).data.recentOps is map &&
+            opId in getAfter(path).data.recentOps;
+        }
+
+        allow read: if isMember(campaignId) && (
+          isGM(campaignId) || resource.data.createdBy == request.auth.uid ||
+          canEditPendingCostCharacter(resource.data.characterId)
+        );
+        allow create: if isMember(campaignId) &&
+          isValidPendingCost(request.resource.data) &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.appliedBy == null &&
+          request.resource.data.appliedAt == null &&
+          request.resource.data.createdAt == request.time;
+        allow update: if isMember(campaignId) &&
+          isValidPendingCost(request.resource.data) &&
+          resource.data.status == 'pending' &&
+          request.resource.data.status == 'applied' &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'appliedBy', 'appliedAt']) &&
+          request.resource.data.appliedBy == request.auth.uid &&
+          request.resource.data.appliedAt == request.time &&
+          (isGM(campaignId) || canEditPendingCostCharacter(resource.data.characterId)) &&
+          wasAppliedAtomically(request.resource.data);
+        allow delete: if isGM(campaignId);
       }
 
       // Diários e Cards de Investigação (Mestre, Players e Grupo)
       match /notes/{noteId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow create: if isGM(campaignId) ||
-          (isSignedIn() &&
-            request.resource.data.ownerId == request.auth.uid &&
-            request.resource.data.scope in ['player', 'party']);
-        allow update: if isGM(campaignId) || (
-          isSignedIn() &&
-          (('scope' in resource.data && resource.data.scope == 'party') ||
-            ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
-            ('editableBy' in resource.data &&
-              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
-          (!('scope' in request.resource.data) || request.resource.data.scope in ['player', 'party']) &&
-          (!('ownerId' in request.resource.data) || !('ownerId' in resource.data) ||
-            request.resource.data.ownerId == resource.data.ownerId) &&
-          (!touchesSoftDeleteFields() || isResourceOwner())
-        );
+        function isValidNoteV2Fields(data) {
+          return !data.keys().hasAny([
+            'content', 'aliasesNormalized', 'mentionedNoteIds', 'folder',
+            'graphNode', 'imageMediaId', 'linkedCharacterSheetId',
+            'updatedAtMs', 'sharedWithPlayerIds', 'isFolder',
+            'migratedToFoldersCollection', 'visibleToPlayers'
+          ]) &&
+          (!('image' in data) || isValidImageRef(data.image));
+        }
+
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create: if isValidNoteV2Fields(request.resource.data) && (
+            (
+              isGM(campaignId) &&
+              hasValidScopedAudience(request.resource.data)
+            ) || (
+              isMember(campaignId) &&
+              request.resource.data.ownerId == request.auth.uid &&
+              (!('campaignId' in request.resource.data) || request.resource.data.campaignId == campaignId) &&
+              request.resource.data.scope in ['player', 'party'] &&
+              hasValidScopedAudience(request.resource.data)
+            )
+          );
+        allow update: if isValidNoteV2Fields(request.resource.data) && (
+            (
+              isGM(campaignId) &&
+              hasValidScopedAudience(request.resource.data)
+            ) || (
+              isMember(campaignId) &&
+              'ownerId' in resource.data &&
+              resource.data.ownerId is string &&
+              resource.data.ownerId.size() > 0 &&
+              'ownerId' in request.resource.data &&
+              request.resource.data.ownerId == resource.data.ownerId &&
+              (!('campaignId' in request.resource.data) || request.resource.data.campaignId == campaignId) &&
+              (!('campaignId' in resource.data) || request.resource.data.campaignId == resource.data.campaignId) &&
+              'scope' in resource.data &&
+              resource.data.scope in ['player', 'party'] &&
+              request.resource.data.scope in ['player', 'party'] &&
+              (resource.data.scope == 'party' ||
+                resource.data.ownerId == request.auth.uid ||
+                ('editableBy' in resource.data &&
+                  resource.data.editableBy is list &&
+                  ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+              (isResourceOwner() ||
+                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['visibleTo', 'editableBy', 'scope'])) &&
+              hasValidScopedAudience(request.resource.data) &&
+              (!touchesSoftDeleteFields() || isResourceOwner())
+            )
+          );
         // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
         allow delete: if isGM(campaignId);
       }
 
       // Pastas (Personagens e Diários)
       match /folders/{folderId} {
-        allow read: if isSignedIn() && canSeeResource(campaignId, resource.data);
-        allow create: if isGM(campaignId) ||
-          (isSignedIn() &&
-            request.resource.data.ownerId == request.auth.uid &&
-            (!('scope' in request.resource.data) || request.resource.data.scope in ['player', 'party']));
-        allow update: if isGM(campaignId) || (
-          isSignedIn() &&
-          (('scope' in resource.data && resource.data.scope == 'party') ||
-            ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
-            ('editableBy' in resource.data &&
-              ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
-          (!('ownerId' in request.resource.data) || !('ownerId' in resource.data) ||
-            request.resource.data.ownerId == resource.data.ownerId) &&
-          (!touchesSoftDeleteFields() || isResourceOwner())
+        function isValidFolderFields() {
+          return (!('name' in request.resource.data) ||
+              (request.resource.data.name is string &&
+               request.resource.data.name.trim().size() > 0 &&
+               !request.resource.data.name.matches('.*[/].*'))) &&
+            (!('parentId' in request.resource.data) ||
+              request.resource.data.parentId == null ||
+              (request.resource.data.parentId is string &&
+               request.resource.data.parentId.trim().size() > 0 &&
+               request.resource.data.parentId != folderId &&
+               !request.resource.data.parentId.matches('.*[/].*'))) &&
+            (!('domain' in request.resource.data) ||
+              request.resource.data.domain in ['character', 'journal']) &&
+            (!('domain' in request.resource.data) ||
+              request.resource.data.domain != 'character' ||
+              ((!('scope' in request.resource.data) || request.resource.data.scope == null) &&
+               (!('noteType' in request.resource.data) || request.resource.data.noteType == null)));
+        }
+
+        function canReparentDeletedFolder(oldParentId) {
+          let parentPath = /databases/$(database)/documents/campaigns/$(campaignId)/folders/$(oldParentId);
+          return exists(parentPath) &&
+            get(parentPath).data.isDeleted == false &&
+            get(parentPath).data.ownerId == request.auth.uid &&
+            getAfter(parentPath).data.isDeleted == true &&
+            (request.resource.data.parentId == null ||
+              (request.resource.data.parentId is string &&
+               getAfter(/databases/$(database)/documents/campaigns/$(campaignId)/folders/$(request.resource.data.parentId)).data.isDeleted == false));
+        }
+
+        function isReparentingFromDeletedParent() {
+          return 'parentId' in resource.data &&
+            resource.data.parentId is string &&
+            resource.data.parentId.size() > 0 &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parentId', 'updatedAt']) &&
+            canReparentDeletedFolder(resource.data.parentId);
+        }
+
+        allow read: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow create: if isValidFolderFields() &&
+          'name' in request.resource.data &&
+          request.resource.data.name is string && (
+            (
+              isGM(campaignId) &&
+              hasValidFolderAudience(request.resource.data) &&
+              !('visibleToPlayers' in request.resource.data)
+            ) || (
+              isMember(campaignId) &&
+              request.resource.data.ownerId == request.auth.uid &&
+              (!('campaignId' in request.resource.data) || request.resource.data.campaignId == campaignId) &&
+              (!('scope' in request.resource.data) || request.resource.data.scope == null ||
+                request.resource.data.scope in ['player', 'party']) &&
+              hasValidFolderAudience(request.resource.data) &&
+              !('visibleToPlayers' in request.resource.data)
+            )
+          );
+        allow update: if isValidFolderFields() && (
+          (
+            isGM(campaignId) &&
+            hasValidFolderAudience(request.resource.data) &&
+            !('visibleToPlayers' in request.resource.data) &&
+            (!('domain' in resource.data) ||
+              ('domain' in request.resource.data && request.resource.data.domain == resource.data.domain))
+          ) || (
+            isMember(campaignId) &&
+            'ownerId' in resource.data &&
+            resource.data.ownerId is string &&
+            resource.data.ownerId.size() > 0 &&
+            'ownerId' in request.resource.data &&
+            request.resource.data.ownerId == resource.data.ownerId &&
+            (!('campaignId' in request.resource.data) || request.resource.data.campaignId == campaignId) &&
+            (!('campaignId' in resource.data) || request.resource.data.campaignId == resource.data.campaignId) &&
+            (!('scope' in resource.data) || resource.data.scope != 'gm') &&
+            (!('scope' in request.resource.data) || request.resource.data.scope == null ||
+              request.resource.data.scope in ['player', 'party']) &&
+            !('visibleToPlayers' in request.resource.data) &&
+            (('scope' in resource.data && resource.data.scope == 'party') ||
+              resource.data.ownerId == request.auth.uid ||
+              ('editableBy' in resource.data &&
+                resource.data.editableBy is list &&
+                ('ALL' in resource.data.editableBy || request.auth.uid in resource.data.editableBy))) &&
+            (isResourceOwner() ||
+              !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                'visibleTo', 'editableBy', 'scope', 'parentId', 'domain', 'noteType'
+              ]) ||
+              isReparentingFromDeletedParent()) &&
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['domain', 'noteType']) &&
+            hasValidFolderAudience(request.resource.data) &&
+            (!touchesSoftDeleteFields() || isResourceOwner())
+          )
         );
         // Exclusão física apenas pelo Mestre (a UI usa sempre Soft Delete)
         allow delete: if isGM(campaignId);
       }
 
-      // Repositório Imutável de Mídia WebP (Mapas, Tokens, Avatares, Notas)
+      // Repositório Imutável de Mídia WebP (Schema v2 - Fase 4)
       match /media/{mediaId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn() && request.resource.data.sizeBytes < 800000;
-        allow update, delete: if isGM(campaignId) ||
-          (isSignedIn() && 'uploadedBy' in resource.data && resource.data.uploadedBy == request.auth.uid);
+        allow get: if isMember(campaignId) && canSeeResource(campaignId, resource.data);
+        allow list: if isGM(campaignId);
+        allow create: if isMember(campaignId) &&
+          request.resource.data.campaignId == campaignId &&
+          request.resource.data.uploadedBy == request.auth.uid &&
+          request.resource.data.dataUrl is string &&
+          request.resource.data.dataUrl.size() >= 5 &&
+          request.resource.data.dataUrl.size() < 800000 &&
+          request.resource.data.dataUrl[0:5] == 'data:' &&
+          request.resource.data.byteLength is int &&
+          request.resource.data.byteLength > 0 &&
+          request.resource.data.byteLength < 800000 &&
+          request.resource.data.visibleTo is list &&
+          request.resource.data.visibleTo.size() > 0 &&
+          ('ALL' in request.resource.data.visibleTo || request.auth.uid in request.resource.data.visibleTo) &&
+          !('sizeBytes' in request.resource.data) &&
+          !('isDeleted' in request.resource.data) &&
+          !('deletedAt' in request.resource.data) &&
+          !('deletedBy' in request.resource.data) &&
+          !('updatedAt' in request.resource.data) &&
+          !('chunks' in request.resource.data);
+        // Expansão estritamente monotônica de visibleTo (sem alterar payload/dataUrl nem encolher)
+        allow update: if (
+            isGM(campaignId) ||
+            (isMember(campaignId) && (
+              ('uploadedBy' in resource.data && resource.data.uploadedBy == request.auth.uid) ||
+              ('visibleTo' in resource.data &&
+                resource.data.visibleTo is list &&
+                ('ALL' in resource.data.visibleTo || request.auth.uid in resource.data.visibleTo))
+            ))
+          ) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['visibleTo']) &&
+          request.resource.data.visibleTo is list &&
+          request.resource.data.visibleTo.size() > 0 &&
+          (!('visibleTo' in resource.data) || (
+            request.resource.data.visibleTo.size() >= resource.data.visibleTo.size() &&
+            request.resource.data.visibleTo.hasAll(resource.data.visibleTo)
+          ));
+        allow delete: if false;
 
         match /chunks/{chunkIndex} {
-          allow read: if isSignedIn();
-          allow create: if isSignedIn();
-          allow update, delete: if isGM(campaignId) || (
-            isSignedIn() &&
-            'uploadedBy' in get(/databases/$(database)/documents/campaigns/$(campaignId)/media/$(mediaId)).data &&
-            get(/databases/$(database)/documents/campaigns/$(campaignId)/media/$(mediaId)).data.uploadedBy == request.auth.uid
-          );
+          allow read, write: if false;
         }
       }
     }
