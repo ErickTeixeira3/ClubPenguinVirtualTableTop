@@ -1,0 +1,47 @@
+export const ERROR_CODES = Object.freeze({
+  VALIDATION_FAILED: "VALIDATION_FAILED",
+  MISSING_REQUIRED_FIELD: "MISSING_REQUIRED_FIELD",
+  INVALID_TYPE: "INVALID_TYPE",
+  INVALID_ENUM_VALUE: "INVALID_ENUM_VALUE",
+  OUT_OF_RANGE: "OUT_OF_RANGE",
+  INVALID_REFERENCE: "INVALID_REFERENCE",
+  INVALID_AUDIENCE: "INVALID_AUDIENCE",
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  INVALID_ID_PREFIX: "INVALID_ID_PREFIX",
+  INVALID_ID_INPUT: "INVALID_ID_INPUT",
+  INVALID_IMAGE_REF: "INVALID_IMAGE_REF",
+  KEY_COLLISION: "KEY_COLLISION",
+  RESERVED_KEY: "RESERVED_KEY",
+  UNKNOWN_VARIABLE: "UNKNOWN_VARIABLE",
+  INVALID_TOKEN: "INVALID_TOKEN",
+  INVALID_SYNTAX: "INVALID_SYNTAX",
+  DIVISION_BY_ZERO: "DIVISION_BY_ZERO",
+  INVALID_DICE_NOTATION: "INVALID_DICE_NOTATION",
+  CYCLE_DETECTED: "CYCLE_DETECTED",
+  INVALID_MOVE: "INVALID_MOVE",
+  INVALID_FOLDER_NAME: "INVALID_FOLDER_NAME",
+  INCOMPATIBLE_FOLDER: "INCOMPATIBLE_FOLDER",
+  DUPLICATE_OPERATION: "DUPLICATE_OPERATION",
+  INVALID_COMMAND: "INVALID_COMMAND",
+  CLIENT_OUTDATED: "CLIENT_OUTDATED",
+  NOT_FOUND: "NOT_FOUND",
+  INVALID_STATE: "INVALID_STATE"
+});
+
+export class AppError extends Error {
+  constructor(code, message, details = null, options = undefined) {
+    super(message, options);
+    this.name = "AppError";
+    this.code = code || ERROR_CODES.VALIDATION_FAILED;
+    this.details = details ?? null;
+  }
+}
+
+export function validationOk() {
+  return { ok: true, errors: [] };
+}
+
+export function validationFail(errors) {
+  const list = Array.isArray(errors) ? errors : [errors];
+  return { ok: false, errors: list.filter(Boolean) };
+}

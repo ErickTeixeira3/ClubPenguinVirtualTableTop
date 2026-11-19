@@ -2029,6 +2029,8 @@ Plano: `PLANO_REFATORACAO_2.md`. Cada fase registra o que foi feito, os IDs do c
 | T-ENG-5 | `src/engines/combatEngine.js` | Engine legado de combate/turno (`Date.now`, `Math.random`, registro global) mantido até a substituição dos consumidores para `src/engines/{combat,turn}/`. | Fase 1 (TRANSITION) | Fase 11 (máx. Fase 13) |
 | T-INFRA-3 | `src/components/scenes/ScenesManagerModal.jsx` | Importação direta de `infra/imageCompression.js` até a reescrita de cenas. | Fase 2 (TRANSITION) | Fase 12 |
 | T-INFRA-5 | `src/infra/rtdbPaths.js` | Constantes `RTDB_LAYOUT`/`IS_SPLIT_RTDB_LAYOUT` e caminhos `legacyDrawingsPath`/`legacyPingsPath` mantidos até limpeza final. | Fase 2 (TRANSITION) | Fase 13 |
+| T1 | `src/services/memberService.js`, `src/contexts/MembersProvider.jsx`, `src/contexts/PresenceProvider.jsx`, `src/services/presenceService.js`, `src/components/layout/VTTLayout.jsx`, `src/components/chat/ChatSidebarPanel.jsx`, `src/hooks/useChatRolls.js` | Adaptador de `members` + `presence` para `playersMap` / `onlineUsers` nos consumidores ainda v1. | Fase 3 (TRANSITION) | Fase 11 |
+| T-TURN-1 | `src/services/campaignService.js` | Preserva `raw.combatState` no documento assinado para manter o `CampaignContext` compatível até a extração para `state/turn` (`M009`). | Fase 3 (TRANSITION) | Fase 11 |
 
 ## Fase 0 — Fundação e rede de segurança (2026-11-17)
 
@@ -2331,4 +2333,68 @@ Nenhuma dependência existente mudou de versão no lockfile (conferido pacote a 
 **Aceite da Fase 2:** todos os critérios atendidos (`npm run check` verde; contenção de dois clientes no Firestore e no RTDB e recuperação de sagas comprovadas nos emuladores). **Gate G2:** informativo.
 
 ---
+
+## Fase 3 — Identidade, membros, autoridade do Mestre e presença (2026-11-18)
+
+### Instruções do usuário para esta fase
+- **Gate G3 (apenas informativo):** D-DER-1, D-DER-2, D-DER-7 e D-DER-8 já confirmadas. Sem commits, sem deploy e sem tocar na produção sem autorização explícita.
+- **UI sem textos explicativos:** sem subtítulos ou parágrafos instrutivos antes de botões; lógica de negócio encapsulada nos serviços/regras.
+
+### O que foi feito
+- **Domínio e infra de apoio:**
+  - `src/domain/constants.js` (`CLIENT_VERSION = "2.0.0"`), `src/domain/errors.js` (`CLIENT_OUTDATED`, `NOT_FOUND`, `INVALID_STATE`), `src/domain/models/appConfig.js` + `src/domain/models/index.js` (`parseSemver`, `compareSemver`, `isClientVersionOutdated`).
+  - `src/infra/pendingAvatarStore.js` (armazenamento em `sessionStorage` via `createNamespacedStorage` isolado por UID, exigindo `expectedUid` explícito em `read`) em substituição às funções antes em `src/utils/stringUtils.js`.
+  - Removido `src/constants/authorizedUsers.js` (`DEFAULT_AUTHORIZED_USERS` e `checkIsEmailAuthorized`).
+- **Security Rules v2 de identidade, membros, autoridade e presença:**
+  - `firestore.rules`: removidos `isAuthorizedGMByEmail()` e o e-mail fixo do Mestre; adicionados `hasVerifiedEmail()`, `authEmailLower()`, `isPlatformAdmin()` e `isMember(campaignId)`; `isGM(campaignId)` agora exige associação (`isMember(campaignId) && campaign.gmId == uid`); `isValidImageRef` limita o tamanho de `url` (`< 2048`); adicionadas regras para `platformAdmins/{uid}`, `appConfig/runtime`, `campaigns/{c}` (criação só por `platformAdmin` em lote com `members/{uid}`, sem `players`/`authorizedUsers`/`authorizedEmails`), `members/{uid}`, `invites/{emailLower}` (exige `emailLower == emailLower.lower()` na criação/atualização pelo Mestre, leitura do convidado verificado e exceção transacional para marcar `acceptedBy = uid` junto com `members/{uid}`) e `state/chat` (bootstrap `lastSeq == 0` e incremento `+1` ligado a `messages/{lastMessageId}`); `canSeeResource`, `notes` e `folders` restringem `scope == 'gm'` exclusivamente ao `isGM(campaignId)` (B2.5, impedindo também escalonamento de `scope` para `'gm'` por não-GM em `folders`); todas as coleções existentes (`scenes`, `characters`, `compendium`, `messages`, `notes`, `folders`, `media`, `chunks`) passaram a exigir `isMember(campaignId)`.
+  - `database.rules.json`: removido `.read: "auth != null"` da raiz da campanha e removido e-mail fixo do Mestre; adicionados `platformAdmins/$uid` (`.read: auth.uid === $uid`, `.write: false`), leitura e escrita por nó restritas a `meta/members/$uid === true` (com trava impedindo auto-remoção do próprio Mestre em `meta/members/$uid`), `meta/invites` com `.read: false` e `.write` do Mestre, protocolo de delegação via `meta/pendingGm` + `meta/gmId` (exigindo `newData.exists()` em `meta/gmId`), bootstrap de `meta/gmId`/`meta/members/$uid` para `platformAdmins`, remoção de `presence/$uid` liberada exclusivamente para limpeza do Mestre (`!newData.exists()`) e validação estrita de `presence/$uid/$connId` (`kind: "main" | "sheet"`, `sheetId` opcional para `sheet`, `connectedAt` numérico e `$other: { ".validate": false }`).
+- **Camada de serviços (`src/services/`):**
+  - `src/services/runtimeConfigService.js`: assina `appConfig/runtime`, registra apenas `console.warn` quando ausente, mantém `clientVersionBlocked` e `assertClientUpToDate()`, registra guardas de alterações pendentes e executa `performProtectedReload`.
+  - `src/services/authService.js`: login Google, login por e-mail normalizado e reset por e-mail (D-DER-2), cadastro com envio de verificação sem excluir contas (D-DER-1), `toAuthUser` sem espalhar `User`, `formatAuthError` exclusivamente por `code`, `resendVerificationEmail`, `reloadCurrentUser` (com `getIdToken(true)` quando `emailVerified` passa a `true` para atualizar a claim `email_verified` nas regras), `logout` desconectando presença ativa e garantindo `signOut` em `try/finally` além de limpar avatar pendente.
+  - `src/services/campaignService.js`: resolução/persistência de `campaignId` ativo, assinatura de `campaigns/{c}` preservando `combatState` (`T-TURN-1`), `updateCampaignName`, `setActiveScene` e reexportação de `DEFAULT_CAMPAIGN_ID`.
+  - `src/services/memberService.js`: `isPlatformAdmin`, `checkCampaignMembership`, `joinWithInvite` idempotente, `ensureCampaignSession`, `createCampaign` (com tradução de `permission-denied`), `inviteMember`, `revokeMember` (corte atômico em `meta/members`, `meta/invites` e `presence/{uid}` no RTDB além do Firestore), `revokeInvite`, protocolo `assignGM` em 4 passos (validando associação do alvo antes de gravar `pendingGm`, sem engolir falha no rollback do Passo 2 e tolerando `PERMISSION_DENIED` no Passo 3 quando o Passo 4 concluiu antes) + `completePendingGmTransfer`, `reconcileMirrors` (também limpando `presence/{uid}` órfã e evitando escrita redundante), detecção unificada de erros de permissão Firestore/RTDB, assinaturas `subscribeMembers`/`subscribeInvites` e adaptador `T1` `buildPlayersMapFromMembers`.
+  - `src/services/profileService.js`: `compressAvatarFile`, `updateMemberProfile` (`ImageRef`, `{ mediaId: null, url: null }` limpando `photoURL` no Auth sem cair de volta na foto do Google) e `migratePendingAvatar`.
+  - `src/services/presenceService.js`: `presence/{uid}/{connId}` com `.info/connected`, `onDisconnect().remove()`, serialização de remoções pendentes (`pendingRemovals`), proteção contra montagem/desmontagem dupla em `StrictMode` (`written` + registro completo de `stop`), suporte a `kind: "main"` e `kind: "sheet"` (`?sheetId=`), desconexão em massa no logout, `subscribePresence` e `buildOnlineUsersMap`/`hasSheetConnectionOpen`.
+  - `src/services/mediaService.js` e `src/services/operationRunner.js`: proteção `assertClientUpToDate()` nas gravações de mídia e mensagens/status de operações.
+- **Contextos, hooks e UI:**
+  - `AuthContext.jsx` (com captura de erro em `logout`), `RuntimeConfigContext.js` (incluindo `useOptionalRuntimeConfig`) / `RuntimeConfigProvider.jsx`, `CampaignContext.jsx` (sem autocriação de campanha, sem role de whitelist, redefinindo `viewAsPlayer` e cache de reconciliação ao perder o cargo de Mestre), `MembersContext.js`/`MembersProvider.jsx` e `PresenceContext.js`/`PresenceProvider.jsx` com valores memorizados.
+  - `DebouncedField.jsx` integrado ao guarda de alterações não salvas via `useOptionalRuntimeConfig()`.
+  - Consumidores `T1` atualizados para `useMembers()` / `usePresence()` (`VTTLayout.jsx`, `ChatSidebarPanel.jsx`, `useChatRolls.js`, `useBoardInteractive.js`) mantendo compatibilidade para a UI v1.
+  - `useAvatarCompression.js` criado para eliminar importação de `infra/` na camada de componentes.
+  - `WindowModal.jsx` ganhou `variant="epf"` e `closeOnOverlayClick`.
+  - `LoginScreen.jsx` dividido em `AuthErrorBanner.jsx`, `GoogleSignInButton.jsx`, `LoginForm.jsx`, `RegisterForm.jsx` e `ForgotPasswordForm.jsx` (sem `@clubpenguin.vtt` nem `cp_remember_pwd`), mais `VerifyEmailScreen.jsx` (exibindo feedback quando o e-mail ainda não foi verificado).
+  - `GMPanelModal.jsx` e `PlayerProfileModal.jsx` reescritos usando serviços, `WindowModal`, `CPButton`, `ConfirmDialog`, `ImageRef` e `isRealGM` do contexto (sem seletor de `role`, preservando mensagem real de falha no processamento de avatar).
+  - `App.jsx` atualizado com chave de sessão `user.uid:campaignId`, `RuntimeReloadGate` com confirmação de descarte de alterações não salvas, `zIndex` válido (`Z_LAYERS.portalTooltip`) e proteção contra duplo clique/unmount, `VerifyEmailScreen`, `CreateCampaignCard` (com botão de nova tentativa `onRetry`) para `platformAdmins` e `AccessDeniedScreen`.
+- **Migração M001 e scripts operacionais:**
+  - `scripts/migrations/lib/runner.mjs` estendido com operação `auth.verifyEmail` (`apply` chama `auth.updateUser(op.uid, { emailVerified: true })`).
+  - `scripts/migrations/M001-identity.mjs` registrado em `scripts/migrations/registry.mjs`: migra `players -> members`, `authorizedUsers/authorizedEmails -> invites` (suportando mapa ou array, deduplicando e-mails normalizados), semeia `platformAdmins/{gmId}` no Firestore e RTDB, espelha `meta/gmId`, `meta/members` (removendo chaves órfãs no RTDB) e `meta/invites` pendentes, verifica e-mails de membros existentes no Auth e remove campos legados inclusive de `members/{uid}` pré-existentes de forma idempotente.
+  - `scripts/ops/set-runtime-config.mjs` e `scripts/ops/set-platform-admin.mjs` criados com `--dry-run` padrão e `--apply` explícito.
+- **Testes adicionados/ajustados:**
+  - Unitários e UI: `appConfigSemver.test.js`, `pendingAvatarStore.test.js`, `authService.test.js`, `memberService.test.js`, `presenceService.test.js`, `profileAndCampaignService.test.js`, `runtimeConfigService.test.js`, `phase3-ui.test.jsx`, `phase3-app-gate.test.jsx`, `runtimeReloadDebounced.test.jsx`.
+  - Emulador/Regras: `tests/rules/phase3-identity-gm.test.js` (Apêndice B blocos B1 e B2, presença em duas conexões, Auth Emulator + `reloadCurrentUser` + `assignGM` concorrente + limpeza de `presence` na revogação) e `tests/emulator/phase3-m001-migration.test.js`.
+  - Testes existentes ajustados apenas em fixtures/pinagens de arquivos extraídos na Fase 3 sem enfraquecer asserções: `rolls-combat.test.jsx` (`pendingAvatarStore` + `profileService`), `v1-regression.test.js` e `phase2-transactions-saga.test.js` (seed explícito de `members` / `meta/members`).
+
+### Verificações executadas
+| Check | Resultado observado |
+| :--- | :--- |
+| `oxlint` | `0` erros, `9` avisos (`281` arquivos; `0` avisos nos arquivos novos/refatorados exceto o aviso pré-existente `only-export-components` em `AuthContext.jsx` e `CampaignContext.jsx`) |
+| `lint:layers` | `185` arquivos analisados; `65` violações totais (`83 → 65`: removidos `authorizedUsers.js`, `T-INFRA-1`, `CampaignContext.jsx → infra/firebase`, e imports diretos de `infra/` em `LoginScreen.jsx` e `PlayerProfileModal.jsx`) |
+| `npm run test` | `70` arquivos, `515` testes aprovados |
+| `npm run test:rules` | `5` arquivos, `41` testes aprovados (`phase3-identity-gm` `11`, `phase3-m001-migration` `7`, `ops-scripts` `10`, `phase2-transactions-saga` `4`, `v1-regression` `9`) |
+| `npm run build` | `vite build` ok (`183` módulos transformados em `2.62s`) |
+
+### IDs do catálogo resolvidos na fase
+- **SEG-01 / SEG-02 / SEG-04 (`meta` e `presence`):** `firestore.rules` e `database.rules.json` removem e-mail fixo, removem `.read: "auth != null"` da campanha, exigem `isMember`/`email_verified` e validam `presence/$uid/$connId` por conexão.
+- **MOD-01 / MOD-02 / MOD-06 (`members`) / MOD-14:** identidade migrada para `members`, `invites` e `platformAdmins`; login exclusivamente por e-mail sem `@clubpenguin.vtt` nem limpeza de `cp_remember_pwd`; autoridade do Mestre única via `campaign.gmId`/`meta/gmId`.
+- **FUN-16 / FUN-17 / FUN-19 / FUN-29:** verificação de e-mail sem exclusão de conta no cadastro, gestão de convites/membros com revogação imediata e confirmação, e perfil via `ImageRef` + `pendingAvatarStore` isolado por UID.
+- **INT-14 / INT-15 / PERF-05:** `appConfig/runtime` com recarga protegida por guardas e bloqueio de escritas; `App.jsx` remonta os provedores da sessão por `${user.uid}:${campaignId}`; contextos de auth, runtime, campanha, membros e presença com valores memorizados.
+- **EST-01 / EST-04:** removidos `constants/authorizedUsers.js` e `T-INFRA-1`; extraídos serviços para auth, campanha, membros, perfil, presença e runtime; reescritos `LoginScreen`, `VerifyEmailScreen`, `GMPanelModal`, `PlayerProfileModal` e `CampaignContext`.
+
+### Decisões e desvios
+- **Preservação transitória de `combatState` (`T-TURN-1`):** `campaigns.combatState` permanece permitido em atualizações de `campaigns/{c}` (bloqueado em criações novas) e preservado por `campaignService.subscribeCampaign` até a Fase 11 (`M009`), quando migra para `state/turn`.
+- **`meta/invites` no RTDB com `.read: false` e limpeza por `reconcileMirrors`:** mantido `.read: false` em `vtt_realtime/$campaignId/meta/invites` (Seção 6.2); `reconcileMirrors` sobrescreve `meta/invites` inteiro a partir dos convites pendentes no Firestore sob a regra de escrita do Mestre em `meta/invites`, eliminando convites órfãos no RTDB sem exigir leitura do nó.
+- **`vitest.rules.config.js` `testTimeout: 45000`:** elevado de `20000` para `45000` exclusivamente para acomodar a latência de spawn duplo de processos Node carregando `firebase-admin` em `ops-scripts.test.js` no ambiente Windows/OneDrive sem enfraquecer asserções.
+- **Uso de `globalThis.sessionStorage` e `DEFAULT_CAMPAIGN_ID` via serviço:** `pendingAvatarStore.js` aceita fallback em `globalThis.sessionStorage` para testes em Node; `campaignService.js` reexporta `DEFAULT_CAMPAIGN_ID` para eliminar a última importação direta de `infra/firebase.js` em `CampaignContext.jsx`.
+
+**Aceite da Fase 3:** todos os critérios atendidos (`npm run check` verde; blocos B1 e B2, presença em duas conexões e `M001-identity` idempotente comprovados nos emuladores). **Gate G3:** informativo.
 

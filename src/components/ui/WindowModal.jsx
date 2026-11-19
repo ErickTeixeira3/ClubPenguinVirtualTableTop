@@ -8,8 +8,10 @@ import { Z_LAYERS } from "../../constants/zLayers";
  * - "light": painel branco com borda azul (#008be3) sobre overlay azul translúcido — padrão dos
  *   modais da Árvore de Fichas (criar, mover, colocar token, excluir pasta) e do Diário.
  * - "cp": classes globais `.cp-modal-overlay` + `.cp-window` — padrão dos modais de combate.
+ * - "epf": classes globais `.cp-modal-overlay` + `.epf-visor` — padrão do Terminal EPF.
  *
- * O clique no overlay chama `onClose`; cliques no painel não propagam.
+ * O clique no overlay chama `onClose` quando `closeOnOverlayClick` é verdadeiro; cliques no painel
+ * não propagam.
  * `portal` é opcional (padrão false) para preservar o contexto de empilhamento de quem renderiza.
  */
 // A ordem das propriedades replica a dos inlines originais (HTML idêntico ao anterior).
@@ -47,6 +49,7 @@ function buildLightPanelStyle(maxWidth, panelStyle) {
 export default function WindowModal({
   variant = "light",
   onClose,
+  closeOnOverlayClick = true,
   zIndex = Z_LAYERS.modalBase,
   maxWidth,
   overlayStyle,
@@ -55,18 +58,25 @@ export default function WindowModal({
   children,
 }) {
   const isCp = variant === "cp";
+  const isEpf = variant === "epf";
+  const isThemedOverlay = isCp || isEpf;
   const widthStyle = maxWidth ? { maxWidth } : {};
+  const panelClass = isCp ? "cp-window" : isEpf ? "epf-visor" : undefined;
 
   const overlay = (
     <div
-      className={isCp ? "cp-modal-overlay" : undefined}
-      style={isCp ? { zIndex, ...overlayStyle } : buildLightOverlayStyle(zIndex, overlayStyle)}
-      onClick={onClose}
+      className={isThemedOverlay ? "cp-modal-overlay" : undefined}
+      style={
+        isThemedOverlay
+          ? { zIndex, ...overlayStyle }
+          : buildLightOverlayStyle(zIndex, overlayStyle)
+      }
+      onClick={closeOnOverlayClick ? onClose : undefined}
     >
       <div
-        className={isCp ? "cp-window" : undefined}
+        className={panelClass}
         style={
-          isCp
+          isThemedOverlay
             ? { width: "100%", ...widthStyle, ...panelStyle }
             : buildLightPanelStyle(maxWidth, panelStyle)
         }

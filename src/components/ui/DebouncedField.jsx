@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useOptionalRuntimeConfig } from "../../contexts/RuntimeConfigContext.js";
 import { useDebouncedCallback } from "../../hooks/useDebouncedCallback";
 
 /**
@@ -17,6 +18,8 @@ import { useDebouncedCallback } from "../../hooks/useDebouncedCallback";
 export default function DebouncedField(props) {
   const { as = "input", onCommit, delay = 400, ...domProps } = props;
   const externalValue = domProps.value;
+  const runtimeConfig = useOptionalRuntimeConfig();
+  const registerUnsavedGuard = runtimeConfig?.registerUnsavedGuard;
 
   const [draft, setDraft] = useState(externalValue);
   const [prevExternal, setPrevExternal] = useState(externalValue);
@@ -72,6 +75,14 @@ export default function DebouncedField(props) {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof registerUnsavedGuard !== "function") return undefined;
+    return registerUnsavedGuard({
+      hasUnsavedChanges: () => isDirtyRef.current,
+      flush
+    });
+  }, [registerUnsavedGuard, flush]);
 
   useEffect(() => {
     latestExternalRef.current = externalValue;

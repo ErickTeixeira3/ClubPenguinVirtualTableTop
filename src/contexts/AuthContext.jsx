@@ -1,43 +1,14 @@
-import { createContext, useContext, useEffect, useState } from "react";
 import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signOut
-} from "firebase/auth";
-import { auth, googleProvider } from "../services/firebase";
-import { checkIsEmailAuthorized } from "../constants/authorizedUsers";
-import {
-  clearPendingAvatarDataUrl,
-  savePendingAvatarDataUrl
-} from "../utils/stringUtils";
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from "react";
+import * as authService from "../services/authService.js";
 
 const AuthContext = createContext(null);
-
-function formatAuthError(error) {
-  const code = error?.code || "";
-  if (error?.message && error.message.includes("Acesso restrito")) {
-    return error.message;
-  }
-  switch (code) {
-    case "auth/invalid-credential":
-    case "auth/user-not-found":
-    case "auth/wrong-password":
-      return "E-mail ou senha incorretos.";
-    case "auth/email-already-in-use":
-      return "Este e-mail já está em uso.";
-    case "auth/weak-password":
-      return "A senha deve ter pelo menos 6 caracteres.";
-    case "auth/popup-closed-by-user":
-      return "Janela de login fechada antes de concluir.";
-    case "auth/operation-not-allowed":
-      return "Método de login ainda não habilitado no Firebase Console.";
-    default:
-      return error?.message || "Erro ao autenticar.";
-  }
-}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -45,142 +16,151 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState("");
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser?.email) {
-        const isAuth = await checkIsEmailAuthorized(currentUser.email);
-        if (!isAuth) {
-          clearPendingAvatarDataUrl();
-          await signOut(auth);
-          setUser(null);
-          setAuthError("Acesso restrito: este e-mail não está autorizado nesta mesa.");
-          setLoading(false);
-          return;
-        }
-      } else {
-        clearPendingAvatarDataUrl();
-      }
-      setUser(currentUser);
+    const unsubscribe = authService.subscribeAuthState((nextUser) => {
+      setUser(nextUser);
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  const loginWithGoogle = async () => {
+  const clearAuthError = useCallback(() => {
     setAuthError("");
-    clearPendingAvatarDataUrl();
+  }, []);
+
+  const loginWithGoogle = useCallback(async () => {
+    setAuthError("");
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const isAuth = await checkIsEmailAuthorized(result.user.email);
-      if (!isAuth) {
-        clearPendingAvatarDataUrl();
-        await signOut(auth);
-        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
-        setAuthError(err.message);
-        throw err;
-      }
-      return result.user;
+      const nextUser = await authService.loginWithGoogle();
+      setUser(nextUser);
+      return nextUser;
     } catch (err) {
-      clearPendingAvatarDataUrl();
-      const msg = formatAuthError(err);
-      setAuthError(msg);
+      setAuthError(authService.formatAuthError(err));
       throw err;
     }
-  };
+  }, []);
 
-  const loginWithEmail = async (email, password) => {
+  const loginWithEmail = useCallback(async (email, password) => {
     setAuthError("");
-    clearPendingAvatarDataUrl();
     try {
-      const cleanEmail = email.trim().toLowerCase();
-      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      const isAuth = await checkIsEmailAuthorized(result.user.email);
-      if (!isAuth) {
-        clearPendingAvatarDataUrl();
-        await signOut(auth);
-        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
-        setAuthError(err.message);
-        throw err;
-      }
-      return result.user;
+      const nextUser = await authService.loginWithEmail({ email, password });
+      setUser(nextUser);
+      return nextUser;
     } catch (err) {
-      clearPendingAvatarDataUrl();
-      const msg = formatAuthError(err);
-      setAuthError(msg);
+      setAuthError(authService.formatAuthError(err));
       throw err;
     }
-  };
+  }, []);
 
-  const registerWithEmail = async (email, password, displayName, photoURL = null) => {
-    setAuthError("");
-    clearPendingAvatarDataUrl();
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-      const result = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-      const isAuth = await checkIsEmailAuthorized(result.user.email);
-      if (!isAuth) {
-        clearPendingAvatarDataUrl();
-        try {
-          await result.user.delete();
-        } catch {
-          await signOut(auth);
-        }
-        const err = new Error("Acesso restrito: este e-mail não está autorizado nesta mesa.");
-        setAuthError(err.message);
-        throw err;
-      }
-      const isDataUrlPhoto =
-        typeof photoURL === "string" && photoURL.startsWith("data:");
-      const isHttpPhoto =
-        typeof photoURL === "string" &&
-        /^https?:\/\//i.test(photoURL) &&
-        photoURL.length < 2000;
-
-      if (isDataUrlPhoto) {
-        savePendingAvatarDataUrl(result.user.uid, photoURL);
-      }
-
-      if (displayName?.trim() || isHttpPhoto) {
-        await updateProfile(result.user, {
-          ...(displayName?.trim() ? { displayName: displayName.trim() } : {}),
-          ...(isHttpPhoto ? { photoURL } : {})
+  const registerWithEmail = useCallback(
+    async (email, password, displayName, photoURL = null) => {
+      setAuthError("");
+      try {
+        const nextUser = await authService.registerWithEmail({
+          email,
+          password,
+          displayName,
+          avatarDataUrl: photoURL
         });
-        setUser({
-          ...result.user,
-          displayName: displayName?.trim() || result.user.displayName,
-          photoURL: isHttpPhoto ? photoURL : result.user.photoURL
-        });
+        setUser(nextUser);
+        return nextUser;
+      } catch (err) {
+        setAuthError(authService.formatAuthError(err));
+        throw err;
       }
-      return result.user;
-    } catch (err) {
-      clearPendingAvatarDataUrl();
-      const msg = formatAuthError(err);
-      setAuthError(msg);
-      throw err;
-    }
-  };
-
-  const logout = async () => {
-    setAuthError("");
-    clearPendingAvatarDataUrl();
-    await signOut(auth);
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        authError,
-        setAuthError,
-        loginWithGoogle,
-        loginWithEmail,
-        registerWithEmail,
-        logout
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+    },
+    []
   );
+
+  const sendPasswordReset = useCallback(async (email) => {
+    setAuthError("");
+    try {
+      await authService.sendPasswordReset({ email });
+    } catch (err) {
+      setAuthError(authService.formatAuthError(err));
+      throw err;
+    }
+  }, []);
+
+  const resendVerificationEmail = useCallback(async () => {
+    setAuthError("");
+    try {
+      await authService.resendVerificationEmail();
+    } catch (err) {
+      setAuthError(authService.formatAuthError(err));
+      throw err;
+    }
+  }, []);
+
+  const refreshCurrentUser = useCallback(async () => {
+    setAuthError("");
+    try {
+      const refreshed = await authService.reloadCurrentUser();
+      if (refreshed) {
+        setUser(refreshed);
+      }
+      return refreshed;
+    } catch (err) {
+      setAuthError(authService.formatAuthError(err));
+      throw err;
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    setAuthError("");
+    try {
+      await authService.logout();
+      setUser(null);
+    } catch (err) {
+      setAuthError(authService.formatAuthError(err));
+      throw err;
+    }
+  }, []);
+
+  const readRememberedEmail = useCallback(
+    () => authService.readRememberedEmail(),
+    []
+  );
+
+  const saveRememberedEmail = useCallback(
+    (email) => authService.saveRememberedEmail(email),
+    []
+  );
+
+  const value = useMemo(
+    () => ({
+      user,
+      loading,
+      authError,
+      setAuthError,
+      clearAuthError,
+      loginWithGoogle,
+      loginWithEmail,
+      registerWithEmail,
+      sendPasswordReset,
+      resendVerificationEmail,
+      refreshCurrentUser,
+      logout,
+      readRememberedEmail,
+      saveRememberedEmail
+    }),
+    [
+      user,
+      loading,
+      authError,
+      clearAuthError,
+      loginWithGoogle,
+      loginWithEmail,
+      registerWithEmail,
+      sendPasswordReset,
+      resendVerificationEmail,
+      refreshCurrentUser,
+      logout,
+      readRememberedEmail,
+      saveRememberedEmail
+    ]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
