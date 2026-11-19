@@ -2027,6 +2027,8 @@ Plano: `PLANO_REFATORACAO_2.md`. Cada fase registra o que foi feito, os IDs do c
 | T-ENG-3 | `src/engines/diceEngine.js` | Engine legado de dados (`window`, `Math.random`) mantido em uso até a migração das rolagens para `src/engines/dice/`. | Fase 1 (TRANSITION) | Fase 9 |
 | T-ENG-4 | `src/engines/formulaEngine.js` | Engine legado de fórmulas mantido em uso até a migração de fichas/rolagens para `src/engines/formula/`. | Fase 1 (TRANSITION) | Fase 9 |
 | T-ENG-5 | `src/engines/combatEngine.js` | Engine legado de combate/turno (`Date.now`, `Math.random`, registro global) mantido até a substituição dos consumidores para `src/engines/{combat,turn}/`. | Fase 1 (TRANSITION) | Fase 11 (máx. Fase 13) |
+| T-INFRA-3 | `src/components/scenes/ScenesManagerModal.jsx` | Importação direta de `infra/imageCompression.js` até a reescrita de cenas. | Fase 2 (TRANSITION) | Fase 12 |
+| T-INFRA-5 | `src/infra/rtdbPaths.js` | Constantes `RTDB_LAYOUT`/`IS_SPLIT_RTDB_LAYOUT` e caminhos `legacyDrawingsPath`/`legacyPingsPath` mantidos até limpeza final. | Fase 2 (TRANSITION) | Fase 13 |
 
 ## Fase 0 — Fundação e rede de segurança (2026-11-17)
 
@@ -2268,6 +2270,65 @@ Nenhuma dependência existente mudou de versão no lockfile (conferido pacote a 
 **Aceite da Fase 1 (pendente Gate G1):**
 - cobertura de ramos >= 90% (`94.79%` global, >= 90% por pacote) e 0 violações de pureza nos módulos novos;
 - caracterização da Fase 0 e suíte completa verdes após a última edição.
+
+---
+
+## Fase 2 — Infraestrutura e serviços transversais (2026-11-18)
+
+### Instruções do usuário e regras aplicadas
+- Executar a Fase 2 completa (entregáveis 1 a 7, suítes de infraestrutura/serviço/contenção e registro) e parar no **Gate G2** informativo.
+- Sem commits e sem deploy (regra global do usuário).
+- `firestore.rules` e `database.rules.json` (ainda v1 na Fase 2) mantidos intactos até suas fases (`messages` na Fase 9).
+
+### O que foi feito
+
+**1. Camada de infraestrutura (`src/infra/`):**
+- `src/infra/firebase.js` (movido de `src/services/firebase.js`): atualizados os 19 arquivos em `src/` e 8 em `tests/`, além do `INFRA_FILES_OUTSIDE_INFRA` em `scripts/check-layers.mjs`.
+- `src/infra/firestorePaths.js`: caminhos canônicos de documentos e coleções v2 (`platformAdmins`, `appConfig/runtime`, `campaigns`, `members`, `invites`, `characters`, `folders`, `notes`, `scenes`, `compendium`, `messages`, `media`, `state/turn`, `state/chat`, `pendingCosts`) com validação de segmentos.
+- `src/infra/rtdbPaths.js` (movido e expandido de `src/services/rtdbPaths.js`): cobre todos os nós do RTDB (`platformAdmins`, `meta/*`, `presence/*`, `tokens/*`, `hiddenTokens/*`, `tokenSecrets/*`, `fog/*`, `drawings/*`, `pings/*`, `.info/*`) e substitui todas as **22 ocorrências** fixas de `vtt_realtime/...` nos 6 consumidores (`CampaignContext.jsx`, `useBoardInteractive.js`, `useCharacters.js`, `useFogOfWar.js`, `useRealtimeTokens.js`, `combatService.js`).
+- `src/infra/converters/` (`firestoreConverters.js`, `rtdbMappers.js`, `index.js`): `FirestoreDataConverter` para as 15 entidades do Firestore e mapeadores do RTDB para os 7 nós (`token`, `tokenSecret`, `drawing`, `ping`, `fog`, `fogArea`, `presence`), preservando sentinelas `serverTimestamp()` / `ServerValue.TIMESTAMP`.
+- `src/infra/browserStorage.js` e `src/infra/clock.js`: armazenamento com namespace e rejeição de chaves `"default"`, e provedor de relógio injetável + `computeServerTime`.
+- `src/infra/imageCompression.js` (movido de `src/engines/imageCompressor.js`, removendo `T-ENG-1`): extrai o `mimeType` real do `dataUrl`, falha explicitamente com `AppError(OUT_OF_RANGE)` quando excede `preset.maxBytes` após o loop adaptativo e reutiliza resultados já comprimidos sem recomprimir em Canvas. `TokenModal.jsx`, `ScenesManagerModal.jsx` e `mediaService.uploadCompressedMedia` passaram a reaproveitar a prévia comprimida.
+- `src/infra/mediaCache.js` e `src/services/mediaService.js`: conexão única reutilizada no IndexedDB (`cpvtt_media_cache`), chave estrita `${campaignId}:${mediaId}` sem fallback sem campanha, e deduplicação de leituras concorrentes por chave (`inFlight`).
+- `src/infra/crossWindowTransport.js` e `src/hooks/useCrossWindowSync.js`: extração do adaptador `BroadcastChannel` + fallback `localStorage`/`storage` (A13), bloqueio de canal `"default"`, geração de IDs por `createId(ID_PREFIXES.WINDOW)` e propagação de falhas via `onTransportError`.
+- `src/infra/transactions.js`: `pruneRecentOps` (limite `RECENT_OPS_LIMIT = 50`), transações idempotentes `runFirestoreIdempotentTransaction` / `applyFirestoreResourceDelta` (incrementando `rev` e podando `recentOps` na mesma transação) e `runRtdbIdempotentTransaction` / `applyRtdbResourceDelta` (suportando formatos v1 e v2 e tratando a passagem especulativa `null` do SDK do RTDB).
+
+**2. Serviços transversais e UI base (`src/services/`, `src/hooks/`, `src/components/ui/`):**
+- `src/services/notificationService.js`, `src/hooks/useNotifications.js` e `src/components/ui/Toast.jsx`: fila reativa de notificações e toast respeitando `components → hooks → services`.
+- `src/components/ui/ConfirmDialog.jsx` e `src/components/ui/ConfirmDeleteModal.jsx`: diálogo genérico baseado em `WindowModal` + `CPButton`; `ConfirmDeleteModal` passou a delegar para `ConfirmDialog` preservando HTML estático idêntico (`renderToStaticMarkup`).
+- `src/services/operationRunner.js`: auxiliar de sagas (`createPendingOperationMessage`, `commitOperationStatus`, `runSagaOperation`, `buildPendingOperationsQuery`, `recoverPendingOperations`), incluindo `where("visibleTo", "array-contains-any", ["ALL", uid])` obrigatório para não-GM na recuperação.
+
+**3. Novas suítes de testes (Fase 2):**
+- Unitários (`tests/unit/infra/` e `tests/unit/services/` — 36 novos testes em 8 arquivos): `paths.test.js`, `converters.test.js`, `clock-and-storage.test.js`, `crossWindowTransport.test.js`, `imageCompression.test.js`, `mediaCache.test.js`, `notification-and-ui.test.jsx`, `operationRunner.test.js`.
+- Emuladores (`tests/emulator/phase2-transactions-saga.test.js` — 4 testes contra `demo-cpvtt-test`): contenção simultânea com 2 clientes autenticados (`player1` e `player2`) no Firestore (`MP 10 - 2 - 3 = 5`, `rev = 2`) e no RTDB (`MP 10 - 2 - 3 = 5`), repetição idempotente de `opId`, poda de `recentOps` em 50 entradas nos dois bancos, consulta de recuperação não-GM aceita apenas com filtro `visibleTo` pelas `firestore.rules` reais e ciclo completo de saga com falhas injetadas sem cobrança dupla.
+
+### Evidências
+- `npm run check`: código de saída `0`.
+
+| Etapa | Resultado |
+| :--- | :--- |
+| `oxlint` | `0` erros, `10` avisos (apenas os pré-existentes; `0` avisos nos arquivos novos) |
+| Camadas (`lint:layers`) | `166` arquivos analisados; `0` violações em `src/infra/**`, `src/services/**` e `Toast.jsx`; pureza caiu de `6` para `5` (`imageCompressor.js` removido de `engines/`). Relatório total `83` (`34` camadas [+1 `Toast.jsx`→`constants/zLayers`], `41` `sdk-fora-de-services-infra` [+11 transitórios `T-INFRA-1..4`], `5` pureza, `3` fora da arquitetura) |
+| `test` | `60` arquivos, `478` testes aprovados |
+| `test:rules` | `3` arquivos, `23` testes aprovados nos emuladores de teste (`phase2-transactions-saga` 4, `ops-scripts` 10, `v1-regression` 9) |
+| `build` | `vite build` ok (`132` módulos transformados; mantém aviso de chunk > 500 kB tratado em `PERF-07` na Fase 13) |
+
+### IDs do catálogo
+- **EST-10:** `src/infra/rtdbPaths.js` elimina todas as 22 ocorrências literais de `vtt_realtime/...` nos 6 arquivos consumidores (comprovado por scan em `tests/unit/infra/paths.test.js`).
+- **INT-15 (cache e transporte):** `src/infra/mediaCache.js` exige `campaignId` explícito sem fallback por `mediaId` e rejeita `"default"`, e `src/infra/crossWindowTransport.js` / `useCrossWindowSync.js` bloqueiam canais `"default"` (coberto por `mediaCache.test.js` e `crossWindowTransport.test.js`). *(A parte de troca de campanha no `CampaignContext` permanece prevista para a Fase 3).*
+- **INT-20 (infraestrutura):** removidos `catch` silenciosos em `mediaCache.js`, `browserStorage.js`, `crossWindowTransport.js`, `useCrossWindowSync.js`, `mediaService.js` e `operationRunner.js`, com erros propagados por `AppError`, `onError`/`onTransportError` ou `notificationService`.
+- **PERF-04 (cache e deduplicação):** `mediaCache.js` mantém conexão única com IndexedDB (`openCalls === 1`) e deduplica chamadas concorrentes pela chave `${campaignId}:${mediaId}` (coberto por `mediaCache.test.js`).
+- **FUN-27:** `src/infra/imageCompression.js` extrai o `mimeType` real do `dataUrl`, falha com `AppError(OUT_OF_RANGE)` acima de `maxBytes` e reutiliza resultados já comprimidos em `TokenModal.jsx`, `ScenesManagerModal.jsx` e `mediaService.uploadCompressedMedia` (coberto por `imageCompression.test.js`).
+- **EST-08 (base):** criados `Toast.jsx` (via `useNotifications` + `notificationService`) e `ConfirmDialog.jsx`, com `ConfirmDeleteModal.jsx` migrado para `ConfirmDialog` mantendo HTML estático idêntico (`notification-and-ui.test.jsx`).
+- **EST-02 (`imageCompressor`):** `src/engines/imageCompressor.js` movido para `src/infra/imageCompression.js` e removido de `engines/` (violações de pureza reduzidas de `6` para `5`).
+- **EST-03 (`crossWindowTransport`, `browserStorage`):** transporte multi-janela e armazenamento local encapsulados em `src/infra/`.
+
+### Decisões e desvios
+- **Consulta e regras v1 de `messages` na Fase 2:** em `firestore.rules` v1, a criação de mensagens exige `senderId` (campo legado proibido no modelo v2) e a atualização exige `isGM(campaignId)` (a regra de transição `status` pelo remetente entra na Fase 9). Conforme revisão do plano (Opção 1), `firestore.rules` não foi alterado na Fase 2; no teste `phase2-transactions-saga.test.js`, a consulta de recuperação de não-GM (`buildPendingOperationsQuery` com `visibleTo`) é validada diretamente contra `firestore.rules` real, enquanto o ciclo completo de criação/recuperação de mensagens v2 usa `withSecurityRulesDisabled`.
+- **Extensões `.js` explícitas:** mantidas nos imports relativos de `src/infra/**` e `src/services/operationRunner.js` / `notificationService.js` / `mediaService.js` para compatibilidade com Node ESM.
+- **Adaptadores de transição:** `T-ENG-1` removido; registradas as importações transitórias de `infra/` pelos componentes/hooks v1 (`T-INFRA-1` a `T-INFRA-4`), flags legadas de layout em `rtdbPaths.js` (`T-INFRA-5`) e `deleteMedia` (`T-SERV-1`) até suas respectivas fases de remoção.
+
+**Aceite da Fase 2:** todos os critérios atendidos (`npm run check` verde; contenção de dois clientes no Firestore e no RTDB e recuperação de sagas comprovadas nos emuladores). **Gate G2:** informativo.
 
 ---
 

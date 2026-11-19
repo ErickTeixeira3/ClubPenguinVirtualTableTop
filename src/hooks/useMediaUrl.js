@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCachedMediaSync, getMediaDataUrl } from "../services/mediaService";
-import { DEFAULT_CAMPAIGN_ID } from "../services/firebase";
+import { DEFAULT_CAMPAIGN_ID } from "../infra/firebase.js";
 
 export function useMediaUrl(
   mediaId,
