@@ -27,10 +27,18 @@ dist-ssr/
 .env
 .env.*
 .env*
+# Configuração dos emuladores: sem segredos (projeto demo-), versionada (Fase 0 / PROC-04)
+!.env.emulator
 *.local
 *.pem
 *.key
 *.cert
+
+# Snapshots de produção, seeds, logs de migração e dados locais (contêm dados pessoais)
+local-data/
+
+# Cobertura de testes
+coverage/
 
 # Editor, AI & OS files
 .vscode/

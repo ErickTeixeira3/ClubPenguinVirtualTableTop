@@ -2013,3 +2013,172 @@ Verificações independentes (consultas ao Firebase de produção somente leitur
 ### 13.3 Commit e deploy
 - **Autorização**: o usuário autorizou explicitamente, em 2026-11-16, o commit e o deploy desta correção ("faça a correção, commite e faça deploy").
 - **Escopo do deploy**: só Hosting (`firebase deploy --only hosting`). As regras não mudaram em relação às publicadas.
+
+---
+
+# REFATORAÇÃO 2
+
+Plano: `PLANO_REFATORACAO_2.md`. Cada fase registra o que foi feito, os IDs do catálogo (Seção 9) com evidência, as decisões e os desvios, e os adaptadores de transição.
+
+## Fase 0 — Fundação e rede de segurança (2026-11-17)
+
+### Instruções do usuário para esta fase
+- **Sem commits e sem branch:** o usuário dispensou o Gate G0 (a). Nada foi commitado e a branch `refactor/v2` não foi criada. O trabalho está na árvore de trabalho da `main`, com `HEAD == abf44e8`.
+- **Sem `npm run dev` por enquanto:** confirmado, antes da edição em `src/`, que nada escutava na porta 5173.
+- **Dependências:** a instalação foi autorizada pelo próprio pedido da fase (Gate G0 (b)).
+
+### O que foi feito
+
+**1. Dependências de desenvolvimento** (versões exatas no `package.json` e no lockfile):
+- `vitest` 5.1.0 e `@vitest/coverage-v8` 5.1.0;
+- `@firebase/rules-unit-testing` 6.0.0;
+- `firebase-admin` 14.5.1;
+- `firebase-tools` 15.36.0;
+- `jsdom` 29.1.1;
+- `@testing-library/react` 16.3.3 e `@testing-library/dom` 10.4.2.
+
+Nenhuma dependência existente mudou de versão no lockfile (conferido pacote a pacote contra `abf44e8`).
+
+**2. Emuladores.**
+- `firebase.json` ganhou:
+  - o bloco `emulators`: Auth 9099, Firestore 8085 (websocket 9160), Database 9000, Hub 4400, Logging 4500 e interface em 4000;
+  - a referência a `firestore.indexes.json` (vazio).
+- `firebase.test.json` usa as mesmas regras, com portas próprias (19099, 18085/19160, 19000, 14400, 14500) e sem interface. O projeto de teste é `demo-cpvtt-test`.
+
+**3. App em desenvolvimento contra os emuladores por padrão** (`src/services/firebase.js`):
+- Com `import.meta.env.DEV` e sem `VITE_ALLOW_PRODUCTION=true`, o app conecta Auth, Firestore e RTDB aos emuladores.
+- Ele recusa iniciar ("Desenvolvimento recusado…") se a configuração não for de um projeto `demo-` com as portas definidas.
+- `.env.emulator` é versionado e não tem segredos; a exceção `!.env.emulator` foi adicionada ao `.gitignore`.
+- `npm run dev:prod` (`scripts/dev/dev-prod.mjs`) é a única forma de liberar a produção em desenvolvimento.
+- O build de produção não muda.
+
+**4. Scripts npm:**
+- novos, pedidos pelo plano: `emulators`, `dev:emu`, `test`, `test:rules`, `check`, `migrate`, `audit:schema`;
+- novos, adicionais: `dev:prod`, `lint:layers`, `seed:emu`, `export:prod`, `test:coverage`;
+- alterado: `dev` passou a chamar `dev:emu`.
+
+**5. Testes de caracterização** (`tests/characterization/`, 126 testes):
+
+| Área | Arquivo | Testes |
+| :--- | :--- | :--- |
+| Dados | `dice.test.js` | 8 |
+| Fórmulas, só casos válidos | `formula.test.js` | 12 |
+| Aliases, só casos em que os dois matchers concordam | `aliases.test.js` | 12 |
+| `computeModifiedEffectValue` | `effects.test.js` | 12 |
+| Geometria de AoE e régua | `geometry.test.js` | 17 |
+| Modo de Turno congelado | `turn.test.js` | 31 |
+| Classificação estrutural e atalhos por id | `rolls.test.js` | 34 |
+
+- **Turno:** inclui os três cenários do plano (Mestre na Visão Player desconta, Mestre fora dela não desconta, movimento só pelo Mestre real) e o defeito congelado `actionsMax: 0 → 1`.
+- **Lógica que ainda vive dentro de componentes** (desconto do turno no `VTTLayout` e no `BoardViewport`, régua e prévia de AoE, as 3 cópias da classificação nas abas da ficha):
+  - o teste reproduz a expressão e a fixa por **source pin** (`tests/support/sourcePin.js`);
+  - se o código mudar, o pin falha e o teste tem de migrar para a função extraída.
+- **Inconsistência registrada para a Fase 1:** `effectRollKind("mp_damage")` devolve DAMAGE, enquanto `classifyRollKind({ effectType: "mp_damage" })` devolve MP_DAMAGE.
+
+**6. Camadas e pureza em modo relatório** (`scripts/check-layers.mjs`, `npm run lint:layers`; `--strict` vira erro na Fase 13).
+- `src/services/firebase.js` já conta como `infra` (vira `infra/firebase.js` na Fase 2). Importá-lo fora de services/infra conta como uso de SDK, sem contar duas vezes a mesma importação.
+- **Contagem inicial: 72 violações.**
+
+| Regra | Violações |
+| :--- | :--- |
+| Dependências entre camadas (5.1) | 33 |
+| SDK ou adaptador do SDK fora de services/infra (4.1.1) | 30 |
+| Pureza de domain/engines (4.1.2): `combatEngine` (`Date.now`, `Math.random`), `diceEngine` (`window` ×2, `Math.random`), `imageCompressor` (`document`) | 6 |
+| Arquivos fora da arquitetura (`constants/` ×2, `utils/` ×1) | 3 |
+
+**7. Snapshot e seed** (`scripts/ops/`, `scripts/lib/`):
+- `export-production.mjs` é **somente leitura**. Exporta o Firestore inteiro (com subcoleções e tipos codificados), o RTDB inteiro e os usuários do Auth (sem hash de senha) para `local-data/snapshots/`. No terminal mostra só contagens.
+- `seed-emulator.mjs` substitui todo o estado do emulador:
+  - mantém os mesmos UIDs;
+  - contas de senha recebem a senha local `pinguim123`;
+  - contas Google aparecem na tela de login do emulador.
+- Travas: `--target` obrigatório; produção exige `--confirm-production` e é recusada se houver variáveis de emulador no ambiente; o emulador exige projeto `demo-`. `local-data/` foi adicionado ao `.gitignore`.
+
+**8. Migrações e auditoria** (`scripts/migrations/`):
+- **Executor:** contrato `plan()` só de leitura e idempotente; simulação por padrão; limite diário de 15 mil escritas, com registro local por alvo, projeto e dia, verificado **antes** de gravar; lotes de 450; logs em `local-data/migration-logs/`.
+- **`registry.mjs`:** vazio (a M001 chega na Fase 3).
+- **`audit-v2.mjs`:** sem validadores registrados, termina com **código 2 (inconclusiva)** e nunca reporta "0 violações" enganoso. Os validadores entram a partir da Fase 1.
+
+**9. Porte de `auditoria_refatoracao/validar-regressoes.mjs`** (20 verificações; o arquivo antigo continua no lugar e é removido na Fase 13, com autorização):
+- **Portadas (17, algumas só na parte que continua valendo no v2):**
+  - testes de unidade e de componente em `tests/regression/` (28 testes): A1-A3 (caminhos), A7-A8, A9, A10, A11, A12-A13, A14, A15 (seletor Ataque/Teste), A18-A19, A21, A22, A23, A24-A27, A28-A30, A31, A33 (spawn);
+  - testes de **regras no emulador** em `tests/rules/v1-regression.test.js` (9 testes, no lugar da avaliação por `vm` e da busca de texto do script original): A1-A3, A4/D-3, A32 e A33.
+- **Não portadas por deixarem de valer:**
+  - A5-A6 e A16-A17: migração dentro do app, que sai na Fase 13;
+  - A20: protocolo de resistência em `localStorage`, que sai na Fase 9;
+  - parte A15 de "A15-A18-A19" (`attackWhenTargeted`, que sai na Fase 9);
+  - a exceção por e-mail fixo em A32 (sai na Fase 3);
+  - o modo "legacy" de caminhos do RTDB;
+  - a exigência de o Mestre estar em `visibleTo` (A7-A9; no v2 o Mestre lê pela regra).
+- **Correção encontrada no porte:** o A21 original passava `costResource`/`costAmount`, que `executeChatRollMessage` ignora. A verificação passava sem nunca exercitar o desconto. O porte passa `cost` e acrescenta um controle positivo (um PC desconta e registra `costPaid`).
+- A11 é revisitado na Fase 6 (D-DER-5).
+
+**10. Testes dos próprios scripts e do ambiente:**
+- `tests/tooling/dev-environment.test.js` (8 testes): a trava do `firebase.js`, a coerência de portas entre `.env.emulator`, `firebase.json` e `firebase.test.json`, e o verificador de camadas;
+- `tests/emulator/ops-scripts.test.js` (10 testes, no emulador de teste): travas de alvo, ida e volta snapshot → seed → export **idêntica** (timestamps com nanossegundos, referências, conta Google e conta de senha), login com a senha local mantendo o UID, auditoria inconclusiva, e o executor (simulação, aborto pelo limite antes de gravar, aplicação, registro do dia, idempotência).
+
+### Evidências
+- `npm run check`: código de saída 0.
+
+| Etapa | Resultado |
+| :--- | :--- |
+| `oxlint` | 0 erros, **10 avisos**, todos os pré-existentes em `src/`; nenhum em `scripts/` ou `tests/` |
+| Camadas | relatório com 72 violações |
+| `test` | 13 arquivos, **162** testes |
+| `test:rules` | 2 arquivos, **19** testes, nos emuladores de teste |
+| `build` | ok; mantém o aviso de chunk acima de 500 kB (PERF-07, Fase 13) |
+
+- **`dev:emu` com seed:**
+  - emuladores de desenvolvimento no ar, semeados com um snapshot **sintético** pelo `seed:emu`;
+  - Vite em modo `emulator` (porta 5180, para não ocupar a 5173), aberto num Chrome headless pelo DevTools Protocol;
+  - login com a conta semeada: a campanha semeada carregou como Mestre, com **0 erros ou avisos no console**;
+  - processos encerrados depois.
+- **Produção:** nada foi lido nem gravado. Nenhum comando usou o projeto real; o `.env` de produção só foi lido para listar os nomes das chaves.
+
+### IDs do catálogo
+- **PROC-01 (início):** suíte versionada no emulador (`npm run test:rules`), `npm test` e caracterização. Continua aberto, como previsto: as suítes v2 do Apêndice B entram nas Fases 3, 4, 8 e 9.
+- **PROC-02 (início):** regras de camadas em modo relatório, com a contagem acima. O lint segue com 10 avisos; zera na Fase 13.
+- **PROC-04 (resolvido, exceto o seed real):** o desenvolvimento usa os emuladores por padrão e recusa a produção sem `dev:prod`. Coberto por `tests/tooling/dev-environment.test.js` e verificado no navegador.
+
+### Decisões e desvios
+- **Node 24.11.0 instalado contra `>=24.12` do `@firebase/rules-unit-testing` 6.0.0.** É a única versão compatível com `firebase@13`. O npm só avisa (EBADENGINE) e as suítes passam. **Recomendação:** atualizar o Node para 24.15 ou mais novo, o que também permite o `jsdom` atual (30+). `jsdom` ficou em 29.1.1, a última compatível com Node 24.11.
+- **`@testing-library/dom`:** fora da lista do plano, mas é dependência obrigatória (*peer*) do `@testing-library/react`.
+- **Portas:** o Firestore saiu do padrão 8080, ocupado por um Apache (`httpd`), e o websocket saiu de 9150. A 9150 está ocupada por um **emulador do Firestore órfão** de uma sessão anterior (projeto `demo-cpvtt-audit`, portas 9150 e 18081), que foi deixado como estava.
+- **`firebase deploy` completo** agora também publica `firestore.indexes.json` (vazio). Deploys devem usar `--only` (anotado no README).
+- **Para a Fase 1:** os módulos novos de `src/domain` e `src/engines` precisam importar com extensão explícita (`.js`). Sem isso, `scripts/migrations` (Node puro) não consegue importá-los para os validadores e as migrações.
+
+### Entregável 8 — snapshot de produção (Gate G0 (c), concluído em 2026-11-17)
+- **Autorização e credencial:** o usuário autorizou a leitura e forneceu uma chave de conta de serviço do Admin SDK, guardada **fora do repositório** (em `.secrets` no perfil do usuário). O caminho não é versionado. A credencial foi passada por `GOOGLE_APPLICATION_CREDENTIALS` só no comando. O `gcloud` não está instalado; o `--account` da CLI não foi necessário, porque o export usa só o Admin SDK.
+- **Comando** (somente leitura): `npm run export:prod -- --target production --confirm-production`, gravando em `local-data/snapshots/2026-11-17T12-55-15-040Z-production/`. Contagens:
+
+| Coleção | Documentos |
+| :--- | :--- |
+| `campaigns` | 1 |
+| `characters` | 7 (2 são documentos legados `isFolder`) |
+| `compendium` | 1 |
+| `folders` | 3 |
+| `media` | 5 |
+| `messages` | 114 |
+| `notes` | 14 (1 legado `isFolder`) |
+| `scenes` | 3 |
+| **Total Firestore** | **148** |
+| RTDB | 18.505 bytes |
+| Auth | 3 usuários: 2 Google (inclusive o Mestre) e 1 de e-mail e senha |
+
+- **Seed** (`npm run seed:emu`): os 148 documentos, o RTDB e as 3 contas foram carregados no emulador `demo-cpvtt`.
+- **App v1 contra o seed real** (Vite em modo `emulator` na porta 5180, Chrome headless pelo DevTools Protocol):
+  - **Mestre** (com senha definida **só no emulador**, porque em produção ele entra com Google): 5 fichas, 13 notas e mapa ativo com tokens, imagens de `media`, desenhos e névoa;
+  - **Jogador** (conta de senha, com a senha local do seed): 3 notas do grupo e mapa ativo;
+  - números estáveis por 15 s nos dois papéis, com **0 erros ou avisos no console**;
+  - a primeira captura, feita 2,5 s após o primeiro login com o Vite recém-aberto, saiu antes do fim do carregamento; a repetição com espera confirmou os números acima.
+- **Atenção para as próximas fases:** o login do Mestre real executa a migração v1 dentro do app (`migrationService`), que altera o estado do emulador. Para voltar ao estado exato da produção, rode `npm run seed:emu` de novo.
+- **Produção:** só leitura. Nenhuma escrita.
+
+**Aceite da Fase 0:** todos os critérios foram atendidos.
+- `npm run check` roda, com o relatório de camadas ainda não zerado;
+- os emuladores sobem;
+- o `dev:emu` funciona com o seed real;
+- a produção não foi alterada.
+
+---
+
