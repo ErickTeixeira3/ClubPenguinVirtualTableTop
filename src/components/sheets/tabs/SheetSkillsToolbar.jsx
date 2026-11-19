@@ -1,16 +1,18 @@
 /**
- * Fase 5: ações contextuais da aba Skills (barra superior da gaveta da Ficha),
- * extraídas de CharacterSheetModal.jsx com JSX inalterado.
+ * Ações contextuais da aba Skills (barra superior da gaveta da Ficha).
+ * FUN-08: inclui magias (`type === "spell"`) junto de perícias e habilidades.
  */
 export default function SheetSkillsToolbar({
   compendiumEntries,
   handlePullFromCompendium,
-  skillsForm
+  onToggleNewAbility
 }) {
-  const { resetAbilityForm, newAbilityOpen, setNewAbilityOpen } = skillsForm;
+  const skillEntries = compendiumEntries.filter(
+    (e) => e.type === "skill" || e.type === "ability" || e.type === "spell"
+  );
   return (
     <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-      {compendiumEntries.filter((e) => e.type === "skill" || e.type === "ability").length > 0 && (
+      {skillEntries.length > 0 && (
         <select
           className="cp-input"
           style={{
@@ -21,9 +23,7 @@ export default function SheetSkillsToolbar({
           }}
           defaultValue=""
           onChange={(e) => {
-            const found = compendiumEntries.find(
-              (c) => c.id === e.target.value
-            );
+            const found = compendiumEntries.find((c) => c.id === e.target.value);
             if (found) handlePullFromCompendium(found);
             e.target.value = "";
           }}
@@ -31,13 +31,11 @@ export default function SheetSkillsToolbar({
           <option value="" disabled>
             + Puxar Compêndio...
           </option>
-          {compendiumEntries
-            .filter((e) => e.type === "skill" || e.type === "ability")
-            .map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name}
-              </option>
-            ))}
+          {skillEntries.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.name}
+            </option>
+          ))}
         </select>
       )}
 
@@ -45,15 +43,7 @@ export default function SheetSkillsToolbar({
         type="button"
         className="cp-btn cp-btn-green"
         style={{ padding: "3px 10px", fontSize: "11px", height: "26px" }}
-        onClick={() => {
-          if (newAbilityOpen) {
-            setNewAbilityOpen(false);
-            resetAbilityForm();
-          } else {
-            resetAbilityForm();
-            setNewAbilityOpen(true);
-          }
-        }}
+        onClick={onToggleNewAbility}
       >
         + Habilidade
       </button>

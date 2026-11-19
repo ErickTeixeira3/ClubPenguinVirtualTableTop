@@ -1,28 +1,16 @@
 import { useState } from "react";
-import { CP_FLASH_ICONS } from "./CpFlashIcons";
+import { CP_FLASH_ICONS, CP_ICON_CATEGORIES } from "./CpFlashIcons";
 
 /**
- * Fase 5: seletor de ícones extraído de CharacterSheetModal.jsx (conteúdo inalterado).
- * Mantido em arquivo próprio (e não dentro de CpFlashIcons.jsx) para não misturar componente
- * com exports de dados/funções (regra react/only-export-components do lint).
+ * Seletor de ícones usando diretamente as categorias declarativas de CpFlashIcons.
  */
 export default function CpIconPicker({ selectedIconId, onSelectIcon, onClose }) {
   const [activeCat, setActiveCat] = useState("all");
-  const categories = [
-    { id: "all", label: "Todos" },
-    { id: "reactions", label: "Expressões" },
-    { id: "combat", label: "Combate" },
-    { id: "magic", label: "Magia" },
-    { id: "food", label: "Comidas" },
-    { id: "creatures", label: "Criaturas" },
-    { id: "treasure", label: "Tesouros" },
-    { id: "activities", label: "Atividades" },
-    { id: "symbols", label: "Símbolos" }
-  ];
 
-  const filtered = activeCat === "all"
-    ? CP_FLASH_ICONS
-    : CP_FLASH_ICONS.filter((i) => i.category === activeCat);
+  const filtered =
+    activeCat === "all"
+      ? CP_FLASH_ICONS
+      : CP_FLASH_ICONS.filter((i) => i.category === activeCat);
 
   return (
     <div
@@ -40,7 +28,7 @@ export default function CpIconPicker({ selectedIconId, onSelectIcon, onClose }) 
       onClick={(e) => e.stopPropagation()}
     >
       <div style={{ display: "flex", gap: "4px", overflowX: "auto", paddingBottom: "2px" }}>
-        {categories.map((c) => (
+        {CP_ICON_CATEGORIES.map((c) => (
           <button
             key={c.id}
             type="button"

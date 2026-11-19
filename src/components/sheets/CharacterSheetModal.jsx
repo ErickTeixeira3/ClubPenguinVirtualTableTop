@@ -1,27 +1,32 @@
-import { useEffect, useState } from "react";
-import { useMediaUrl } from "../../hooks/useMediaUrl";
-import { renderCpFlashIcon } from "./CpFlashIcons";
-import CpIconPicker from "./CpIconPicker";
-import { TABS } from "./sheetConstants";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { RESERVED_FORMULA_KEYS } from "../../domain/constants.js";
+import { mapCompendiumEntryToCharacterEntry } from "../../engines/compendium";
 import {
   buildHotbarSlotFromRoll,
-  resolveDynamicRollEntry,
-  resolveHotbarSlot
-} from "../../services/rollService";
-import { Z_LAYERS } from "../../constants/zLayers";
-import SheetNotesTab from "./tabs/SheetNotesTab";
-import SheetAttributesTab from "./tabs/SheetAttributesTab";
-import SheetInventoryTab from "./tabs/SheetInventoryTab";
-import SheetInventoryItemForm from "./tabs/SheetInventoryItemForm";
-import SheetInventoryToolbar from "./tabs/SheetInventoryToolbar";
-import SheetSkillsToolbar from "./tabs/SheetSkillsToolbar";
-import SheetSkillsTab from "./tabs/SheetSkillsTab";
-import SheetRollsTab from "./tabs/SheetRollsTab";
+  resolveDynamicRollEntry
+} from "../../engines/rolls";
+import { useMediaUrl } from "../../hooks/useMediaUrl";
+import HotbarSlotModal from "./HotbarSlotModal";
 import PlayerCardLeftPanel from "./PlayerCardLeftPanel";
-import { usePlayerCardEditState } from "./state/usePlayerCardEditState";
-import { useSkillsFormState } from "./state/useSkillsFormState";
-import { useInventoryItemFormState } from "./state/useInventoryItemFormState";
-import { useRollsFormState } from "./state/useRollsFormState";
+import RollIconModal from "./RollIconModal";
+import SheetPermissionsPanel from "./SheetPermissionsPanel";
+import {
+  createInitialInventoryFormState,
+  createInitialRollsFormState,
+  createInitialSkillsFormState,
+  inventoryFormReducer,
+  rollsFormReducer,
+  skillsFormReducer
+} from "./reducers/sheetFormReducers";
+import { TABS, toSortedEntries } from "./sheetConstants";
+import SheetAttributesTab from "./tabs/SheetAttributesTab";
+import SheetInventoryItemForm from "./tabs/SheetInventoryItemForm";
+import SheetInventoryTab from "./tabs/SheetInventoryTab";
+import SheetInventoryToolbar from "./tabs/SheetInventoryToolbar";
+import SheetNotesTab from "./tabs/SheetNotesTab";
+import SheetRollsTab from "./tabs/SheetRollsTab";
+import SheetSkillsTab from "./tabs/SheetSkillsTab";
+import SheetSkillsToolbar from "./tabs/SheetSkillsToolbar";
 
 export default function CharacterSheetModal({
   character,
@@ -33,6 +38,17 @@ export default function CharacterSheetModal({
   rollVisibility = "public",
   onChangeRollVisibility,
   onUpdateCharacter,
+  onRenameCharacter = null,
+  onUpdateCharacterResource = null,
+  onAddCharacterEntry = null,
+  onUpdateCharacterEntry = null,
+  onRemoveCharacterEntry = null,
+  onReorderCharacterEntries = null,
+  onSetHotbarSlot = null,
+  onShareCharacter = null,
+  onTransferCharacter = null,
+  onConsumeCharacterItem = null,
+  onPullCompendiumEntry = null,
   onUploadCharacterImage,
   onExecuteRoll,
   onPingSkill,
@@ -41,32 +57,52 @@ export default function CharacterSheetModal({
   isStandaloneWindow = false,
   onStartAoeDemarcate = null
 }) {
-  // 'attributes' | 'skills' | 'inventory' | 'notes' | 'rolls'
   const [activeTab, setActiveTab] = useState("inventory");
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
-  const [selectedGroupId, setSelectedGroupId] = useState(
-    character?.rollGroups?.[0]?.id || "grp_combate"
-  );
   const [expandedSkillIds, setExpandedSkillIds] = useState(new Set());
-
-  // Estados de edição das Moedas e XP
-  const cardEdit = usePlayerCardEditState(character);
-
-  // Item selecionado no inventário para exibir popup de detalhes
-  const [inspectedItem, setInspectedItem] = useState(null);
-
-  // Estados para adição rápida
   const [newAttrLabel, setNewAttrLabel] = useState("");
-  const skillsForm = useSkillsFormState();
-
-  const itemForm = useInventoryItemFormState();
-  const { newItemOpen } = itemForm;
-  const [inspectedIconPickerOpen, setInspectedIconPickerOpen] = useState(false);
-
-  const rollsForm = useRollsFormState();
-  const { hotbarModalRoll, setHotbarModalRoll, editingRollIconTarget, setEditingRollIconTarget } = rollsForm;
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const rollGroups = useMemo(
+    () => toSortedEntries(character?.rollGroups, "id"),
+    [character?.rollGroups]
+  );
+  const [selectedGroupId, setSelectedGroupId] = useState(
+    () => rollGroups[0]?.id || "grp_combate"
+  );
+  const pendingRollGroupsRef = useRef(new Map());
+
+  useEffect(() => {
+    const pendingMap = pendingRollGroupsRef.current;
+    if (pendingMap.size === 0) return;
+    const charId = character?.id;
+    for (const [pendingKey, entry] of pendingMap.entries()) {
+      if (!charId || !pendingKey.startsWith(`${charId}:`)) {
+        pendingMap.delete(pendingKey);
+        continue;
+      }
+      if (entry?.resolvedId && rollGroups.some((g) => g.id === entry.resolvedId)) {
+        pendingMap.delete(pendingKey);
+      }
+    }
+  }, [character?.id, rollGroups]);
+
+  const [skillsState, dispatchSkills] = useReducer(
+    skillsFormReducer,
+    "forca",
+    createInitialSkillsFormState
+  );
+  const [inventoryState, dispatchInventory] = useReducer(
+    inventoryFormReducer,
+    undefined,
+    createInitialInventoryFormState
+  );
+  const [rollsState, dispatchRolls] = useReducer(
+    rollsFormReducer,
+    undefined,
+    createInitialRollsFormState
+  );
 
   useEffect(() => {
     const handleFsChange = () => {
@@ -85,40 +121,38 @@ export default function CharacterSheetModal({
   };
 
   const { url: avatarUrl } = useMediaUrl(
-    character?.avatarMediaId,
-    character?.avatarExternalUrl,
+    character?.avatar?.mediaId ?? character?.avatarMediaId,
+    character?.avatar?.url ?? character?.avatarExternalUrl,
     campaignId
   );
 
   const { url: tokenUrl } = useMediaUrl(
-    character?.defaultToken?.mediaId || character?.avatarMediaId,
-    character?.defaultToken?.externalUrl || character?.avatarExternalUrl,
+    character?.token?.image?.mediaId ??
+      character?.avatar?.mediaId ??
+      character?.defaultToken?.mediaId ??
+      character?.avatarMediaId,
+    character?.token?.image?.url ??
+      character?.avatar?.url ??
+      character?.defaultToken?.externalUrl ??
+      character?.avatarExternalUrl,
     campaignId
   );
 
   if (!character) return null;
 
   const cardBgColor = character.cardColor || "#008be3";
-  const attributes = Array.isArray(character.attributes)
-    ? character.attributes
-    : [];
-  const skills = Array.isArray(character.skills) ? character.skills : [];
-  const abilities = Array.isArray(character.abilities)
-    ? character.abilities
-    : [];
-  const inventory = Array.isArray(character.inventory)
-    ? character.inventory
-    : [];
-  const rollGroups = Array.isArray(character.rollGroups)
-    ? character.rollGroups
-    : [];
+  const attributes = toSortedEntries(character.attributes, "key");
+  const skills = toSortedEntries(character.skills, "key");
+  const abilities = toSortedEntries(character.abilities, "id");
+  const inventory = toSortedEntries(character.inventory, "id");
 
-  const hp = character.resources?.hp || { label: "Vida", current: 20, max: 20 };
-  const mp = character.resources?.mp || {
-    label: "Energia",
-    current: 10,
-    max: 10
-  };
+  const activeGroupId = rollGroups.some((g) => g.id === selectedGroupId)
+    ? selectedGroupId
+    : rollGroups[0]?.id || "grp_combate";
+
+  const hp = character.resources?.hp || { current: 20, max: 20 };
+  const mp = character.resources?.mp || { current: 10, max: 10 };
+
   const triggerRoll = (config) => {
     return onExecuteRoll({
       ...config,
@@ -128,181 +162,269 @@ export default function CharacterSheetModal({
   };
 
   const handleDemarcateArea = (ab) => {
+    if (!ab) return;
     const config = {
-      skillId: ab.id,
+      skillId: ab.source?.id || ab.sourceId || ab.id,
       skillName: ab.name,
-      rangeType: ab.range?.type || ab.rangeType || "ranged",
-      rangeMeters: Number(ab.range?.distanceMeters ?? ab.rangeMeters ?? 9) || 9,
-      aoeType: ab.aoe?.type || ab.aoeType || "circle",
-      aoeRadiusMeters: Number(ab.aoe?.radiusMeters ?? ab.aoeRadiusMeters ?? 6) || 6,
-      aoeConeAngleDeg: Number(ab.aoe?.coneAngleDeg ?? ab.aoeConeAngleDeg ?? 45) || 45,
+      rangeType: ab.range?.type || "ranged",
+      rangeMeters: Number(ab.range?.distanceMeters ?? 9) || 9,
+      aoeType: ab.aoe?.type || "circle",
+      aoeRadiusMeters: Number(ab.aoe?.radiusMeters ?? 6) || 6,
+      aoeConeAngleDeg: Number(ab.aoe?.coneAngleDeg ?? 45) || 45,
       sourceCharacterId: character?.id || null,
       sourceCharacterName: character?.name || null,
       timestamp: Date.now()
     };
-    if (onStartAoeDemarcate) {
-      onStartAoeDemarcate(config);
+    onStartAoeDemarcate?.(config);
+  };
+
+  const pinToRollGroup = async (rollEntry, targetGroupId = null) => {
+    if (!canEdit) return;
+    try {
+      const gid = targetGroupId || activeGroupId || "grp_combate";
+      let targetGroup = rollGroups.find((g) => g.id === gid);
+
+      if (!targetGroup) {
+        let createdGroupId = gid;
+        if (onAddCharacterEntry) {
+          const pendingKey = `${character.id}:${gid}`;
+          let pendingRecord = pendingRollGroupsRef.current.get(pendingKey);
+          if (!pendingRecord) {
+            const createPromise = Promise.resolve(
+              onAddCharacterEntry(character.id, "rollGroups", {
+                id: gid,
+                name: "Ações de Combate"
+              })
+            )
+              .then((createdGroup) => {
+                if (createdGroup === null) {
+                  pendingRollGroupsRef.current.delete(pendingKey);
+                  return null;
+                }
+                const resolved =
+                  createdGroup?.key || createdGroup?.entryKey || gid;
+                const record = { promise: createPromise, resolvedId: resolved };
+                pendingRollGroupsRef.current.set(pendingKey, record);
+                if (resolved !== gid) {
+                  pendingRollGroupsRef.current.set(
+                    `${character.id}:${resolved}`,
+                    record
+                  );
+                }
+                return resolved;
+              })
+              .catch((err) => {
+                pendingRollGroupsRef.current.delete(pendingKey);
+                throw err;
+              });
+            pendingRecord = { promise: createPromise, resolvedId: null };
+            pendingRollGroupsRef.current.set(pendingKey, pendingRecord);
+          }
+          createdGroupId = await pendingRecord.promise;
+          if (!createdGroupId) return;
+        }
+        setSelectedGroupId(createdGroupId);
+        targetGroup = { id: createdGroupId, name: "Ações de Combate", rolls: {} };
+      }
+
+      const sourceType = rollEntry.source?.type || rollEntry.sourceType || "custom";
+      const sourceId = rollEntry.source?.id ?? rollEntry.sourceId ?? null;
+      const overrides = {};
+      if ((sourceType === "custom" || rollEntry.customName === true) && rollEntry.name) {
+        overrides.name = rollEntry.name;
+      }
+      if ((sourceType === "custom" || rollEntry.customIcon === true) && rollEntry.icon) {
+        overrides.icon = rollEntry.icon;
+      }
+      if ((sourceType === "custom" || rollEntry.customColor === true) && rollEntry.color) {
+        overrides.color = rollEntry.color;
+      }
+
+      const payload = {
+        source: { type: sourceType, id: sourceType === "custom" ? null : sourceId },
+        overrides
+      };
+
+      if (sourceType === "custom") {
+        payload.custom = {
+          hitFormula: rollEntry.hitFormula ?? "1d20",
+          effectFormula: rollEntry.effectFormula || "",
+          rollKind: rollEntry.rollKind || "attack",
+          effectType: rollEntry.effectType || "damage",
+          cost: {
+            resource: rollEntry.costResource || "mp",
+            amount: Number(rollEntry.costAmount) || 0
+          },
+          savingThrow: rollEntry.savingThrow || {
+            enabled: false,
+            dcFormula: "12",
+            attributeKey: "resistencia",
+            effectDescription: ""
+          }
+        };
+      }
+
+      if (onAddCharacterEntry) {
+        await onAddCharacterEntry(character.id, "rolls", payload, {
+          rollGroupId: targetGroup.id
+        });
+      } else if (Array.isArray(character.rollGroups)) {
+        const legacyRoll = {
+          id: `roll_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          sourceType,
+          sourceId,
+          customIcon: Boolean(rollEntry.customIcon),
+          customName: Boolean(rollEntry.customName),
+          name: rollEntry.name || "Rolagem",
+          color: rollEntry.color || "#02529c",
+          icon: rollEntry.icon || (sourceType === "attribute" ? "clover" : "sword"),
+          hitFormula: rollEntry.hitFormula ?? "1d20",
+          effectFormula: rollEntry.effectFormula || "",
+          effectType: rollEntry.effectType || null,
+          rollKind: rollEntry.rollKind || null,
+          range: rollEntry.range || null,
+          aoe: rollEntry.aoe || null,
+          trigger: rollEntry.trigger || null,
+          savingThrow: rollEntry.savingThrow || null,
+          costResource: rollEntry.costResource || "mp",
+          costAmount: rollEntry.costAmount || 0
+        };
+        const baseGroups =
+          rollGroups.length > 0
+            ? rollGroups
+            : [{ id: targetGroup.id, name: "Ações Rápidas", rolls: [] }];
+        const nextGroups = baseGroups.map((g) =>
+          g.id === targetGroup.id ? { ...g, rolls: [...(g.rolls || []), legacyRoll] } : g
+        );
+        await onUpdateCharacter(character.id, { rollGroups: nextGroups });
+      }
+    } catch {
+      // Erro já notificado pelo hook
     }
   };
 
-  const pinToRollGroup = (rollEntry, targetGroupId = null) => {
-    if (!canEdit) return;
-    const groups =
-      rollGroups.length > 0
-        ? [...rollGroups]
-        : [{ id: "grp_combate", name: "Ações Rápidas", rolls: [] }];
-    const gid = targetGroupId || selectedGroupId || groups[0]?.id;
-    const targetGroup = groups.find((g) => g.id === gid) || groups[0];
-
-    const newRoll = {
-      id: `r_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      sourceType: rollEntry.sourceType || "custom",
-      sourceId: rollEntry.sourceId || null,
-      customIcon: Boolean(rollEntry.customIcon),
-      // Fase 6.3 (A18): atalho criado pela ficha segue o nome da origem (renomear propaga)
-      customName: Boolean(rollEntry.customName),
-      name: rollEntry.name || "Rolagem",
-      color: rollEntry.color || "#02529c",
-      // Fase 3.1 (V-19): atributo fixado recebe "clover" (mesmo ícone do resolvedor dinâmico)
-      icon: rollEntry.icon || (rollEntry.sourceType === "attribute" ? "clover" : "sword"),
-      hitFormula: rollEntry.hitFormula ?? "1d20",
-      effectFormula: rollEntry.effectFormula || "",
-      effectType: rollEntry.effectType || (rollEntry.effectFormula ? "damage" : null),
-      rollKind: rollEntry.rollKind || null,
-      range: rollEntry.range || null,
-      aoe: rollEntry.aoe || null,
-      trigger: rollEntry.trigger || null,
-      savingThrow: rollEntry.savingThrow || null,
-      costResource: rollEntry.costResource || "mp",
-      costAmount: rollEntry.costAmount || 0
-    };
-
-    const nextGroups = groups.map((g) => {
-      if (g.id !== targetGroup.id) return g;
-      return {
-        ...g,
-        rolls: [...(g.rolls || []), newRoll]
-      };
-    });
-
-    onUpdateCharacter(character.id, { rollGroups: nextGroups });
-  };
-
-  const handlePullFromCompendium = (entry) => {
+  const handlePullFromCompendium = async (entry) => {
     if (!canEdit || !entry) return;
-    if (entry.type === "item") {
-      onUpdateCharacter(character.id, {
-        inventory: [
-          ...inventory,
-          {
-            id: `inv_${Date.now()}`,
-            name: entry.name,
-            qty: 1,
-            elementColor: entry.elementColor || "#38c172",
-            icon: entry.icon || "sword",
-            rollFormula: entry.effectFormula || entry.hitFormula || "",
-            trigger: entry.trigger || "active",
-            effectType: entry.effectType || "heal",
-            savingThrow: entry.savingThrow || null,
-            description: entry.description || ""
-          }
-        ]
+    try {
+      if (onPullCompendiumEntry) {
+        await onPullCompendiumEntry(character.id, entry);
+        return;
+      }
+      const existingKeys = [
+        ...attributes.map((a) => a.key),
+        ...skills.map((s) => s.key || s.id),
+        ...RESERVED_FORMULA_KEYS
+      ];
+      const orderCount =
+        entry.type === "item"
+          ? inventory.length
+          : entry.type === "skill"
+            ? skills.length
+            : abilities.length;
+      const mapped = mapCompendiumEntryToCharacterEntry(entry, {
+        createId: (prefix) =>
+          `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        existingKeys,
+        existingOrder: orderCount
       });
-    } else if (entry.type === "skill") {
-      onUpdateCharacter(character.id, {
-        skills: [
-          ...skills,
-          {
-            id: `sk_${Date.now()}`,
-            name: entry.name,
-            attribute: entry.attribute || "forca",
-            bonus: Number(entry.bonus) || 2,
-            formula: entry.hitFormula || `1d20 + @${entry.attribute || "forca"}`
-          }
-        ]
-      });
-    } else {
-      onUpdateCharacter(character.id, {
-        abilities: [
-          ...abilities,
-          {
-            id: `ab_${Date.now()}`,
-            name: entry.name,
-            elementColor: entry.elementColor || "#e53935",
-            cost: entry.cost || { resource: "mp", amount: 0 },
-            hitFormula: entry.hitFormula || "",
-            effectFormula: entry.effectFormula || "",
-            trigger: entry.trigger || "active",
-            effectType: entry.effectType || "damage",
-            savingThrow: entry.savingThrow || null,
-            description: entry.description || ""
-          }
-        ]
-      });
+
+      if (onAddCharacterEntry) {
+        await onAddCharacterEntry(character.id, mapped.collection, {
+          ...mapped.entry,
+          allowFallbackAttribute: true
+        });
+      } else {
+        await onUpdateCharacter(character.id, {
+          [`${mapped.collection}.${mapped.entryKey}`]: mapped.entry
+        });
+      }
+    } catch {
+      // Erro já notificado pelo hook
     }
   };
 
-  const handleAssignRollToHotbar = (roll, slotIndex) => {
+  const handleAssignRollToHotbar = async (roll, slotIndex) => {
     if (!canEdit) return;
-    const resolvedRoll = resolveDynamicRollEntry(roll, character) || roll;
-    const currentHotbar = Array.isArray(character.hotbar)
-      ? [...character.hotbar]
-      : Array(9).fill(null);
-    while (currentHotbar.length < 9) {
-      currentHotbar.push(null);
+    try {
+      const slotKey = String(slotIndex + 1);
+      const resolvedRoll = resolveDynamicRollEntry(roll, character) || roll;
+      const slotValue = buildHotbarSlotFromRoll(
+        resolvedRoll,
+        roll.rollGroupId || activeGroupId
+      );
+      if (onSetHotbarSlot) {
+        await onSetHotbarSlot(character.id, slotKey, slotValue);
+      } else if (Array.isArray(character.hotbar)) {
+        const next = [...character.hotbar];
+        while (next.length < 9) next.push(null);
+        next[slotIndex] = slotValue;
+        await onUpdateCharacter(character.id, { hotbar: next });
+      } else {
+        await onUpdateCharacter(character.id, { [`hotbar.${slotKey}`]: slotValue });
+      }
+      dispatchRolls({ type: "SET_FIELD", field: "hotbarModalRoll", value: null });
+    } catch {
+      // Erro já notificado pelo hook
     }
-    // Fase 3.1 (V-09b): montagem única do slot (mesma da barra rápida)
-    currentHotbar[slotIndex] = buildHotbarSlotFromRoll(resolvedRoll);
-    onUpdateCharacter(character.id, { hotbar: currentHotbar });
-    setHotbarModalRoll(null);
   };
 
-  const handleRemoveRollFromHotbar = (slotIndex) => {
+  const handleRemoveRollFromHotbar = async (slotIndex) => {
     if (!canEdit) return;
-    const currentHotbar = Array.isArray(character.hotbar)
-      ? [...character.hotbar]
-      : Array(9).fill(null);
-    while (currentHotbar.length < 9) {
-      currentHotbar.push(null);
+    try {
+      const slotKey = String(slotIndex + 1);
+      if (onSetHotbarSlot) {
+        await onSetHotbarSlot(character.id, slotKey, null);
+      } else if (Array.isArray(character.hotbar)) {
+        const next = [...character.hotbar];
+        while (next.length < 9) next.push(null);
+        next[slotIndex] = null;
+        await onUpdateCharacter(character.id, { hotbar: next });
+      } else {
+        await onUpdateCharacter(character.id, { [`hotbar.${slotKey}`]: null });
+      }
+      dispatchRolls({ type: "SET_FIELD", field: "hotbarModalRoll", value: null });
+    } catch {
+      // Erro já notificado pelo hook
     }
-    currentHotbar[slotIndex] = null;
-    onUpdateCharacter(character.id, { hotbar: currentHotbar });
-    setHotbarModalRoll(null);
   };
 
-  const handleUpdateRollIcon = (groupId, rollId, newIconId) => {
+  const handleUpdateRollIcon = async (groupId, rollId, newIconId) => {
     if (!canEdit) return;
-    const nextGroups = rollGroups.map((g) => {
-      if (g.id !== groupId) return g;
-      return {
-        ...g,
-        rolls: (g.rolls || []).map((r) =>
-          r.id === rollId ? { ...r, icon: newIconId, customIcon: true } : r
-        )
-      };
-    });
-    const rawHotbar = Array.isArray(character.hotbar) ? [...character.hotbar] : [];
-    const nextHotbar = rawHotbar.map((s) =>
-      s?.rollId === rollId ? { ...s, icon: newIconId, customIcon: true } : s
-    );
-    onUpdateCharacter(character.id, {
-      rollGroups: nextGroups,
-      hotbar: nextHotbar
-    });
-    setEditingRollIconTarget(null);
+    try {
+      const grp = rollGroups.find((g) => g.id === groupId);
+      const existingRoll = toSortedEntries(grp?.rolls).find((r) => r.id === rollId);
+      if (onUpdateCharacterEntry) {
+        await onUpdateCharacterEntry(
+          character.id,
+          "rolls",
+          rollId,
+          {
+            overrides: {
+              ...(existingRoll?.overrides || {}),
+              icon: newIconId
+            }
+          },
+          { rollGroupId: groupId }
+        );
+      } else if (Array.isArray(character.rollGroups)) {
+        const nextGroups = rollGroups.map((g) =>
+          g.id === groupId
+            ? {
+                ...g,
+                rolls: (g.rolls || []).map((r) =>
+                  r.id === rollId ? { ...r, icon: newIconId, customIcon: true } : r
+                )
+              }
+            : g
+        );
+        await onUpdateCharacter(character.id, { rollGroups: nextGroups });
+      }
+      dispatchRolls({ type: "SET_FIELD", field: "editingRollIconTarget", value: null });
+    } catch {
+      // Erro já notificado pelo hook
+    }
   };
 
-  const togglePermissionUid = (field, uidOrAll) => {
-    if (!isGM) return;
-    const currentList = Array.isArray(character[field]) ? character[field] : [];
-    const exists = currentList.includes(uidOrAll);
-    const nextList = exists
-      ? currentList.filter((id) => id !== uidOrAll)
-      : [...currentList, uidOrAll];
-    onUpdateCharacter(character.id, { [field]: nextList });
-  };
-
-  // Preenche a grade do inventário com pelo menos 12 slots para manter o padrão 3x4 do Club Penguin
   const wrapperStyle = isStandaloneWindow
     ? {
         width: "100vw",
@@ -319,23 +441,20 @@ export default function CharacterSheetModal({
       className={`cp-playercard-container ${isStandaloneWindow ? "standalone" : ""}`}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* LADO ESQUERDO: PLAYER CARD CLÁSSICO DO CLUB PENGUIN */}
       <PlayerCardLeftPanel
         cardBgColor={cardBgColor}
         character={character}
         canEdit={canEdit}
         onUpdateCharacter={onUpdateCharacter}
+        onRenameCharacter={onRenameCharacter}
         isStandaloneWindow={isStandaloneWindow}
         onClose={onClose}
         avatarUrl={avatarUrl}
         onUploadCharacterImage={onUploadCharacterImage}
         campaignId={campaignId}
-        cardEdit={cardEdit}
       />
 
-      {/* LADO DIREITO: GAVETA CONECTADA COM AS ABAS */}
       <div className="cp-playercard-right">
-        {/* Barra Superior da Direita: Ações Rápidas & Modo de Rolagem */}
         <div
           style={{
             display: "flex",
@@ -388,12 +507,11 @@ export default function CharacterSheetModal({
             )}
           </div>
 
-          {/* Ações Específicas da Aba Aberta */}
           {activeTab === "inventory" && canEdit && (
             <SheetInventoryToolbar
               compendiumEntries={compendiumEntries}
               handlePullFromCompendium={handlePullFromCompendium}
-              itemForm={itemForm}
+              onToggleNewItem={() => dispatchInventory({ type: "TOGGLE_NEW_ITEM" })}
             />
           )}
 
@@ -401,106 +519,62 @@ export default function CharacterSheetModal({
             <SheetSkillsToolbar
               compendiumEntries={compendiumEntries}
               handlePullFromCompendium={handlePullFromCompendium}
-              skillsForm={skillsForm}
+              onToggleNewAbility={() => dispatchSkills({ type: "TOGGLE_NEW_ABILITY" })}
             />
           )}
         </div>
 
-        {/* Modal de Permissões (para o Mestre) */}
         {showPermissions && isGM && (
-          <div
-            className="epf-screen"
-            style={{
-              margin: "6px 14px",
-              padding: "8px",
-              fontSize: "11px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "4px"
-            }}
-          >
-            <label style={{ display: "flex", gap: "6px", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={(character.visibleTo || []).includes("ALL")}
-                onChange={() => togglePermissionUid("visibleTo", "ALL")}
-              />
-              Visível a Todos
-            </label>
-            {Object.values(playersMap || {}).map((p) => (
-              <div
-                key={p.uid}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center"
-                }}
-              >
-                <span>{p.displayName}</span>
-                <div style={{ display: "flex", gap: "6px" }}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={(character.visibleTo || []).includes(p.uid)}
-                      onChange={() => togglePermissionUid("visibleTo", p.uid)}
-                    />{" "}
-                    Ver
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={(character.editableBy || []).includes(p.uid)}
-                      onChange={() => togglePermissionUid("editableBy", p.uid)}
-                    />{" "}
-                    Editar
-                  </label>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Formulário inline para adicionar novo item ao inventário */}
-        {newItemOpen && activeTab === "inventory" && canEdit && (
-          <SheetInventoryItemForm
-            canEdit={canEdit}
-            onUpdateCharacter={onUpdateCharacter}
+          <SheetPermissionsPanel
             character={character}
-            inventory={inventory}
-            itemForm={itemForm}
+            playersMap={playersMap}
+            onShareCharacter={onShareCharacter}
+            onTransferCharacter={onTransferCharacter}
+            onUpdateCharacter={onUpdateCharacter}
           />
         )}
 
-        {/* ÁREA CENTRAL DAS ABAS */}
+        {inventoryState.newItemOpen && activeTab === "inventory" && canEdit && (
+          <SheetInventoryItemForm
+            canEdit={canEdit}
+            onUpdateCharacter={onUpdateCharacter}
+            onAddCharacterEntry={onAddCharacterEntry}
+            character={character}
+            inventoryState={inventoryState}
+            dispatchInventory={dispatchInventory}
+          />
+        )}
+
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* =========================================================================
-              ABA 2: INVENTÁRIO (ESTILO GRADE DE QUADRADOS CLUB PENGUIN 3x4)
-             ========================================================================= */}
           {activeTab === "inventory" && (
             <SheetInventoryTab
               inventory={inventory}
-              inspectedItem={inspectedItem}
-              setInspectedItem={setInspectedItem}
+              inspectedItemId={inventoryState.inspectedItemId}
+              inspectedIconPickerOpen={inventoryState.inspectedIconPickerOpen}
+              confirmDeleteItem={inventoryState.confirmDeleteItem}
+              dispatchInventory={dispatchInventory}
               canEdit={canEdit}
-              setInspectedIconPickerOpen={setInspectedIconPickerOpen}
               triggerRoll={triggerRoll}
               pinToRollGroup={pinToRollGroup}
-              inspectedIconPickerOpen={inspectedIconPickerOpen}
               onUpdateCharacter={onUpdateCharacter}
+              onUpdateCharacterEntry={onUpdateCharacterEntry}
+              onRemoveCharacterEntry={onRemoveCharacterEntry}
+              onConsumeCharacterItem={onConsumeCharacterItem}
               character={character}
             />
           )}
 
-          {/* =========================================================================
-              ABA: ATRIBUTOS (Recursos HP/MP, Defesa, Nível, Token e Atributos Principais)
-             ========================================================================= */}
-          {(activeTab === "attributes" || activeTab === "main") && (
+          {activeTab === "attributes" && (
             <SheetAttributesTab
               canEdit={canEdit}
               hp={hp}
               mp={mp}
               character={character}
               onUpdateCharacter={onUpdateCharacter}
+              onUpdateCharacterResource={onUpdateCharacterResource}
+              onAddCharacterEntry={onAddCharacterEntry}
+              onUpdateCharacterEntry={onUpdateCharacterEntry}
+              onRemoveCharacterEntry={onRemoveCharacterEntry}
               cardBgColor={cardBgColor}
               tokenUrl={tokenUrl}
               onUploadCharacterImage={onUploadCharacterImage}
@@ -513,9 +587,6 @@ export default function CharacterSheetModal({
             />
           )}
 
-          {/* =========================================================================
-              ABA: SKILLS (Habilidades & Magias com Expansão e Ping, e Perícias)
-             ========================================================================= */}
           {activeTab === "skills" && (
             <SheetSkillsTab
               canEdit={canEdit}
@@ -532,13 +603,14 @@ export default function CharacterSheetModal({
               rollVisibility={rollVisibility}
               onExecuteRoll={onExecuteRoll}
               onUpdateCharacter={onUpdateCharacter}
-              skillsForm={skillsForm}
+              onAddCharacterEntry={onAddCharacterEntry}
+              onUpdateCharacterEntry={onUpdateCharacterEntry}
+              onRemoveCharacterEntry={onRemoveCharacterEntry}
+              skillsState={skillsState}
+              dispatchSkills={dispatchSkills}
             />
           )}
 
-          {/* =========================================================================
-              ABA 3: HISTÓRIA & NOTAS DA FICHA
-             ========================================================================= */}
           {activeTab === "notes" && (
             <SheetNotesTab
               canEdit={canEdit}
@@ -547,13 +619,10 @@ export default function CharacterSheetModal({
             />
           )}
 
-          {/* =========================================================================
-              ABA 4: ROLAGENS PERSONALIZÁVEIS E MACROS
-             ========================================================================= */}
           {activeTab === "rolls" && (
             <SheetRollsTab
               canEdit={canEdit}
-              selectedGroupId={selectedGroupId}
+              selectedGroupId={activeGroupId}
               setSelectedGroupId={setSelectedGroupId}
               rollGroups={rollGroups}
               skills={skills}
@@ -563,16 +632,16 @@ export default function CharacterSheetModal({
               triggerRoll={triggerRoll}
               handleDemarcateArea={handleDemarcateArea}
               onUpdateCharacter={onUpdateCharacter}
-              rollsForm={rollsForm}
+              onAddCharacterEntry={onAddCharacterEntry}
+              onRemoveCharacterEntry={onRemoveCharacterEntry}
+              onReorderCharacterEntries={onReorderCharacterEntries}
+              rollsState={rollsState}
+              dispatchRolls={dispatchRolls}
             />
           )}
         </div>
 
-        {/* =========================================================================
-            BARRA INFERIOR DE ABAS (ONDE SE TROCAM AS ABAS NO ESTILO CLUB PENGUIN)
-           ========================================================================= */}
         <div className="cp-inv-bottom-dock">
-          {/* Menu popup que sobe a partir do botão com as opções de abas */}
           {tabMenuOpen && (
             <div className="cp-tabs-popup-menu">
               {TABS.map((t) => (
@@ -607,134 +676,26 @@ export default function CharacterSheetModal({
     </div>
   );
 
-  const hotbarModalNode = hotbarModalRoll && (
-    <div className="cp-modal-overlay" onClick={() => setHotbarModalRoll(null)} style={{ zIndex: Z_LAYERS.modalNested }}>
-      <div
-        className="cp-window"
-        style={{ width: "300px", display: "flex", flexDirection: "column", gap: "10px" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span className="cp-title" style={{ fontSize: "14px" }}>
-            Hotbar (Bola de Neve)
-          </span>
-          <button
-            type="button"
-            className="cp-btn cp-btn-orange"
-            style={{ padding: "2px 6px", fontSize: "11px" }}
-            onClick={() => setHotbarModalRoll(null)}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div style={{ fontSize: "12px", fontWeight: 800, color: "#001b3a", display: "flex", alignItems: "center", gap: "8px" }}>
-          <div style={{ width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {renderCpFlashIcon(hotbarModalRoll.icon || hotbarModalRoll.name, 22)}
-          </div>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {hotbarModalRoll.name}
-          </span>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: "6px",
-            background: "#ffffff",
-            padding: "8px",
-            borderRadius: "12px",
-            border: "2px solid #cbd5e1"
-          }}
-        >
-          {Array.from({ length: 9 }).map((_, slotIdx) => {
-            const rawSlot = (character.hotbar || [])[slotIdx];
-            const currentSlot = resolveHotbarSlot(rawSlot, character);
-            // Fase 6.3 (A19): compara pelo rollId do slot salvo, não do resolvido
-            const isThisRoll = Boolean(rawSlot?.rollId) && rawSlot.rollId === hotbarModalRoll.id;
-
-            return (
-              <button
-                key={slotIdx}
-                type="button"
-                className={`cp-btn ${isThisRoll ? "cp-btn-green" : currentSlot ? "cp-btn-gold" : ""}`}
-                style={{
-                  height: "56px",
-                  padding: "2px",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "2px",
-                  fontSize: "10px"
-                }}
-                onClick={() => {
-                  if (isThisRoll) {
-                    handleRemoveRollFromHotbar(slotIdx);
-                  } else {
-                    handleAssignRollToHotbar(hotbarModalRoll, slotIdx);
-                  }
-                }}
-                title={
-                  isThisRoll
-                    ? "Remover deste slot"
-                    : currentSlot
-                    ? `Substituir ${currentSlot.name}`
-                    : `Fixar no Slot ${slotIdx + 1}`
-                }
-              >
-                <span style={{ fontWeight: 900, fontSize: "11px" }}>#{slotIdx + 1}</span>
-                <span style={{ fontSize: "9px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70px" }}>
-                  {isThisRoll ? "Remover" : currentSlot ? currentSlot.name : "Vazio"}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+  const hotbarModalNode = (
+    <HotbarSlotModal
+      character={character}
+      hotbarModalRoll={rollsState.hotbarModalRoll}
+      onAssignRoll={handleAssignRollToHotbar}
+      onRemoveSlot={handleRemoveRollFromHotbar}
+      onClose={() =>
+        dispatchRolls({ type: "SET_FIELD", field: "hotbarModalRoll", value: null })
+      }
+    />
   );
 
-  const rollIconPickerModalNode = editingRollIconTarget && (
-    <div className="cp-modal-overlay" onClick={() => setEditingRollIconTarget(null)} style={{ zIndex: Z_LAYERS.modalNested }}>
-      <div
-        className="cp-window"
-        style={{ width: "380px", display: "flex", flexDirection: "column", gap: "10px" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span className="cp-title" style={{ fontSize: "14px" }}>
-            Alterar Ícone
-          </span>
-          <button
-            type="button"
-            className="cp-btn cp-btn-orange"
-            style={{ padding: "2px 6px", fontSize: "11px" }}
-            onClick={() => setEditingRollIconTarget(null)}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div style={{ fontSize: "12px", fontWeight: 800, color: "#001b3a" }}>
-          {editingRollIconTarget.roll.name}
-        </div>
-
-        <CpIconPicker
-          selectedIconId={editingRollIconTarget.roll.icon}
-          onSelectIcon={(ic) => {
-            handleUpdateRollIcon(
-              editingRollIconTarget.groupId,
-              editingRollIconTarget.roll.id,
-              ic
-            );
-            setEditingRollIconTarget(null);
-          }}
-          onClose={() => setEditingRollIconTarget(null)}
-        />
-      </div>
-    </div>
+  const rollIconPickerModalNode = (
+    <RollIconModal
+      target={rollsState.editingRollIconTarget}
+      onSelectIcon={handleUpdateRollIcon}
+      onClose={() =>
+        dispatchRolls({ type: "SET_FIELD", field: "editingRollIconTarget", value: null })
+      }
+    />
   );
 
   if (isStandaloneWindow) {

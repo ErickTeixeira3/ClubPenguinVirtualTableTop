@@ -29,13 +29,25 @@ export function buildCharacterVariableMap(character) {
   if (Array.isArray(skills)) {
     skills.forEach((s) => {
       const bonus = Number(s.bonus) || 0;
-      vars[normalizeKey(s.name || s.id)] = bonus;
+      const keyNorm = normalizeKey(s.key || s.name || s.id);
+      if (keyNorm && vars[keyNorm] === undefined) {
+        vars[keyNorm] = bonus;
+      }
     });
   } else {
     Object.entries(skills).forEach(([k, s]) => {
       const bonus = Number(s?.bonus ?? s) || 0;
-      vars[normalizeKey(k)] = bonus;
-      if (s?.label) vars[normalizeKey(s.label)] = bonus;
+      const keyNorm = normalizeKey(s?.key || k);
+      if (keyNorm && vars[keyNorm] === undefined) {
+        vars[keyNorm] = bonus;
+      }
+      const labelOrName = s?.label || s?.name;
+      if (labelOrName) {
+        const labelNorm = normalizeKey(labelOrName);
+        if (labelNorm && vars[labelNorm] === undefined) {
+          vars[labelNorm] = bonus;
+        }
+      }
     });
   }
 

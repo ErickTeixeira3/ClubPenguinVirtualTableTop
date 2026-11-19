@@ -1,26 +1,102 @@
+import { useReducer } from "react";
 import { CpCoinIcon, CpMemberBadge, CpStampIcon } from "./CpSheetBadges";
+import {
+  createInitialPlayerCardEditState,
+  playerCardEditReducer
+} from "./reducers/sheetFormReducers";
 import { CARD_COLORS } from "./sheetConstants";
 import DebouncedField from "../ui/DebouncedField";
 
+function StatInlineEditor({
+  icon,
+  label,
+  value,
+  isEditing,
+  draftValue,
+  canEdit,
+  editTitle,
+  onStartEdit,
+  onChangeDraft,
+  onSave,
+  onCancel
+}) {
+  if (isEditing) {
+    return (
+      <form
+        className="cp-playercard-stat-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(Math.max(0, Number(draftValue) || 0));
+        }}
+      >
+        {icon}
+        <span className="cp-stat-label">{label}</span>
+        <input
+          type="number"
+          className="cp-stat-input"
+          min={0}
+          value={draftValue}
+          autoFocus
+          onChange={(e) => onChangeDraft(e.target.value)}
+        />
+        <button type="submit" className="cp-stat-save-btn">
+          ✓
+        </button>
+        <button type="button" className="cp-stat-cancel-btn" onClick={onCancel}>
+          ✕
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <div className="cp-playercard-stat-row">
+      {icon}
+      <span className="cp-stat-label">{label}</span>
+      <span className="cp-stat-value">{value}</span>
+      {canEdit && (
+        <button
+          type="button"
+          className="cp-stat-edit-btn"
+          onClick={onStartEdit}
+          title={editTitle}
+        >
+          ✏️
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
- * Fase 5: Player Card clássico (lado esquerdo da Ficha): nível, nome, foto, moedas, XP e cor do cartão,
- * extraído de CharacterSheetModal.jsx com JSX e handlers inalterados.
+ * Player Card clássico (lado esquerdo da Ficha): nível, nome, foto, moedas, XP e cor do cartão.
  */
 export default function PlayerCardLeftPanel({
   cardBgColor,
   character,
   canEdit,
   onUpdateCharacter,
+  onRenameCharacter = null,
   isStandaloneWindow,
   onClose,
   avatarUrl,
   onUploadCharacterImage,
-  campaignId,
-  cardEdit
+  campaignId
 }) {
-  const { editingCoins, coinsInput, setEditingCoins, setCoinsInput, editingXp, xpInput, setEditingXp, setXpInput } = cardEdit;
+  const [editState, dispatch] = useReducer(
+    playerCardEditReducer,
+    undefined,
+    createInitialPlayerCardEditState
+  );
   const coins = character.coins ?? 0;
-
+  const safeCall = async (fn) => {
+    try {
+      return await fn();
+    } catch {
+      // Erro já notificado pelo hook
+      return null;
+    }
+  };
   const xp = character.xp ?? 0;
 
   const handlePopoutWindow = () => {
@@ -34,274 +110,203 @@ export default function PlayerCardLeftPanel({
   };
 
   return (
-    <>
-      <div
-        className="cp-playercard-left"
-        style={{
-          background: `linear-gradient(180deg, ${cardBgColor} 0%, #004c82 85%, #002b4d 100%)`
-        }}
-      >
-        {/* Notch superior do Club Penguin */}
-        <div className="cp-playercard-notch">
-          <div className="cp-playercard-notch-ridge" />
-          <div className="cp-playercard-notch-ridge" />
-          <div className="cp-playercard-notch-ridge" />
-        </div>
+    <div
+      className="cp-playercard-left"
+      style={{
+        background: `linear-gradient(180deg, ${cardBgColor} 0%, #004c82 85%, #002b4d 100%)`
+      }}
+    >
+      {/* Notch superior do Club Penguin */}
+      <div className="cp-playercard-notch">
+        <div className="cp-playercard-notch-ridge" />
+        <div className="cp-playercard-notch-ridge" />
+        <div className="cp-playercard-notch-ridge" />
+      </div>
 
-        {/* Topo: Selo/Assinante, Nome do Pinguim e Botão Fechar ⓧ */}
-        <div className="cp-playercard-header">
-          <CpMemberBadge level={character.level ?? 1} />
+      {/* Topo: Selo/Assinante, Nome do Pinguim e Botão Fechar */}
+      <div className="cp-playercard-header">
+        <CpMemberBadge level={character.level ?? 1} />
 
-          <DebouncedField
-            type="text"
-            value={character.name || ""}
-            disabled={!canEdit}
-            onCommit={(value) =>
-              onUpdateCharacter(character.id, { name: value })
-            }
-            title={character.name || "Nome do Pinguim"}
-            style={{
-              background: "rgba(0, 27, 58, 0.35)",
-              border: "1.5px solid rgba(255, 255, 255, 0.4)",
-              borderRadius: "8px",
-              color: "#ffffff",
-              fontFamily: "var(--font-display)",
-              fontSize: "16px",
-              fontWeight: 800,
-              padding: "2px 6px",
-              flex: 1,
-              minWidth: 0,
-              textAlign: "center",
-              outline: "none"
-            }}
-          />
+        <DebouncedField
+          type="text"
+          value={character.name || ""}
+          disabled={!canEdit}
+          onCommit={(value) =>
+            safeCall(() =>
+              onRenameCharacter
+                ? onRenameCharacter(character.id, value)
+                : onUpdateCharacter(character.id, { name: value })
+            )
+          }
+          title={character.name || "Nome do Pinguim"}
+          style={{
+            background: "rgba(0, 27, 58, 0.35)",
+            border: "1.5px solid rgba(255, 255, 255, 0.4)",
+            borderRadius: "8px",
+            color: "#ffffff",
+            fontFamily: "var(--font-display)",
+            fontSize: "16px",
+            fontWeight: 800,
+            padding: "2px 6px",
+            flex: 1,
+            minWidth: 0,
+            textAlign: "center",
+            outline: "none"
+          }}
+        />
 
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            {!isStandaloneWindow && (
-              <button
-                type="button"
-                className="cp-btn cp-btn-gold"
-                style={{
-                  width: "26px",
-                  height: "26px",
-                  padding: 0,
-                  fontSize: "11px",
-                  borderRadius: "50%"
-                }}
-                onClick={handlePopoutWindow}
-                title="Abrir em Nova Janela"
-              >
-                ↗
-              </button>
-            )}
-
-            {!isStandaloneWindow && onClose && (
-              <button
-                type="button"
-                className="cp-playercard-close-btn"
-                onClick={onClose}
-                title="Fechar Ficha"
-              >
-                <div className="cp-playercard-close-inner">✕</div>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Moldura da Foto / Avatar do Pinguim */}
-        <div className="cp-playercard-photo-frame">
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt={character.name}
+        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+          {!isStandaloneWindow && (
+            <button
+              type="button"
+              className="cp-btn cp-btn-gold"
               style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                pointerEvents: "none"
+                width: "26px",
+                height: "26px",
+                padding: 0,
+                fontSize: "11px",
+                borderRadius: "50%"
               }}
-            />
-          ) : (
-            <span
-              className="cp-title"
-              style={{ fontSize: "56px", opacity: 0.55 }}
+              onClick={handlePopoutWindow}
+              title="Abrir em Nova Janela"
             >
-              {(character.name || "P").slice(0, 2).toUpperCase()}
-            </span>
+              ↗
+            </button>
           )}
 
-          {canEdit && (
-            <label
-              className="cp-btn"
-              style={{
-                position: "absolute",
-                bottom: "8px",
-                right: "8px",
-                padding: "3px 8px",
-                fontSize: "10px",
-                background: "rgba(0, 27, 58, 0.75)",
-                border: "1.5px solid #ffffff",
-                boxShadow: "0 2px 5px rgba(0,0,0,0.4)"
-              }}
-              title="Trocar Foto"
+          {!isStandaloneWindow && onClose && (
+            <button
+              type="button"
+              className="cp-playercard-close-btn"
+              onClick={onClose}
+              title="Fechar Ficha"
             >
-              📷 Foto
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onUploadCharacterImage(character.id, f, "avatar");
-                }}
-              />
-            </label>
-          )}
-        </div>
-
-        {/* Rodapé: Moedas e XP (estilo Club Penguin com modo de edição) */}
-        <div className="cp-playercard-footer">
-          {/* Suas Moedas */}
-          {editingCoins ? (
-            <form
-              className="cp-playercard-stat-row"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onUpdateCharacter(character.id, {
-                  coins: Math.max(0, Number(coinsInput) || 0)
-                });
-                setEditingCoins(false);
-              }}
-            >
-              <CpCoinIcon size={22} />
-              <span className="cp-stat-label">Total de Moedas:</span>
-              <input
-                type="number"
-                className="cp-stat-input"
-                min={0}
-                value={coinsInput}
-                autoFocus
-                onChange={(e) => setCoinsInput(e.target.value)}
-              />
-              <button type="submit" className="cp-stat-save-btn">✓</button>
-              <button
-                type="button"
-                className="cp-stat-cancel-btn"
-                onClick={() => setEditingCoins(false)}
-              >
-                ✕
-              </button>
-            </form>
-          ) : (
-            <div className="cp-playercard-stat-row">
-              <CpCoinIcon size={22} />
-              <span className="cp-stat-label">Total de Moedas:</span>
-              <span className="cp-stat-value">{coins}</span>
-              {canEdit && (
-                <button
-                  type="button"
-                  className="cp-stat-edit-btn"
-                  onClick={() => {
-                    setCoinsInput(coins);
-                    setEditingCoins(true);
-                  }}
-                  title="Editar moedas"
-                >
-                  ✏️
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* XP / Selos */}
-          {editingXp ? (
-            <form
-              className="cp-playercard-stat-row"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onUpdateCharacter(character.id, {
-                  xp: Math.max(0, Number(xpInput) || 0)
-                });
-                setEditingXp(false);
-              }}
-            >
-              <CpStampIcon size={22} />
-              <span className="cp-stat-label">Total de Experiência:</span>
-              <input
-                type="number"
-                className="cp-stat-input"
-                min={0}
-                value={xpInput}
-                autoFocus
-                onChange={(e) => setXpInput(e.target.value)}
-              />
-              <button type="submit" className="cp-stat-save-btn">✓</button>
-              <button
-                type="button"
-                className="cp-stat-cancel-btn"
-                onClick={() => setEditingXp(false)}
-              >
-                ✕
-              </button>
-            </form>
-          ) : (
-            <div className="cp-playercard-stat-row">
-              <CpStampIcon size={22} />
-              <span className="cp-stat-label">Total de Experiência:</span>
-              <span className="cp-stat-value">{xp}</span>
-              {canEdit && (
-                <button
-                  type="button"
-                  className="cp-stat-edit-btn"
-                  onClick={() => {
-                    setXpInput(xp);
-                    setEditingXp(true);
-                  }}
-                  title="Editar XP"
-                >
-                  ✏️
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Seletor de Cor do Cartão (quando em modo edição) */}
-          {canEdit && (
-            <div
-              style={{
-                display: "flex",
-                gap: "4px",
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: "4px"
-              }}
-            >
-              {CARD_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() =>
-                    onUpdateCharacter(character.id, { cardColor: c })
-                  }
-                  style={{
-                    width: "14px",
-                    height: "14px",
-                    borderRadius: "50%",
-                    background: c,
-                    border:
-                      cardBgColor === c
-                        ? "2px solid #ffffff"
-                        : "1px solid #001b3a",
-                    cursor: "pointer",
-                    padding: 0
-                  }}
-                  title={c}
-                />
-              ))}
-            </div>
+              <div className="cp-playercard-close-inner">✕</div>
+            </button>
           )}
         </div>
       </div>
-    </>
+
+      {/* Moldura da Foto / Avatar do Pinguim */}
+      <div className="cp-playercard-photo-frame">
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={character.name}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              pointerEvents: "none"
+            }}
+          />
+        ) : (
+          <span className="cp-title" style={{ fontSize: "56px", opacity: 0.55 }}>
+            {(character.name || "P").slice(0, 2).toUpperCase()}
+          </span>
+        )}
+
+        {canEdit && (
+          <label
+            className="cp-btn"
+            style={{
+              position: "absolute",
+              bottom: "8px",
+              right: "8px",
+              padding: "3px 8px",
+              fontSize: "10px",
+              background: "rgba(0, 27, 58, 0.75)",
+              border: "1.5px solid #ffffff",
+              boxShadow: "0 2px 5px rgba(0,0,0,0.4)"
+            }}
+            title="Trocar Foto"
+          >
+            📷 Foto
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) safeCall(() => onUploadCharacterImage(character.id, f, "avatar"));
+              }}
+            />
+          </label>
+        )}
+      </div>
+
+      {/* Rodapé: Moedas e XP */}
+      <div className="cp-playercard-footer">
+        <StatInlineEditor
+          icon={<CpCoinIcon size={22} />}
+          label="Total de Moedas:"
+          value={coins}
+          isEditing={editState.editingField === "coins"}
+          draftValue={editState.draftValue}
+          canEdit={canEdit}
+          editTitle="Editar moedas"
+          onStartEdit={() =>
+            dispatch({ type: "START_EDIT", field: "coins", value: coins })
+          }
+          onChangeDraft={(value) => dispatch({ type: "SET_DRAFT", value })}
+          onSave={(cleanVal) => {
+            safeCall(() => onUpdateCharacter(character.id, { coins: cleanVal }));
+            dispatch({ type: "CANCEL_EDIT" });
+          }}
+          onCancel={() => dispatch({ type: "CANCEL_EDIT" })}
+        />
+
+        <StatInlineEditor
+          icon={<CpStampIcon size={22} />}
+          label="Total de Experiência:"
+          value={xp}
+          isEditing={editState.editingField === "xp"}
+          draftValue={editState.draftValue}
+          canEdit={canEdit}
+          editTitle="Editar XP"
+          onStartEdit={() =>
+            dispatch({ type: "START_EDIT", field: "xp", value: xp })
+          }
+          onChangeDraft={(value) => dispatch({ type: "SET_DRAFT", value })}
+          onSave={(cleanVal) => {
+            safeCall(() => onUpdateCharacter(character.id, { xp: cleanVal }));
+            dispatch({ type: "CANCEL_EDIT" });
+          }}
+          onCancel={() => dispatch({ type: "CANCEL_EDIT" })}
+        />
+
+        {canEdit && (
+          <div
+            style={{
+              display: "flex",
+              gap: "4px",
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: "4px"
+            }}
+          >
+            {CARD_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => safeCall(() => onUpdateCharacter(character.id, { cardColor: c }))}
+                style={{
+                  width: "14px",
+                  height: "14px",
+                  borderRadius: "50%",
+                  background: c,
+                  border:
+                    cardBgColor === c ? "2px solid #ffffff" : "1px solid #001b3a",
+                  cursor: "pointer",
+                  padding: 0
+                }}
+                title={c}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

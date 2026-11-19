@@ -1,4 +1,4 @@
-import { SAVE_ATTRIBUTES } from "../../engines/combatEngine";
+import { SAVE_ATTRIBUTES } from "../../domain/constants.js";
 
 /**
  * Campos de configuração de Teste de Resistência (habilita + CD + Atributo + Efeito na falha).
@@ -53,6 +53,8 @@ export default function SavingThrowFields({
   onDcFormulaChange,
   attribute,
   onAttributeChange,
+  attributeKey = undefined,
+  onAttributeKeyChange = undefined,
   effectDescription,
   onEffectDescriptionChange,
   toggleLabel = "Exige Resistência",
@@ -61,6 +63,8 @@ export default function SavingThrowFields({
   dcWidth = "80px",
   effectMinWidth = "110px",
 }) {
+  const resolvedAttr = attributeKey !== undefined ? attributeKey : attribute;
+  const handleAttrChange = onAttributeKeyChange || onAttributeChange;
   const toggle = (
     <label style={layout === "grid" ? GRID_LABEL_STYLE : INLINE_LABEL_STYLE}>
       <input
@@ -88,8 +92,8 @@ export default function SavingThrowFields({
             />
             <select
               className="cp-input"
-              value={attribute}
-              onChange={(e) => onAttributeChange(e.target.value)}
+              value={resolvedAttr}
+              onChange={(e) => handleAttrChange(e.target.value)}
               style={{ fontSize: "11px" }}
             >
               <AttributeOptions />
@@ -123,8 +127,8 @@ export default function SavingThrowFields({
           />
           <select
             className="cp-input"
-            value={attribute}
-            onChange={(e) => onAttributeChange(e.target.value)}
+            value={resolvedAttr}
+            onChange={(e) => handleAttrChange(e.target.value)}
             style={{ fontSize: "11px", padding: "2px 6px" }}
           >
             <AttributeOptions />

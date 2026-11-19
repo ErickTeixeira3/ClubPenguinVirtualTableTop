@@ -1,66 +1,119 @@
-import { renderCpFlashIcon } from "../CpFlashIcons";
-import { resolveItemIcon } from "../sheetConstants";
-import { ROLL_KINDS } from "../../../engines/combatEngine";
-import CpIconPicker from "../CpIconPicker";
 import { useRef } from "react";
+import { Z_LAYERS } from "../../../constants/zLayers";
+import { inferAbilityRollKind } from "../../../engines/rolls";
+import ConfirmDialog from "../../ui/ConfirmDialog";
+import { renderCpFlashIcon } from "../CpFlashIcons";
+import CpIconPicker from "../CpIconPicker";
+import { resolveItemIcon } from "../sheetConstants";
 
 /**
- * Fase 5: aba "Inventário" da Ficha (grade estilo Club Penguin, rolagem vertical e inspetor do item),
- * extraída de CharacterSheetModal.jsx com JSX e handlers inalterados.
+ * Aba "Inventário" da Ficha (grade estilo Club Penguin, inspetor por ID e confirmação U6).
  */
 export default function SheetInventoryTab({
   inventory,
-  inspectedItem,
-  setInspectedItem,
+  inspectedItemId,
+  inspectedIconPickerOpen,
+  confirmDeleteItem,
+  dispatchInventory,
   canEdit,
-  setInspectedIconPickerOpen,
   triggerRoll,
   pinToRollGroup,
-  inspectedIconPickerOpen,
   onUpdateCharacter,
+  onUpdateCharacterEntry = null,
+  onRemoveCharacterEntry = null,
+  onConsumeCharacterItem = null,
   character
 }) {
   const inventoryScrollRef = useRef(null);
   const usingItemRef = useRef(false);
 
-  const handleUpdateItemIcon = (itemId, newIcon) => {
-    if (!canEdit) return;
-    const nextInv = inventory.map((it) =>
-      it.id === itemId ? { ...it, icon: newIcon } : it
-    );
-    onUpdateCharacter(character.id, { inventory: nextInv });
-    if (inspectedItem?.id === itemId) {
-      setInspectedItem((prev) => (prev ? { ...prev, icon: newIcon } : null));
-    }
-    setInspectedIconPickerOpen(false);
-  };
+  const inspectedItem =
+    inventory.find((it) => it.id === inspectedItemId) || null;
 
-  const handleAdjustItemQty = (itemId, delta) => {
+  const handleUpdateItemIcon = async (itemId, newIcon) => {
     if (!canEdit) return;
-    const nextInv = inventory
-      .map((it) =>
-        it.id === itemId
-          ? { ...it, qty: Math.max(0, (Number(it.qty) || 0) + delta) }
-          : it
-      )
-      .filter((it) => it.qty > 0);
-    onUpdateCharacter(character.id, { inventory: nextInv });
-    if (inspectedItem?.id === itemId) {
-      const updated = nextInv.find((it) => it.id === itemId);
-      if (updated) {
-        setInspectedItem(updated);
+    try {
+      if (onUpdateCharacterEntry) {
+        await onUpdateCharacterEntry(character.id, "inventory", itemId, { icon: newIcon });
+      } else if (Array.isArray(character.inventory)) {
+        await onUpdateCharacter(character.id, {
+          inventory: inventory.map((it) =>
+            it.id === itemId ? { ...it, icon: newIcon } : it
+          )
+        });
       } else {
-        setInspectedItem(null);
+        await onUpdateCharacter(character.id, { [`inventory.${itemId}.icon`]: newIcon });
       }
+      dispatchInventory({
+        type: "SET_FIELD",
+        field: "inspectedIconPickerOpen",
+        value: false
+      });
+    } catch {
+      // Erro já notificado pelo hook
     }
   };
 
-  const handleDeleteItem = (itemId) => {
+  const handleAdjustItemQty = async (itemId, delta) => {
     if (!canEdit) return;
-    const nextInv = inventory.filter((it) => it.id !== itemId);
-    onUpdateCharacter(character.id, { inventory: nextInv });
-    if (inspectedItem?.id === itemId) {
-      setInspectedItem(null);
+    const target = inventory.find((it) => it.id === itemId);
+    if (!target) return;
+
+    try {
+      if (delta < 0 && onConsumeCharacterItem && (Number(target.qty) || 0) >= Math.abs(delta)) {
+        await onConsumeCharacterItem(character.id, itemId, Math.abs(delta));
+        if ((Number(target.qty) || 0) - Math.abs(delta) <= 0) {
+          dispatchInventory({ type: "CLEAR_INSPECTED" });
+        }
+        return;
+      }
+
+      const nextQty = Math.max(0, (Number(target.qty) || 0) + delta);
+      if (nextQty <= 0) {
+        if (onRemoveCharacterEntry) {
+          await onRemoveCharacterEntry(character.id, "inventory", itemId);
+        } else if (Array.isArray(character.inventory)) {
+          await onUpdateCharacter(character.id, {
+            inventory: inventory.filter((it) => it.id !== itemId)
+          });
+        }
+        dispatchInventory({ type: "CLEAR_INSPECTED" });
+        return;
+      }
+
+      if (onUpdateCharacterEntry) {
+        await onUpdateCharacterEntry(character.id, "inventory", itemId, { qty: nextQty });
+      } else if (Array.isArray(character.inventory)) {
+        await onUpdateCharacter(character.id, {
+          inventory: inventory.map((it) =>
+            it.id === itemId ? { ...it, qty: nextQty } : it
+          )
+        });
+      } else {
+        await onUpdateCharacter(character.id, { [`inventory.${itemId}.qty`]: nextQty });
+      }
+    } catch {
+      // Erro já notificado pelo hook
+    }
+  };
+
+  const handleConfirmDeleteItem = async () => {
+    if (!canEdit || !confirmDeleteItem) return;
+    const itemId = confirmDeleteItem.id;
+    dispatchInventory({ type: "CLOSE_DELETE_CONFIRM" });
+    try {
+      if (onRemoveCharacterEntry) {
+        await onRemoveCharacterEntry(character.id, "inventory", itemId);
+      } else if (Array.isArray(character.inventory)) {
+        await onUpdateCharacter(character.id, {
+          inventory: inventory.filter((it) => it.id !== itemId)
+        });
+      }
+      if (inspectedItemId === itemId) {
+        dispatchInventory({ type: "CLEAR_INSPECTED" });
+      }
+    } catch {
+      // Erro já notificado pelo hook
     }
   };
 
@@ -77,15 +130,13 @@ export default function SheetInventoryTab({
       <div className="cp-inv-grid-wrapper">
         <div className="cp-inv-grid" ref={inventoryScrollRef}>
           {inventory.map((item) => {
-            const isSelected = inspectedItem?.id === item.id;
+            const isSelected = inspectedItemId === item.id;
             return (
               <div
                 key={item.id}
                 className="cp-inv-slot"
                 onClick={() =>
-                  setInspectedItem((prev) =>
-                    prev?.id === item.id ? null : item
-                  )
+                  dispatchInventory({ type: "TOGGLE_INSPECT_ITEM", itemId: item.id })
                 }
                 style={{
                   borderColor: isSelected ? "#008be3" : "#b8c8d8",
@@ -96,7 +147,6 @@ export default function SheetInventoryTab({
                 }}
                 title={item.name}
               >
-                {/* Ícone do Item (estilo vetorial Flash Club Penguin) */}
                 <div
                   style={{
                     width: "44px",
@@ -111,7 +161,6 @@ export default function SheetInventoryTab({
                   {renderCpFlashIcon(resolveItemIcon(item), 40)}
                 </div>
 
-                {/* Nome do Item */}
                 <span
                   style={{
                     fontSize: "11px",
@@ -128,7 +177,6 @@ export default function SheetInventoryTab({
                   {item.name}
                 </span>
 
-                {/* Badge de Quantidade (estilo x2 no canto do item) */}
                 {item.qty > 1 && (
                   <span
                     style={{
@@ -151,13 +199,11 @@ export default function SheetInventoryTab({
             );
           })}
 
-          {/* Slots Vazios adicionais para preencher a grade estilo Club Penguin */}
           {Array.from({ length: emptySlotsCount }).map((_, i) => (
             <div key={`empty_${i}`} className="cp-inv-slot empty" />
           ))}
         </div>
 
-        {/* Controles de Rolagem Vertical Clássicos do Club Penguin */}
         <div className="cp-inv-scroll-controls">
           <button
             type="button"
@@ -179,7 +225,6 @@ export default function SheetInventoryTab({
         </div>
       </div>
 
-      {/* Painel Flutuante de Inspeção do Item Selecionado no Inventário */}
       {inspectedItem && (
         <div
           style={{
@@ -196,11 +241,17 @@ export default function SheetInventoryTab({
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flex: 1 }}>
-              {/* Ícone clicável para trocar no inspetor se canEdit */}
               <button
                 type="button"
                 disabled={!canEdit}
-                onClick={() => canEdit && setInspectedIconPickerOpen((p) => !p)}
+                onClick={() =>
+                  canEdit &&
+                  dispatchInventory({
+                    type: "SET_FIELD",
+                    field: "inspectedIconPickerOpen",
+                    value: !inspectedIconPickerOpen
+                  })
+                }
                 title={canEdit ? "Trocar ícone do item" : ""}
                 style={{
                   width: "44px",
@@ -288,13 +339,12 @@ export default function SheetInventoryTab({
                   try {
                     const effType = inspectedItem.effectType || "heal";
                     const itemRollKind =
-                      effType === "heal" || effType === "mp_heal"
-                        ? ROLL_KINDS.HEAL
-                        : effType === "damage" || effType === "mp_damage"
-                          ? ROLL_KINDS.DAMAGE
-                          : effType === "utility"
-                            ? ROLL_KINDS.UTILITY
-                            : ROLL_KINDS.CHECK;
+                      inspectedItem.rollKind ||
+                      inferAbilityRollKind({
+                        hitFormula: "",
+                        effectFormula: inspectedItem.rollFormula || "1d20",
+                        effectType: effType
+                      });
                     const rollAccepted = await triggerRoll({
                       title: `Item: ${inspectedItem.name}`,
                       categoryColor: "#38c172",
@@ -330,13 +380,12 @@ export default function SheetInventoryTab({
                     onClick={() => {
                       const effType = inspectedItem.effectType || "heal";
                       const itemRollKind =
-                        effType === "heal" || effType === "mp_heal"
-                          ? ROLL_KINDS.HEAL
-                          : effType === "damage" || effType === "mp_damage"
-                            ? ROLL_KINDS.DAMAGE
-                            : effType === "utility"
-                              ? ROLL_KINDS.UTILITY
-                              : ROLL_KINDS.CHECK;
+                        inspectedItem.rollKind ||
+                        inferAbilityRollKind({
+                          hitFormula: "",
+                          effectFormula: inspectedItem.rollFormula || "1d20",
+                          effectType: effType
+                        });
                       pinToRollGroup({
                         sourceType: "item",
                         sourceId: inspectedItem.id,
@@ -358,43 +407,49 @@ export default function SheetInventoryTab({
                     className="cp-btn cp-btn-orange"
                     style={{ padding: "4px 8px", fontSize: "11px" }}
                     title="Excluir Item"
-                    onClick={() => handleDeleteItem(inspectedItem.id)}
+                    onClick={() =>
+                      dispatchInventory({
+                        type: "OPEN_DELETE_CONFIRM",
+                        payload: { id: inspectedItem.id, label: inspectedItem.name }
+                      })
+                    }
                   >
                     ✕
                   </button>
                 </>
               )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setInspectedItem(null);
-                  setInspectedIconPickerOpen(false);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#64748b",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                  padding: "0 4px"
-                }}
-                title="Fechar detalhes"
-              >
-                ✕
-              </button>
             </div>
           </div>
 
-          {/* Seletor aberto para trocar ícone do item inspecionado */}
           {inspectedIconPickerOpen && canEdit && (
-            <CpIconPicker
-              selectedIconId={resolveItemIcon(inspectedItem)}
-              onSelectIcon={(ic) => handleUpdateItemIcon(inspectedItem.id, ic)}
-              onClose={() => setInspectedIconPickerOpen(false)}
-            />
+            <div style={{ marginTop: "4px" }}>
+              <CpIconPicker
+                selectedIconId={resolveItemIcon(inspectedItem)}
+                onSelectIcon={(newIconId) =>
+                  handleUpdateItemIcon(inspectedItem.id, newIconId)
+                }
+                onClose={() =>
+                  dispatchInventory({
+                    type: "SET_FIELD",
+                    field: "inspectedIconPickerOpen",
+                    value: false
+                  })
+                }
+              />
+            </div>
           )}
         </div>
+      )}
+
+      {confirmDeleteItem && (
+        <ConfirmDialog
+          title="Excluir item do inventário?"
+          question={`Remover "${confirmDeleteItem.label}"?`}
+          confirmLabel="Excluir"
+          onConfirm={handleConfirmDeleteItem}
+          onCancel={() => dispatchInventory({ type: "CLOSE_DELETE_CONFIRM" })}
+          zIndex={Z_LAYERS.modalNested}
+        />
       )}
     </>
   );

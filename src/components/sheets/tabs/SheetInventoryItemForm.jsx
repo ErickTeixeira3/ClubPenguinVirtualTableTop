@@ -1,59 +1,93 @@
+import { DEFAULT_COLORS } from "../../../domain/defaults.js";
+import { EFFECT_TYPES, TRIGGER_TYPES } from "../../../engines/combatEngine";
+import { inferAbilityRollKind } from "../../../engines/rolls";
+import SavingThrowFields from "../../ui/SavingThrowFields";
 import { renderCpFlashIcon } from "../CpFlashIcons";
 import CpIconPicker from "../CpIconPicker";
-import { EFFECT_TYPES, TRIGGER_TYPES } from "../../../engines/combatEngine";
-import SavingThrowFields from "../../ui/SavingThrowFields";
 
 /**
- * Fase 5: formulário inline de novo item do Inventário da Ficha,
- * extraído de CharacterSheetModal.jsx com JSX e handler inalterados.
+ * Formulário inline de novo item do Inventário da Ficha (schema v2).
  */
 export default function SheetInventoryItemForm({
   canEdit,
   onUpdateCharacter,
+  onAddCharacterEntry = null,
   character,
-  inventory,
-  itemForm
+  inventoryState,
+  dispatchInventory
 }) {
-  const { setShowIconPicker, itemIcon, itemName, setItemName, itemQty, setItemQty, itemFormula, setItemFormula, showIconPicker, setItemIcon, itemTrigger, setItemTrigger, itemEffectType, setItemEffectType, itemConsumeOnUse, setItemConsumeOnUse, itemSaveEnabled, setItemSaveEnabled, itemSaveDc, setItemSaveDc, itemSaveAttr, setItemSaveAttr, itemSaveDesc, setItemSaveDesc, itemDesc, setItemDesc, setNewItemOpen } = itemForm;
-  const handleAddItem = (e) => {
+  const {
+    itemIcon,
+    itemName,
+    itemQty,
+    itemFormula,
+    showIconPicker,
+    itemTrigger,
+    itemEffectType,
+    itemConsumeOnUse,
+    itemSaveEnabled,
+    itemSaveDc,
+    itemSaveAttr,
+    itemSaveDesc,
+    itemDesc,
+    formError
+  } = inventoryState;
+
+  const setField = (field, value) =>
+    dispatchInventory({ type: "SET_FIELD", field, value });
+
+  const handleAddItem = async (e) => {
     e.preventDefault();
     if (!canEdit || !itemName.trim()) return;
-    onUpdateCharacter(character.id, {
-      inventory: [
-        ...inventory,
-        {
-          id: `inv_${Date.now()}`,
-          name: itemName.trim(),
-          qty: Math.max(1, Number(itemQty) || 1),
-          elementColor: "#38c172",
-          icon: itemIcon || "sword",
-          rollFormula: itemFormula.trim(),
-          trigger: itemTrigger || "active",
-          effectType: itemEffectType || "heal",
-          consumeOnUse: Boolean(itemConsumeOnUse),
-          savingThrow: {
-            enabled: Boolean(itemSaveEnabled),
-            dcFormula: itemSaveDc.trim() || "12",
-            attribute: itemSaveAttr || "resistencia",
-            effectDescription: itemSaveDesc.trim()
-          },
-          description: itemDesc.trim()
-        }
-      ]
-    });
-    setItemName("");
-    setItemFormula("");
-    setItemTrigger("active");
-    setItemEffectType("heal");
-    setItemConsumeOnUse(true);
-    setItemSaveEnabled(false);
-    setItemSaveDc("12");
-    setItemSaveAttr("resistencia");
-    setItemSaveDesc("");
-    setItemDesc("");
-    setItemIcon("sword");
-    setShowIconPicker(false);
-    setNewItemOpen(false);
+
+    const cleanFormula = itemFormula.trim();
+    const effType = itemEffectType || "heal";
+    const payload = {
+      ...(onAddCharacterEntry ? {} : { id: `inv_${Date.now()}` }),
+      name: itemName.trim(),
+      qty: Math.max(1, Number(itemQty) || 1),
+      elementColor: DEFAULT_COLORS.itemElement,
+      icon: itemIcon || "sword",
+      rollFormula: cleanFormula,
+      trigger: itemTrigger || "active",
+      effectType: effType,
+      rollKind: cleanFormula
+        ? inferAbilityRollKind({
+            hitFormula: "",
+            effectFormula: cleanFormula,
+            effectType: effType
+          })
+        : null,
+      consumeOnUse: Boolean(itemConsumeOnUse),
+      savingThrow: {
+        enabled: Boolean(itemSaveEnabled),
+        dcFormula: itemSaveDc.trim() || "12",
+        attributeKey: itemSaveAttr || "resistencia",
+        effectDescription: itemSaveDesc.trim()
+      },
+      description: itemDesc.trim()
+    };
+
+    try {
+      if (onAddCharacterEntry) {
+        await onAddCharacterEntry(character.id, "inventory", payload);
+      } else if (Array.isArray(character.inventory)) {
+        await onUpdateCharacter(character.id, {
+          inventory: [...character.inventory, payload]
+        });
+      } else {
+        const legacyKey = payload.id || `inv_${Date.now()}`;
+        await onUpdateCharacter(character.id, {
+          [`inventory.${legacyKey}`]: { ...payload, id: legacyKey }
+        });
+      }
+      dispatchInventory({ type: "RESET_ITEM_FORM" });
+    } catch (err) {
+      dispatchInventory({
+        type: "SET_ERROR",
+        error: err?.message || "Erro ao adicionar item."
+      });
+    }
   };
 
   return (
@@ -74,7 +108,7 @@ export default function SheetInventoryItemForm({
       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr 70px 1fr", gap: "6px", alignItems: "center" }}>
         <button
           type="button"
-          onClick={() => setShowIconPicker((p) => !p)}
+          onClick={() => setField("showIconPicker", !showIconPicker)}
           title="Escolher Ícone"
           style={{
             width: "38px",
@@ -96,7 +130,7 @@ export default function SheetInventoryItemForm({
           className="cp-input"
           placeholder="Nome do Item..."
           value={itemName}
-          onChange={(e) => setItemName(e.target.value)}
+          onChange={(e) => setField("itemName", e.target.value)}
           required
           style={{ fontSize: "11px", padding: "3px 6px" }}
         />
@@ -106,7 +140,7 @@ export default function SheetInventoryItemForm({
           min={1}
           placeholder="Qtd"
           value={itemQty}
-          onChange={(e) => setItemQty(e.target.value)}
+          onChange={(e) => setField("itemQty", e.target.value)}
           style={{ fontSize: "11px", padding: "3px 6px" }}
         />
         <input
@@ -114,20 +148,19 @@ export default function SheetInventoryItemForm({
           className="cp-input"
           placeholder="Fórmula (ex: 2d4 + 2)"
           value={itemFormula}
-          onChange={(e) => setItemFormula(e.target.value)}
+          onChange={(e) => setField("itemFormula", e.target.value)}
           style={{ fontSize: "11px", padding: "3px 6px" }}
         />
       </div>
 
-      {/* Seletor de Ícones de RPG / Club Penguin */}
       {showIconPicker && (
         <CpIconPicker
           selectedIconId={itemIcon}
           onSelectIcon={(ic) => {
-            setItemIcon(ic);
-            setShowIconPicker(false);
+            setField("itemIcon", ic);
+            setField("showIconPicker", false);
           }}
-          onClose={() => setShowIconPicker(false)}
+          onClose={() => setField("showIconPicker", false)}
         />
       )}
 
@@ -135,7 +168,7 @@ export default function SheetInventoryItemForm({
         <select
           className="cp-input"
           value={itemTrigger}
-          onChange={(e) => setItemTrigger(e.target.value)}
+          onChange={(e) => setField("itemTrigger", e.target.value)}
           style={{ fontSize: "11px", padding: "3px 6px" }}
         >
           {TRIGGER_TYPES.map((tr) => (
@@ -147,7 +180,7 @@ export default function SheetInventoryItemForm({
         <select
           className="cp-input"
           value={itemEffectType}
-          onChange={(e) => setItemEffectType(e.target.value)}
+          onChange={(e) => setField("itemEffectType", e.target.value)}
           style={{ fontSize: "11px", padding: "3px 6px" }}
         >
           {EFFECT_TYPES.map((et) => (
@@ -160,23 +193,22 @@ export default function SheetInventoryItemForm({
           <input
             type="checkbox"
             checked={itemConsumeOnUse}
-            onChange={(e) => setItemConsumeOnUse(e.target.checked)}
+            onChange={(e) => setField("itemConsumeOnUse", e.target.checked)}
           />
           Consumível
         </label>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-        {/* Fase 4: SavingThrowFields (layout "inline") */}
         <SavingThrowFields
           enabled={itemSaveEnabled}
-          onEnabledChange={setItemSaveEnabled}
+          onEnabledChange={(val) => setField("itemSaveEnabled", val)}
           dcFormula={itemSaveDc}
-          onDcFormulaChange={setItemSaveDc}
-          attribute={itemSaveAttr}
-          onAttributeChange={setItemSaveAttr}
+          onDcFormulaChange={(val) => setField("itemSaveDc", val)}
+          attributeKey={itemSaveAttr}
+          onAttributeKeyChange={(val) => setField("itemSaveAttr", val)}
           effectDescription={itemSaveDesc}
-          onEffectDescriptionChange={setItemSaveDesc}
+          onEffectDescriptionChange={(val) => setField("itemSaveDesc", val)}
           toggleLabel="Exige Resistência"
           dcPlaceholder="CD (ex: 12)"
           effectPlaceholder="Efeito na falha..."
@@ -190,27 +222,31 @@ export default function SheetInventoryItemForm({
         className="cp-input"
         placeholder="Descrição / Efeito..."
         value={itemDesc}
-        onChange={(e) => setItemDesc(e.target.value)}
+        onChange={(e) => setField("itemDesc", e.target.value)}
         style={{ fontSize: "11px", padding: "3px 6px" }}
       />
+
+      {formError && (
+        <div role="alert" style={{ fontSize: "11px", fontWeight: 700, color: "#b91c1c" }}>
+          {formError}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
         <button
           type="button"
           className="cp-btn cp-btn-orange"
           style={{ padding: "3px 8px", fontSize: "11px" }}
-          onClick={() => {
-            setShowIconPicker(false);
-            setNewItemOpen(false);
-          }}
+          onClick={() => dispatchInventory({ type: "SET_FIELD", field: "newItemOpen", value: false })}
         >
           Cancelar
         </button>
         <button
           type="submit"
           className="cp-btn cp-btn-green"
-          style={{ padding: "3px 12px", fontSize: "11px" }}
+          style={{ padding: "3px 10px", fontSize: "11px" }}
         >
-          Salvar Item
+          Adicionar Item
         </button>
       </div>
     </form>

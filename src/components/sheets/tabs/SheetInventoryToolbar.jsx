@@ -1,16 +1,15 @@
 /**
- * Fase 5: ações contextuais da aba Inventário (barra superior da gaveta da Ficha),
- * extraídas de CharacterSheetModal.jsx com JSX inalterado.
+ * Ações contextuais da aba Inventário (barra superior da gaveta da Ficha).
  */
 export default function SheetInventoryToolbar({
   compendiumEntries,
   handlePullFromCompendium,
-  itemForm
+  onToggleNewItem
 }) {
-  const { setNewItemOpen } = itemForm;
+  const items = compendiumEntries.filter((e) => e.type === "item");
   return (
     <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-      {compendiumEntries.filter((e) => e.type === "item").length > 0 && (
+      {items.length > 0 && (
         <select
           className="cp-input"
           style={{
@@ -21,9 +20,7 @@ export default function SheetInventoryToolbar({
           }}
           defaultValue=""
           onChange={(e) => {
-            const found = compendiumEntries.find(
-              (c) => c.id === e.target.value
-            );
+            const found = compendiumEntries.find((c) => c.id === e.target.value);
             if (found) handlePullFromCompendium(found);
             e.target.value = "";
           }}
@@ -31,13 +28,11 @@ export default function SheetInventoryToolbar({
           <option value="" disabled>
             + Puxar Compêndio...
           </option>
-          {compendiumEntries
-            .filter((e) => e.type === "item")
-            .map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name}
-              </option>
-            ))}
+          {items.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.name}
+            </option>
+          ))}
         </select>
       )}
 
@@ -45,7 +40,7 @@ export default function SheetInventoryToolbar({
         type="button"
         className="cp-btn cp-btn-green"
         style={{ padding: "3px 10px", fontSize: "11px", height: "26px" }}
-        onClick={() => setNewItemOpen((p) => !p)}
+        onClick={onToggleNewItem}
       >
         + Novo Item
       </button>
