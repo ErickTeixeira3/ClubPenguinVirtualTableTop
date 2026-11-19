@@ -16,37 +16,31 @@ import { useFog } from "../../hooks/useFog.js";
 import { useSceneTokens } from "../../hooks/useSceneTokens.js";
 import { useTokenSecrets } from "../../hooks/useTokenSecrets.js";
 import { useBoardReconciliation } from "../../hooks/useBoardReconciliation.js";
+import { useAllyCostsProcessor } from "../../hooks/useAllyCostsProcessor.js";
+import { useRefereeLoop } from "../../hooks/useRefereeLoop.js";
+import { useTurnPolicy } from "../../contexts/TurnPolicyContext.js";
+import { isUserResponsibleForSavingThrow } from "../../domain/permissions.js";
 import { getNoteTypeMeta } from "../journal/noteTypesUi";
 import {
   ROLL_KINDS,
   doubleDiceInFormula,
-  evaluateActorAct,
   getActiveCombatant,
-  hasControlledByAccess,
-  isUserResponsibleForSavingThrow
+  hasControlledByAccess
 } from "../../engines/combatEngine";
 import {
   advanceCampaignTurn,
-  applyCombatEffectToTarget,
+  applyCombatEffect,
   consumeCampaignTurnAction,
   consumeCampaignTurnMovement,
   consumeCombatCosts,
   deductActorResources,
-  hasOpenStandaloneSheet,
-  isSavingThrowAnswered,
-  markSavingThrowAnswered,
-  registerOpenStandaloneSheet,
   regressCampaignTurn,
-  rollbackSavingThrowSubmission,
   spawnCharacterTokenToScene,
   startTurnCombat,
   stopTurnCombat,
-  syncTokenUpdatesToCharacter,
-  tryBeginSavingThrowSubmission,
-  tryClaimSavingThrowModal,
-  unregisterOpenStandaloneSheet
+  syncTokenUpdatesToCharacter
 } from "../../services/combatService";
-import { resolveSpeakerIdentity } from "../../services/rollService";
+import { resolveSpeakerIdentity } from "../../domain/speakerIdentity.js";
 import { getAssetUrl } from "../../utils/stringUtils";
 import GMPanelModal from "../gm/GMPanelModal";
 import BoardViewport from "../canvas/BoardViewport";
@@ -179,7 +173,8 @@ function VTTLayoutInner({
   } = useCampaign();
   // TRANSITION(T1): playersMap / myPlayerProfile / onlineUsers derivados de Members/Presence até Fase 11
   const { playersMap, myPlayerProfile } = useMembers();
-  const { onlineUsers } = usePresence();
+  const { onlineUsers, hasSheetOpen } = usePresence();
+  const turnPolicy = useTurnPolicy();
 
   const {
     scenes,
@@ -237,7 +232,6 @@ function VTTLayoutInner({
     sendEmoteMessage,
     sendSkillPing,
     executeRoll,
-    updateMessageRollData,
     deleteMessage
   } = useChatRolls();
 
@@ -304,13 +298,7 @@ function VTTLayoutInner({
     };
   }, []);
 
-  const {
-    windowId,
-    broadcastTargets,
-    broadcastAoeDemarcate,
-    broadcastSaveClaimed,
-    broadcastSaveAnswered
-  } = useCrossWindowSync({
+  const { broadcastTargets, broadcastAoeDemarcate } = useCrossWindowSync({
     campaignId,
     targetedTokens,
     aoeDemarcateConfig,
@@ -319,20 +307,6 @@ function VTTLayoutInner({
     },
     onAoeDemarcateReceived: (config) => {
       setAoeDemarcateConfig(config || null);
-    },
-    onSaveClaimReceived: ({ saveId, ownerWindowId, priority = 1 }) => {
-      if (!saveId || !ownerWindowId) return;
-      setActiveSavingThrowReq((prev) => {
-        if (prev?.id !== saveId) return prev;
-        const myPriority =
-          standaloneSheetId && prev.targetCharacterId === standaloneSheetId ? 2 : 1;
-        return priority >= myPriority ? null : prev;
-      });
-    },
-    onSaveAnsweredReceived: ({ saveId }) => {
-      if (!saveId) return;
-      dismissedSaveIdsRef.current.add(saveId);
-      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
     }
   });
 
@@ -352,29 +326,33 @@ function VTTLayoutInner({
   const activeSceneId = activeScene?.id || null;
   const dismissedSaveIdsRef = useRef(new Set());
   const inFlightSaveIdsRef = useRef(new Set());
-  const pendingSaveClaimTimerRef = useRef(null);
-  const mountTimestampRef = useRef(Date.now());
 
-  useEffect(() => {
-    if (!campaignId || !standaloneSheetId || !windowId) return;
-    registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
+  const editableCharacterIds = useMemo(
+    () =>
+      allCharacters
+        .filter((character) => canEditCharacter(character))
+        .map((character) => character.id),
+    [allCharacters, canEditCharacter]
+  );
+  useAllyCostsProcessor({
+    campaignId,
+    uid: user?.uid || null,
+    isGM: isRealGM,
+    editableCharacterIds,
+    enabled: Boolean(campaignId && user)
+  });
+  useRefereeLoop({
+    campaignId,
+    isRealGM,
+    isMainWindow: !standaloneSheetId,
+    tokens: liveTokensWithSecrets,
+    tokenSecretsById: secretsByTokenId,
+    characters: allCharacters
+  });
+
     // Revisão pós-6.8 (A20): renova o registro enquanto a ficha destacada estiver aberta. Sem isso,
     // ele expirava em OPEN_SHEET_TTL_MS (30 min) e a janela principal deixava de ceder a vez,
     // abrindo o pop-up por um instante antes de a ficha destacada assumi-lo.
-    const heartbeat = setInterval(
-      () => registerOpenStandaloneSheet(campaignId, standaloneSheetId, windowId),
-      5 * 60 * 1000
-    );
-    const cleanup = () => unregisterOpenStandaloneSheet(campaignId, standaloneSheetId, windowId);
-    window.addEventListener("pagehide", cleanup);
-    window.addEventListener("beforeunload", cleanup);
-    return () => {
-      clearInterval(heartbeat);
-      window.removeEventListener("pagehide", cleanup);
-      window.removeEventListener("beforeunload", cleanup);
-      cleanup();
-    };
-  }, [campaignId, standaloneSheetId, windowId]);
 
   const onlineList = Object.values(onlineUsers || {}).filter((u) => u?.online);
   // Fase 3.1 (errata Fase 3 §4.2): nome do jogador resolvido pelo ponto único resolveSpeakerIdentity
@@ -396,12 +374,6 @@ function VTTLayoutInner({
         if (selectedTokenOnBoard.characterId) {
           const charFromToken = characters.find((c) => c.id === selectedTokenOnBoard.characterId);
           if (charFromToken && canEditCharacter(charFromToken)) return charFromToken;
-        }
-        if (selectedTokenOnBoard.name) {
-          const charByName = characters.find(
-            (c) => c.name?.trim().toLowerCase() === selectedTokenOnBoard.name.trim().toLowerCase()
-          );
-          if (charByName && canEditCharacter(charByName)) return charByName;
         }
       }
     }
@@ -450,13 +422,7 @@ function VTTLayoutInner({
 
     const primaryTarget = incomingRollParams.targetedToken ?? activeTargets[0] ?? null;
 
-    // Fase 6.3 (A15): rolagem personalizada antiga só de acerto (sem `rollKind` salvo) é ataque
-    // quando há alvo, como no 711451e; sem alvo continua teste.
-    const { attackWhenTargeted, ...baseRollParams } = incomingRollParams;
-    const rollParams =
-      attackWhenTargeted && primaryTarget
-        ? { ...baseRollParams, rollKind: ROLL_KINDS.ATTACK, primaryLabel: "Acerto" }
-        : baseRollParams;
+    const rollParams = incomingRollParams;
 
     const actor = rollParams.character || activeCharacter;
     const resolvedActionKind =
@@ -466,7 +432,7 @@ function VTTLayoutInner({
         : rollParams.rollKind === ROLL_KINDS.CHECK
           ? "check"
           : "active");
-    const actCheck = evaluateActorAct(combatState, actor, resolvedActionKind, {
+    const actCheck = turnPolicy.canActorAct(actor, resolvedActionKind, {
       isGM,
       isFollowUp: Boolean(rollParams.isFollowUp || rollParams.parentMessageId)
     });
@@ -476,6 +442,9 @@ function VTTLayoutInner({
     }
     const sentMsg = await executeRoll({
       ...rollParams,
+      character: actor,
+      actorToken: resolveActorToken(actor),
+      sceneId: activeSceneId,
       targetedToken: primaryTarget,
       targetedTokens: activeTargets.length > 0 ? activeTargets : (primaryTarget ? [primaryTarget] : []),
       allCharacters,
@@ -493,7 +462,8 @@ function VTTLayoutInner({
           actorToken: resolveActorToken(payer),
           sceneId: activeSceneId,
           costs: { [resKey]: amount },
-          updateCharacterResource
+          updateCharacterResource,
+          opId: meta.opId || null
         });
       }
     });
@@ -531,10 +501,6 @@ function VTTLayoutInner({
 
   // Detecta automaticamente novos pedidos de Teste de Resistência direcionados ao jogador / Mestre
   useEffect(() => {
-    if (pendingSaveClaimTimerRef.current) {
-      clearTimeout(pendingSaveClaimTimerRef.current);
-      pendingSaveClaimTimerRef.current = null;
-    }
     if (!user || !Array.isArray(messages) || messages.length === 0) return;
 
     const answeredSaveIds = new Set(
@@ -544,9 +510,6 @@ function VTTLayoutInner({
     );
 
     // Fase 6.4 (A20): fecha o pop-up automaticamente assim que a resposta chegar ao chat.
-    for (const ansId of answeredSaveIds) {
-      markSavingThrowAnswered(campaignId, ansId);
-    }
     setActiveSavingThrowReq((prev) =>
       prev?.id && answeredSaveIds.has(prev.id) ? null : prev
     );
@@ -556,16 +519,23 @@ function VTTLayoutInner({
       const m = messages[i];
       const req = m?.rollData?.savingThrowRequest;
       if (!req || !req.id) continue;
-      if ((m.timestampMs || 0) < mountTimestampRef.current - 15000) continue;
       if (answeredSaveIds.has(req.id) || dismissedSaveIdsRef.current.has(req.id)) continue;
-      if (isSavingThrowAnswered(campaignId, req.id)) continue;
+
+      const targetCharacter = req.targetCharacterId
+        ? allCharacters.find((character) => character.id === req.targetCharacterId) || null
+        : null;
+      const targetToken = req.targetTokenId
+        ? liveTokensWithSecrets.find((token) => token.id === req.targetTokenId) || null
+        : null;
 
       if (
         !isUserResponsibleForSavingThrow({
-          user,
+          uid: user.uid,
           isGM,
           savingThrowRequest: req,
-          campaignGMId: campaign?.gmId
+          campaignGmId: campaign?.gmId,
+          targetCharacter,
+          targetToken
         })
       ) {
         continue;
@@ -576,39 +546,29 @@ function VTTLayoutInner({
         continue;
       }
 
-      const priority = standaloneSheetId && req.targetCharacterId === standaloneSheetId ? 2 : 1;
-      const openForThisWindow = () => {
-        const claim = tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority });
-        if (!claim.claimed) return;
-        broadcastSaveClaimed(req.id, { priority });
-        setActiveSavingThrowReq((prev) => (prev?.id === req.id ? prev : req));
-      };
-
       // Se a janela principal detectar que a ficha destacada do alvo está aberta, dá preferência
       // a ela antes de reivindicar o pop-up para evitar abertura dupla entre janelas.
-      if (!standaloneSheetId && hasOpenStandaloneSheet(campaignId, req.targetCharacterId)) {
-        pendingSaveClaimTimerRef.current = setTimeout(() => {
-          pendingSaveClaimTimerRef.current = null;
-          openForThisWindow();
-        }, 120);
-      } else {
-        openForThisWindow();
-      }
+      if (!standaloneSheetId && hasSheetOpen(user.uid, req.targetCharacterId)) continue;
+      setActiveSavingThrowReq((prev) =>
+        prev?.id === req.id ? prev : { ...req, parentMessageId: m.id }
+      );
       break;
     }
-
-    return () => {
-      if (pendingSaveClaimTimerRef.current) {
-        clearTimeout(pendingSaveClaimTimerRef.current);
-        pendingSaveClaimTimerRef.current = null;
-      }
-    };
-  }, [messages, user, isGM, campaign?.gmId, campaignId, standaloneSheetId, windowId, broadcastSaveClaimed]);
+  }, [
+    messages,
+    user,
+    isGM,
+    campaign?.gmId,
+    standaloneSheetId,
+    allCharacters,
+    liveTokensWithSecrets,
+    hasSheetOpen
+  ]);
 
   const handleExecuteDamageRoll = async ({
     isCrit,
     baseFormula,
-    critFormula: _critFormula,
+    critFormula,
     extraDamage,
     selectedTriggers = [],
     attackMessage,
@@ -616,25 +576,17 @@ function VTTLayoutInner({
   }) => {
     const attacker =
       character ||
-      allCharacters.find((c) => c.id === attackMessage?.characterId) ||
+      allCharacters.find(
+        (c) => c.id === (attackMessage?.sender?.characterId || attackMessage?.characterId)
+      ) ||
       activeCharacter;
 
     // 1. Deduz custos de recursos ou itens dos gatilhos selecionados
     // (Fase 3.1 / V-05: MP/HP de matriz GM/NPC saem da instância do token atacante)
-    await consumeCombatCosts({
-      campaignId,
-      campaign,
-      user,
-      character: attacker,
-      actorToken: resolveActorToken(attacker),
-      sceneId: activeSceneId,
-      itemsToConsume: selectedTriggers,
-      updateCharacterResource,
-      consumeCharacterItem
-    });
-
     // 2. Fórmula final de dano (Normal vs Crítico + Extra + Gatilhos com dados dobrados no crítico)
-    const coreFormula = isCrit ? doubleDiceInFormula(baseFormula) : baseFormula;
+    const coreFormula = isCrit
+      ? String(critFormula || "").trim() || doubleDiceInFormula(baseFormula)
+      : baseFormula;
     const formattedExtra = isCrit && extraDamage
       ? doubleDiceInFormula(extraDamage)
       : extraDamage;
@@ -642,7 +594,7 @@ function VTTLayoutInner({
       .map((t) => (isCrit && t.formula ? doubleDiceInFormula(t.formula) : t.formula))
       .filter(Boolean);
     const parts = [coreFormula, formattedExtra, ...triggerFormulas].filter(Boolean);
-    const combinedFormula = parts.join(" + ") || "1d6";
+    const combinedFormula = parts.join(" + ");
 
     // 3. Verifica se algum gatilho exige Teste de Resistência
     const triggerWithSave = selectedTriggers.find(
@@ -698,7 +650,29 @@ function VTTLayoutInner({
             isHit: null
           }
         : null,
-      parentMessageId: attackMessage?.id || null
+      parentMessageId: attackMessage?.id || null,
+      costs: [
+        {
+          kind: "combat_items",
+          characterId: attacker?.id || null,
+          actorTokenId: resolveActorToken(attacker)?.id || null,
+          sceneId: activeSceneId,
+          items: selectedTriggers
+        }
+      ],
+      executeEffects: ({ opId }) =>
+        consumeCombatCosts({
+          campaignId,
+          campaign,
+          user,
+          character: attacker,
+          actorToken: resolveActorToken(attacker),
+          sceneId: activeSceneId,
+          itemsToConsume: selectedTriggers,
+          updateCharacterResource,
+          consumeCharacterItem,
+          opId
+        })
     });
 
     setSidebarOpen(true);
@@ -707,14 +681,27 @@ function VTTLayoutInner({
 
   const handleOpenSavingThrowModal = (req) => {
     if (!req?.id) return;
+    if (messages.some((m) => m.rollData?.respondedToSaveId === req.id)) {
+      return;
+    }
+    const targetCharacter = req.targetCharacterId
+      ? allCharacters.find((character) => character.id === req.targetCharacterId) || null
+      : null;
+    const targetToken = req.targetTokenId
+      ? liveTokensWithSecrets.find((token) => token.id === req.targetTokenId) || null
+      : null;
     if (
-      messages.some((m) => m.rollData?.respondedToSaveId === req.id) ||
-      isSavingThrowAnswered(campaignId, req.id)
+      !isUserResponsibleForSavingThrow({
+        uid: user?.uid,
+        isGM,
+        savingThrowRequest: req,
+        campaignGmId: campaign?.gmId,
+        targetCharacter,
+        targetToken
+      })
     ) {
       return;
     }
-    tryClaimSavingThrowModal(campaignId, req.id, windowId, { priority: 3, forceManual: true });
-    broadcastSaveClaimed(req.id, { priority: 3, manual: true });
     setActiveSavingThrowReq(req);
   };
 
@@ -729,17 +716,10 @@ function VTTLayoutInner({
     if (!savingThrowRequest || !saveId) return false;
     if (inFlightSaveIdsRef.current.has(saveId)) return false;
 
-    const alreadyAnswered =
-      messages.some((m) => m.rollData?.respondedToSaveId === saveId) ||
-      isSavingThrowAnswered(campaignId, saveId);
+    const alreadyAnswered = messages.some(
+      (m) => m.rollData?.respondedToSaveId === saveId
+    );
     if (alreadyAnswered) {
-      dismissedSaveIdsRef.current.add(saveId);
-      setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
-      return false;
-    }
-
-    const beginClaim = tryBeginSavingThrowSubmission(campaignId, saveId, windowId);
-    if (!beginClaim.allowed) {
       dismissedSaveIdsRef.current.add(saveId);
       setActiveSavingThrowReq((prev) => (prev?.id === saveId ? null : prev));
       return false;
@@ -750,19 +730,8 @@ function VTTLayoutInner({
 
     try {
       // Fase 3.1 (V-05): MP/HP de matriz GM/NPC saem da instância do token defensor
-      await consumeCombatCosts({
-        campaignId,
-        campaign,
-        user,
-        character: defenderCharacter,
-        actorToken: resolveActorToken(defenderCharacter, savingThrowRequest.targetTokenId),
-        sceneId: savingThrowRequest.targetSceneId || activeSceneId,
-        itemsToConsume: selectedAssists,
-        updateCharacterResource,
-        consumeCharacterItem
-      });
-
-      const dc = Number(savingThrowRequest.dc) || 10;
+      const parsedDc = Number(savingThrowRequest.dc);
+      const dc = Number.isFinite(parsedDc) ? parsedDc : 10;
 
       await executeRoll({
         title: `Resistência (${attributeLabel}) — ${savingThrowRequest.sourceRollName || "Teste"}`,
@@ -781,25 +750,46 @@ function VTTLayoutInner({
         rollKind: ROLL_KINDS.SAVING_THROW,
         deferSecondaryDamage: false,
         respondedToSaveId: saveId,
-        parentMessageId: savingThrowRequest.parentMessageId || null,
+        requestMessageId: savingThrowRequest.parentMessageId,
+        parentMessageId: savingThrowRequest.parentMessageId,
         savingThrowOutcome: {
           dc,
           attribute: attributeLabel,
           effectDescription: savingThrowRequest.effectDescription || ""
-        }
+        },
+        costs: [
+          {
+            kind: "combat_items",
+            characterId: defenderCharacter?.id || null,
+            actorTokenId: savingThrowRequest.targetTokenId || null,
+            sceneId: savingThrowRequest.targetSceneId || activeSceneId,
+            items: selectedAssists
+          }
+        ],
+        executeEffects: ({ opId }) =>
+          consumeCombatCosts({
+            campaignId,
+            campaign,
+            user,
+            character: defenderCharacter,
+            actorToken: resolveActorToken(
+              defenderCharacter,
+              savingThrowRequest.targetTokenId
+            ),
+            sceneId: savingThrowRequest.targetSceneId || activeSceneId,
+            itemsToConsume: selectedAssists,
+            updateCharacterResource,
+            consumeCharacterItem,
+            opId
+          })
       });
 
-      markSavingThrowAnswered(campaignId, saveId, windowId);
-      broadcastSaveAnswered(saveId);
       setActiveSavingThrowReq(null);
       if (!standaloneSheetId) {
         setSidebarOpen(true);
         setActiveSidebarTab("chat");
       }
       return true;
-    } catch (err) {
-      rollbackSavingThrowSubmission(campaignId, saveId, windowId);
-      throw err;
     } finally {
       inFlightSaveIdsRef.current.delete(saveId);
     }
@@ -813,24 +803,28 @@ function VTTLayoutInner({
     effectType = "damage",
     manualModifiers = []
   }) => {
-    await applyCombatEffectToTarget({
+    const targetRef = msg?.roll?.targets?.[0] || null;
+    const targetToken = targetRef?.tokenId
+      ? liveTokensWithSecrets.find((token) => token.id === targetRef.tokenId) || null
+      : null;
+    const targetCharacter = targetRef?.characterId
+      ? allCharacters.find((character) => character.id === targetRef.characterId) || null
+      : null;
+    const sourceCharacter = msg?.sender?.characterId
+      ? allCharacters.find((character) => character.id === msg.sender.characterId) || null
+      : null;
+    await applyCombatEffect({
       campaignId,
-      campaign,
       user,
-      isGM,
-      msg,
+      message: msg,
       baseValue,
       scaleMode,
       customValue,
       effectType,
       manualModifiers,
-      boardTokens: liveTokensWithSecrets,
-      targetedToken,
-      selectedTokenOnBoard,
-      activeScene,
-      allCharacters,
-      updateCharacterResource,
-      updateMessageRollData
+      sourceCharacter,
+      targetCharacter,
+      targetToken
     });
   };
 
@@ -947,7 +941,6 @@ function VTTLayoutInner({
     setActiveSavingThrowReq,
     dismissedSaveIdsRef,
     allCharacters,
-    activeCharacter,
     handleExecuteDamageRoll,
     handleExecuteSavingThrow
   };

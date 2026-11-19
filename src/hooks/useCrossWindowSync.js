@@ -25,8 +25,6 @@ export function useCrossWindowSync({
   aoeDemarcateConfig = null,
   onTargetsReceived,
   onAoeDemarcateReceived,
-  onSaveClaimReceived,
-  onSaveAnsweredReceived,
   onTransportError = null
 }) {
   const [windowId] = useState(() => createWindowId());
@@ -40,8 +38,6 @@ export function useCrossWindowSync({
   const callbacksRef = useRef({
     onTargetsReceived,
     onAoeDemarcateReceived,
-    onSaveClaimReceived,
-    onSaveAnsweredReceived,
     onTransportError
   });
 
@@ -53,8 +49,6 @@ export function useCrossWindowSync({
     callbacksRef.current = {
       onTargetsReceived,
       onAoeDemarcateReceived,
-      onSaveClaimReceived,
-      onSaveAnsweredReceived,
       onTransportError
     };
   });
@@ -157,14 +151,6 @@ export function useCrossWindowSync({
         return;
       }
 
-      if (data.type === "SAVE_MODAL_CLAIMED" && data.payload) {
-        callbacksRef.current.onSaveClaimReceived?.(data.payload);
-        return;
-      }
-
-      if (data.type === "SAVE_MODAL_ANSWERED" && data.payload) {
-        callbacksRef.current.onSaveAnsweredReceived?.(data.payload);
-      }
     };
 
     const reportError = (err, context) => {
@@ -220,34 +206,9 @@ export function useCrossWindowSync({
     [postPacket]
   );
 
-  const broadcastSaveClaimed = useCallback(
-    (saveId, extra = {}) => {
-      if (!saveId) return false;
-      return postPacket("SAVE_MODAL_CLAIMED", {
-        saveId,
-        ownerWindowId: windowId,
-        ...extra
-      });
-    },
-    [postPacket, windowId]
-  );
-
-  const broadcastSaveAnswered = useCallback(
-    (saveId) => {
-      if (!saveId) return false;
-      return postPacket("SAVE_MODAL_ANSWERED", {
-        saveId,
-        answeredByWindowId: windowId
-      });
-    },
-    [postPacket, windowId]
-  );
-
   return {
     windowId,
     broadcastTargets,
-    broadcastAoeDemarcate,
-    broadcastSaveClaimed,
-    broadcastSaveAnswered
+    broadcastAoeDemarcate
   };
 }

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { doubleDiceInFormula, evaluateDcFormula } from "../../engines/combatEngine";
+import { collectCombatTriggers, evaluateDcFormula } from "../../engines/combat/index.js";
+import { doubleDiceInFormula } from "../../engines/rolls/index.js";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
 import WindowModal from "../ui/WindowModal";
 import { Z_LAYERS } from "../../constants/zLayers";
@@ -9,6 +10,7 @@ export default function DamageRollModal({
   onClose,
   attackMessage,
   character,
+  characterResolutionError = null,
   onExecuteDamageRoll,
 }) {
   const [extraDamage, setExtraDamage] = useState("");
@@ -36,64 +38,7 @@ export default function DamageRollModal({
 
   // Coleta habilidades e itens elegíveis como gatilho de acerto
   const availableTriggers = useMemo(() => {
-    if (!character) return [];
-    const list = [];
-
-    // Fase 5 (T2): fichas v2 guardam habilidades e inventário em mapas.
-    const abilities = Object.values(character.abilities || {});
-    abilities.forEach((ab) => {
-      const trig = ab.trigger || "active";
-      const isHitTrigger = trig === "on_hit" || trig === "on_crit";
-      if (!showAllAbilities && !isHitTrigger) return;
-      const formula = String(
-        ab.effectFormula || ab.secondaryFormula || ab.formula || ""
-      ).trim();
-      const costRes = ab.cost?.resource || "mp";
-      const costAmt = Number(ab.cost?.amount ?? ab.costMp ?? 0);
-      list.push({
-        uid: `ab_${ab.id}`,
-        sourceType: "ability",
-        id: ab.id,
-        name: ab.name || "Habilidade",
-        icon: ab.icon || "sword",
-        trigger: trig,
-        formula,
-        costResource: costRes,
-        costAmount: costAmt,
-        costMp: costRes === "mp" ? costAmt : Number(ab.costMp || 0),
-        costHp: costRes === "hp" ? costAmt : Number(ab.costHp || 0),
-        effectType: ab.effectType || "damage",
-        savingThrow: ab.savingThrow || null,
-        raw: ab,
-      });
-    });
-
-    const inventory = Object.values(character.inventory || {});
-    inventory.forEach((it) => {
-      const trig = it.trigger || "active";
-      const isHitTrigger = trig === "on_hit" || trig === "on_crit";
-      if (!showAllAbilities && !isHitTrigger) return;
-      const formula = String(
-        it.rollFormula || it.effectFormula || it.secondaryFormula || it.formula || ""
-      ).trim();
-      if (!formula && !it.savingThrow?.enabled && !isHitTrigger) return;
-      list.push({
-        uid: `it_${it.id}`,
-        sourceType: "item",
-        id: it.id,
-        name: it.name || "Item",
-        icon: it.icon || "potion_red",
-        trigger: trig,
-        formula,
-        quantity: Number(it.qty ?? it.quantity ?? 1),
-        consumeOnUse: Boolean(it.consumeOnUse),
-        effectType: it.effectType || "damage",
-        savingThrow: it.savingThrow || null,
-        raw: it,
-      });
-    });
-
-    return list;
+    return collectCombatTriggers(character, { includeAll: showAllAbilities });
   }, [character, showAllAbilities]);
 
   const selectedTriggers = useMemo(() => {
@@ -121,6 +66,24 @@ export default function DamageRollModal({
   }, [critFormula, extraDamage, selectedTriggers]);
 
   if (!open || !attackMessage) return null;
+
+  if (characterResolutionError) {
+    return (
+      <WindowModal
+        variant="cp"
+        onClose={onClose}
+        zIndex={Z_LAYERS.modalCombat}
+        maxWidth="440px"
+      >
+        <div style={{ color: "#b91c1c", fontWeight: 800 }} role="alert">
+          {characterResolutionError}
+        </div>
+        <button type="button" className="cp-btn" onClick={onClose}>
+          Fechar
+        </button>
+      </WindowModal>
+    );
+  }
 
   const handleAddTrigger = (uid) => {
     if (!uid) return;

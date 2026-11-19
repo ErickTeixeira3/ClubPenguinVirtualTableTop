@@ -1,11 +1,7 @@
 import {
   collection,
-  doc,
   getDocs,
   query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
   where
 } from "firebase/firestore";
 import { computeAudience } from "../domain/audience.js";
@@ -17,10 +13,7 @@ import {
 } from "../domain/constants.js";
 import { AppError, ERROR_CODES } from "../domain/errors.js";
 import { db } from "../infra/firebase.js";
-import {
-  messageDocPath,
-  messagesCollectionPath
-} from "../infra/firestorePaths.js";
+import { messagesCollectionPath } from "../infra/firestorePaths.js";
 import { createId } from "../infra/ids.js";
 import {
   applyFirestoreResourceDelta,
@@ -30,6 +23,10 @@ import {
   runRtdbIdempotentTransaction
 } from "../infra/transactions.js";
 import { assertClientUpToDate } from "./runtimeConfigService.js";
+import {
+  createChatMessage,
+  updateMessageStatus
+} from "./chatMessageService.js";
 import { messageConverter } from "../infra/converters/firestoreConverters.js";
 
 export {
@@ -50,7 +47,6 @@ export async function createPendingOperationMessage({
   campaignId,
   messageId = null,
   opId = null,
-  seq = null,
   sender,
   visibleTo = null,
   visibility = MESSAGE_VISIBILITY.PUBLIC,
@@ -86,36 +82,28 @@ export async function createPendingOperationMessage({
         senderUid: resolvedSenderUid
       }).visibleTo;
 
-  const payload = messageConverter.toFirestore({
-    id: resolvedMessageId,
+  const created = await createChatMessage({
+    firestoreDb,
     campaignId,
-    type,
-    seq,
-    visibility,
-    visibleTo: resolvedVisibleTo,
+    messageId: resolvedMessageId,
     sender,
+    visibleTo: resolvedVisibleTo,
+    visibility,
+    gmId,
+    type,
     status: MESSAGE_STATUS.PENDING,
     opId: resolvedOpId,
     content,
     emote,
     skillPing,
-    roll,
-    isDeleted: false,
-    deletedAt: null,
-    deletedBy: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
+    roll
   });
-
-  await setDoc(
-    doc(firestoreDb, messageDocPath(campaignId, resolvedMessageId)),
-    payload
-  );
 
   return {
     opId: resolvedOpId,
     messageId: resolvedMessageId,
-    payload
+    payload: created,
+    seq: created.seq
   };
 }
 
@@ -133,17 +121,12 @@ export async function commitOperationStatus({
       { status }
     );
   }
-  if (!campaignId || !messageId) {
-    throw new AppError(
-      ERROR_CODES.MISSING_REQUIRED_FIELD,
-      "campaignId and messageId are required to commit an operation."
-    );
-  }
-  await updateDoc(doc(firestoreDb, messageDocPath(campaignId, messageId)), {
-    status,
-    updatedAt: serverTimestamp()
+  return updateMessageStatus({
+    firestoreDb,
+    campaignId,
+    messageId,
+    status
   });
-  return { messageId, status };
 }
 
 export async function runSagaOperation({

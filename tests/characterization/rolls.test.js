@@ -14,7 +14,7 @@ import { sourceContains } from "../support/sourcePin.js";
 vi.mock("../../src/infra/firebase.js", () => ({ db: {} }));
 vi.mock("firebase/firestore", () => ({}));
 
-const rollService = await import("../../src/services/rollService.js");
+const rollService = await import("../../src/engines/rolls/index.js");
 const {
   buildHotbarSlotFromRoll,
   buildShortcutRollParams,

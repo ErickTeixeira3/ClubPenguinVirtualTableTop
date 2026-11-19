@@ -10,6 +10,7 @@ export default function SavingThrowModal({
   onClose,
   savingThrowRequest,
   defenderCharacter,
+  characterResolutionError = null,
   onExecuteSavingThrow,
 }) {
   const [selectedAttrKey, setSelectedAttrKey] = useState("vigor");
@@ -134,7 +135,26 @@ export default function SavingThrowModal({
 
   if (!open || !savingThrowRequest) return null;
 
-  const dc = Number(savingThrowRequest.dc) || 10;
+  if (characterResolutionError) {
+    return (
+      <WindowModal
+        variant="cp"
+        onClose={onClose}
+        zIndex={Z_LAYERS.modalCombat}
+        maxWidth="440px"
+      >
+        <div style={{ color: "#b91c1c", fontWeight: 800 }} role="alert">
+          {characterResolutionError}
+        </div>
+        <button type="button" className="cp-btn" onClick={onClose}>
+          Fechar
+        </button>
+      </WindowModal>
+    );
+  }
+
+  const parsedDc = Number(savingThrowRequest.dc);
+  const dc = Number.isFinite(parsedDc) ? parsedDc : 10;
 
   const handleAddAssist = (uid) => {
     if (!uid) return;

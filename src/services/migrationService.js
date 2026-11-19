@@ -9,8 +9,17 @@ import {
 import { computeAudience } from "../domain/audience.js";
 import { db, DEFAULT_CAMPAIGN_ID } from "../infra/firebase.js";
 import { normalizeText } from "../utils/stringUtils";
-import { isCustomAttributeShortcutIcon } from "./rollService";
 import { withRequiredAudience } from "./visibilityService";
+
+const DEFAULT_ATTRIBUTE_SHORTCUT_ICONS = new Set(["sword", "clover"]);
+
+function isCustomAttributeShortcutIcon(entry) {
+  if (!entry) return false;
+  if (entry.customIcon) return true;
+  const icon = String(entry.icon || "").trim();
+  if (!icon || DEFAULT_ATTRIBUTE_SHORTCUT_ICONS.has(icon)) return false;
+  return normalizeText(icon) !== normalizeText(entry.name);
+}
 
 const migratedCampaignsSession = new Set();
 // Fase 6.2 (A5): última falha por campanha, para tentar de novo sem martelar o Firestore

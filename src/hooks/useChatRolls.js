@@ -2,13 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../infra/firebase.js";
 import {
+  adaptMessageForLegacyChat,
+  compareMessagesBySeq
+} from "../engines/chat/messageSelector.js";
+import {
   executeChatRollMessage,
   sendEmoteChatMessage,
   sendSkillPingChatMessage,
   sendTextChatMessage,
   softDeleteChatMessage,
   updateChatMessageRollData
-} from "../services/rollService";
+} from "../services/chatMessageService.js";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
 import { useMembers } from "../contexts/MembersContext";
@@ -37,12 +41,14 @@ export function useChatRolls() {
       msgQuery,
       (snapshot) => {
         const list = snapshot.docs
-          .map((d) => ({
-            id: d.id,
-            ...d.data()
-          }))
+          .map((d) =>
+            adaptMessageForLegacyChat({
+              id: d.id,
+              ...d.data()
+            })
+          )
           .filter((m) => !m.isDeleted);
-        list.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+        list.sort(compareMessagesBySeq);
         setRawMessages(list.slice(-100));
       },
       (err) => {
@@ -95,10 +101,11 @@ export function useChatRolls() {
       campaignId,
       campaign: campaignWithPlayers,
       user,
+      isGM,
       ...params
     });
 
-  // Fase 3.1 (errata Fase 3 §4.2): escritas delegadas ao rollService (hook só assina e vincula contexto)
+  // Escritas delegadas ao serviço de mensagens; o hook só assina e vincula contexto.
   const updateMessageRollData = async (msgId, partialRollData) => {
     if (!isGM || !campaignId || !msgId) return;
     await updateChatMessageRollData({

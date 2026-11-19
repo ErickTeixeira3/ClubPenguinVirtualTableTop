@@ -3,7 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useMembers } from "../../contexts/MembersContext";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
 import { ROLL_KINDS } from "../../engines/combatEngine";
-import { resolveSpeakerIdentity } from "../../services/rollService";
+import { resolveSpeakerIdentity } from "../../domain/speakerIdentity.js";
 import MessageAvatar from "./MessageAvatar";
 import EmoteMessageCard from "./EmoteMessageCard";
 import SkillPingCard from "./SkillPingCard";
@@ -277,7 +277,7 @@ export default function ChatSidebarPanel({
                 msg={msg}
                 campaignId={campaignId}
                 allCharacters={allCharacters}
-                activeCharacter={activeCharacter}
+                canEditCharacter={canEditCharacter}
                 onExecuteRoll={onExecuteRoll}
               />
             );

@@ -1,17 +1,17 @@
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { selectMessageView } from "../../engines/chat/messageSelector.js";
 
 /**
  * Fase 5: avatar do remetente no chat, extraído de ChatSidebarPanel.jsx (conteúdo inalterado).
  */
 export default function MessageAvatar({ msg, campaignId }) {
-  // Fase 3.1 (V-08): mensagens de jogador referenciam a foto por senderAvatarMediaId (sem Base64)
-  const isCharacterMessage = Boolean(msg.characterId || msg.characterMediaId);
+  const view = selectMessageView(msg);
   const { url } = useMediaUrl(
-    isCharacterMessage ? msg.characterMediaId : msg.senderAvatarMediaId || null,
-    msg.senderPhotoURL || null,
+    view.sender.image?.mediaId || null,
+    view.sender.image?.url || null,
     campaignId
   );
-  const resolvedUrl = msg.senderPhotoURL || url || null;
+  const resolvedUrl = view.sender.image?.url || url || null;
 
   if (resolvedUrl) {
     return (
@@ -28,7 +28,7 @@ export default function MessageAvatar({ msg, campaignId }) {
     );
   }
 
-  const initial = (msg.senderName || "P").trim().slice(0, 1).toUpperCase();
+  const initial = (view.sender.displayName || "P").trim().slice(0, 1).toUpperCase();
   return (
     <div
       style={{

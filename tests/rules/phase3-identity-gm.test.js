@@ -485,25 +485,39 @@ describe("B1 — Identidade e associação à campanha", () => {
     });
     expect(created).toEqual({ campaignId: newCampId, gmId: "admin1" });
 
-    // O Mestre inicializa state/chat com lastSeq = 0 e o contador avança junto com a mensagem.
-    await assertSucceeds(
-      setDoc(doc(adminFs, `campaigns/${newCampId}/state/chat`), {
-        campaignId: newCampId,
-        lastSeq: 0,
-        lastMessageId: null
-      })
+    // createCampaign cria state/chat no mesmo lote de bootstrap.
+    const initialChatState = await assertSucceeds(
+      getDoc(doc(adminFs, `campaigns/${newCampId}/state/chat`))
     );
+    expect(initialChatState.data()).toMatchObject({
+      campaignId: newCampId,
+      lastSeq: 0,
+      lastMessageId: null
+    });
     const msgBatch = writeBatch(adminFs);
     msgBatch.set(doc(adminFs, `campaigns/${newCampId}/messages/m1`), {
       campaignId: newCampId,
       seq: 1,
       type: "text",
-      senderId: "admin1",
+      visibility: "public",
       visibleTo: ["ALL"],
+      sender: {
+        uid: "admin1",
+        characterId: null,
+        displayName: "Admin",
+        image: { mediaId: null, url: null }
+      },
+      status: "committed",
+      opId: null,
       content: "Bem-vindos",
-      isDeleted: false
+      isDeleted: false,
+      deletedAt: null,
+      deletedBy: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     });
     msgBatch.update(doc(adminFs, `campaigns/${newCampId}/state/chat`), {
+      campaignId: newCampId,
       lastSeq: 1,
       lastMessageId: "m1"
     });

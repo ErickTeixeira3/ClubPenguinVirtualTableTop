@@ -31,6 +31,9 @@ import {
   LEGACY_NOTE_KEYS,
   validateNote
 } from "../../../src/domain/models/note.js";
+import { validateChatState } from "../../../src/domain/models/chatState.js";
+import { validateMessage } from "../../../src/domain/models/message.js";
+import { validatePendingCost } from "../../../src/domain/models/pendingCost.js";
 import {
   LEGACY_PING_KEYS,
   validatePing
@@ -55,6 +58,18 @@ const LEGACY_CHAR_TOP_FIELDS = [
 const LEGACY_FOLDER_TOP_FIELDS = ["id", ...LEGACY_FOLDER_KEYS];
 const LEGACY_COMPENDIUM_TOP_FIELDS = LEGACY_COMPENDIUM_KEYS;
 const LEGACY_NOTE_TOP_FIELDS = ["id", ...LEGACY_NOTE_KEYS];
+const LEGACY_MESSAGE_TOP_FIELDS = [
+  "timestampMs",
+  "rollData",
+  "skillData",
+  "senderId",
+  "senderName",
+  "senderPhotoURL",
+  "senderAvatarMediaId",
+  "characterId",
+  "characterMediaId",
+  "icon"
+];
 
 function decodeSnapshotValue(value) {
   if (Array.isArray(value)) return value.map(decodeSnapshotValue);
@@ -403,6 +418,124 @@ const noteV2Validator = {
             code: err.code || "INVALID_NOTE_V2"
           });
         }
+      }
+    }
+
+    return violations;
+  }
+};
+
+const messagesV2Validator = {
+  id: "messages-v2",
+  check({ documents }) {
+    const violations = [];
+    const campaigns = new Map();
+    const chatStateCampaigns = new Set(
+      Object.keys(documents || {})
+        .map((path) => /^campaigns\/([^/]+)\/state\/chat$/.exec(path)?.[1] || null)
+        .filter(Boolean)
+    );
+
+    for (const [docPath, rawDoc] of Object.entries(documents || {})) {
+      const messageMatch = /^campaigns\/([^/]+)\/messages\/([^/]+)$/.exec(docPath);
+      if (messageMatch && rawDoc && typeof rawDoc === "object") {
+        const [, campaignId, messageId] = messageMatch;
+        // A fatia de mensagens só passa a ser normativa depois da M008, que cria state/chat.
+        if (!chatStateCampaigns.has(campaignId)) continue;
+        if (!campaigns.has(campaignId)) {
+          campaigns.set(campaignId, { seqs: new Map(), maxSeq: 0, lastMessageId: null });
+        }
+        const bucket = campaigns.get(campaignId);
+        for (const legacyField of LEGACY_MESSAGE_TOP_FIELDS) {
+          if (Object.hasOwn(rawDoc, legacyField)) {
+            violations.push({ path: docPath, code: `LEGACY_FIELD_${legacyField}` });
+          }
+        }
+        const decoded = decodeSnapshotValue(rawDoc);
+        const candidate = {
+          ...decoded,
+          id: messageId,
+          campaignId: decoded.campaignId ?? campaignId
+        };
+        const result = validateMessage(candidate);
+        if (!result.ok) {
+          for (const err of result.errors) {
+            violations.push({ path: docPath, code: err.code || "INVALID_MESSAGE_V2" });
+          }
+        }
+        if (Number.isInteger(decoded.seq) && decoded.seq > 0) {
+          if (bucket.seqs.has(decoded.seq)) {
+            violations.push({ path: docPath, code: "DUPLICATE_MESSAGE_SEQ" });
+          } else {
+            bucket.seqs.set(decoded.seq, messageId);
+          }
+          if (decoded.seq > bucket.maxSeq) {
+            bucket.maxSeq = decoded.seq;
+            bucket.lastMessageId = messageId;
+          }
+        }
+        continue;
+      }
+
+      const pendingMatch = /^campaigns\/([^/]+)\/pendingCosts\/([^/]+)$/.exec(docPath);
+      if (pendingMatch && rawDoc && typeof rawDoc === "object") {
+        const [, campaignId, opId] = pendingMatch;
+        const decoded = decodeSnapshotValue(rawDoc);
+        const result = validatePendingCost({
+          ...decoded,
+          id: opId,
+          opId: decoded.opId ?? opId,
+          campaignId: decoded.campaignId ?? campaignId
+        });
+        if (!result.ok) {
+          for (const err of result.errors) {
+            violations.push({ path: docPath, code: err.code || "INVALID_PENDING_COST_V2" });
+          }
+        }
+      }
+    }
+
+    for (const [campaignId, bucket] of campaigns.entries()) {
+      const statePath = `campaigns/${campaignId}/state/chat`;
+      const rawState = documents?.[statePath];
+      if (!rawState || typeof rawState !== "object") {
+        violations.push({ path: statePath, code: "MISSING_CHAT_STATE" });
+        continue;
+      }
+      const decodedState = decodeSnapshotValue(rawState);
+      if (decodedState.campaignId !== campaignId) {
+        violations.push({ path: statePath, code: "CHAT_STATE_CAMPAIGN_MISMATCH" });
+      }
+      const stateResult = validateChatState(decodedState);
+      if (!stateResult.ok) {
+        for (const err of stateResult.errors) {
+          violations.push({ path: statePath, code: err.code || "INVALID_CHAT_STATE" });
+        }
+      }
+      if (decodedState.lastSeq !== bucket.maxSeq) {
+        violations.push({ path: statePath, code: "CHAT_STATE_LAST_SEQ_MISMATCH" });
+      }
+      if ((decodedState.lastMessageId ?? null) !== bucket.lastMessageId) {
+        violations.push({ path: statePath, code: "CHAT_STATE_LAST_MESSAGE_MISMATCH" });
+      }
+    }
+
+    for (const [docPath, rawDoc] of Object.entries(documents || {})) {
+      const stateMatch = /^campaigns\/([^/]+)\/state\/chat$/.exec(docPath);
+      if (!stateMatch || campaigns.has(stateMatch[1])) continue;
+      const campaignId = stateMatch[1];
+      const decodedState = decodeSnapshotValue(rawDoc);
+      const stateResult = validateChatState(decodedState);
+      if (!stateResult.ok) {
+        for (const err of stateResult.errors) {
+          violations.push({ path: docPath, code: err.code || "INVALID_CHAT_STATE" });
+        }
+      }
+      if (decodedState.campaignId !== campaignId) {
+        violations.push({ path: docPath, code: "CHAT_STATE_CAMPAIGN_MISMATCH" });
+      }
+      if (decodedState.lastSeq !== 0 || decodedState.lastMessageId !== null) {
+        violations.push({ path: docPath, code: "CHAT_STATE_WITHOUT_MESSAGES" });
       }
     }
 
@@ -762,5 +895,6 @@ export const AUDIT_VALIDATORS = [
   compendiumEntryV2Validator,
   folderV2Validator,
   noteV2Validator,
+  messagesV2Validator,
   rtdbV2Validator
 ];

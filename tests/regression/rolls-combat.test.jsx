@@ -1,7 +1,7 @@
 // Regressão portada de auditoria_refatoracao/validar-regressoes.mjs: A14, A15 (seletor), A18-A19, A21,
 // A22, A23, A24-A27 e A33 (spawn). Não portados, por deixarem de valer no v2: A15 `attackWhenTargeted`
-// (sai na Fase 9), A16-A17 (migração dentro do app, Fase 13) e A20 (protocolo de resistência em
-// localStorage, que sai na Fase 9).
+// (removido na Fase 9), A16-A17 (migração dentro do app, Fase 13) e A20 (protocolo de resistência em
+// localStorage, removido na Fase 9).
 // Correção do porte (A21): o script original passava `costResource`/`costAmount`, que executeChatRollMessage
 // ignora, e por isso nunca exercitava o desconto. Aqui o custo vai em `cost`, com controle positivo (PC).
 import { renderToStaticMarkup } from "react-dom/server";
@@ -16,13 +16,20 @@ vi.mock("../../src/infra/firebase.js", async () => (await import("../support/fak
 const { ROLL_KINDS, evaluateActorAct, normalizeCombatState, resolveTokenTargetData } = await import(
   "../../src/engines/combatEngine.js"
 );
-const rollService = await import("../../src/services/rollService.js");
+const rollService = {
+  ...(await import("../../src/engines/rolls/index.js")),
+  ...(await import("../../src/services/chatMessageService.js")),
+  ...(await import("../../src/domain/speakerIdentity.js"))
+};
 const combatService = await import("../../src/services/combatService.js");
 const { readPendingAvatarDataUrl, savePendingAvatarDataUrl } = await import("../../src/infra/pendingAvatarStore.js");
 const SheetRollsTab = (await import("../../src/components/sheets/tabs/SheetRollsTab.jsx")).default;
 
 beforeEach(() => {
   resetFakeDb();
+  fakeDb.collections.set("campaigns/main-table/state", [
+    { id: "chat", campaignId: "main-table", lastSeq: 0, lastMessageId: null }
+  ]);
   vi.spyOn(Math, "random").mockReturnValue(0.5);
 });
 
@@ -41,8 +48,8 @@ describe("A14: /r com alvos", () => {
         { id: "t2", defense: 18, sceneId: "s1" }
       ]
     });
-    expect(msg.rollData.targetInfo.targets).toHaveLength(2);
-    expect(msg.rollData.targetInfo.isHit).toBeNull();
+    expect(msg.roll.targets).toHaveLength(2);
+    expect(msg.roll.hitEvaluation).toEqual({ status: "none", results: [] });
   });
 });
 
@@ -123,7 +130,10 @@ describe("A21: custo de habilidade de NPC sem instância identificável", () => 
         updateCharacterResource
       })
     );
-    expect(msg.rollData.costPaid).toBeNull();
+    expect(msg.status).toBe("committed");
+    expect(msg.roll.costs).toEqual([
+      { kind: "resource", characterId: "npc_1", resource: "mp", amount: 3 }
+    ]);
     expect(updateCharacterResource).not.toHaveBeenCalled();
   });
 
@@ -140,7 +150,7 @@ describe("A21: custo de habilidade de NPC sem instância identificável", () => 
       })
     );
     expect(updateCharacterResource).toHaveBeenCalledWith("pc_1", "mp", 12);
-    expect(msg.rollData.costPaid).toEqual({ resource: "MP", amount: 3 });
+    expect(msg.status).toBe("committed");
   });
 });
 
@@ -184,7 +194,7 @@ describe("A24-A27: avatares e identidade do remetente", () => {
       character: { id: "c1", name: "Pinguim URL", avatar: { mediaId: null, url: "https://example.invalid/p.png" } },
       user: { uid: "player1" }
     });
-    expect(identity.senderPhotoURL).toBe("https://example.invalid/p.png");
+    expect(identity.image.url).toBe("https://example.invalid/p.png");
   });
 
   it("A25-A26: jogador sem personagem fala como jogador e foto removida não volta à do Google", () => {
@@ -193,7 +203,7 @@ describe("A24-A27: avatares e identidade do remetente", () => {
       user: { uid: "player1", photoURL: "https://example.invalid/google.png" },
       playersMap: { player1: { uid: "player1", avatar: { mediaId: "med_p1", url: null } } }
     });
-    expect(identity).toMatchObject({ type: "player", characterId: null, senderAvatarMediaId: "med_p1", photoURL: null });
+    expect(identity).toMatchObject({ characterId: null, image: { mediaId: "med_p1", url: null }, photoURL: null });
     expect(sourceContains("src/services/profileService.js", 'authProfileUpdates.photoURL = "";')).toBe(true);
   });
 

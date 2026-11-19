@@ -37,6 +37,7 @@ import { inviteConverter, memberConverter } from "../infra/converters/index.js";
 import { db, rtdb } from "../infra/firebase.js";
 import {
   campaignDocPath,
+  chatStateDocPath,
   inviteDocPath,
   invitesCollectionPath,
   memberDocPath,
@@ -371,6 +372,11 @@ export async function createCampaign({
     doc(firestoreDb, memberDocPath(targetCampaignId, user.uid)),
     toMemberDoc(memberEntity)
   );
+  batch.set(doc(firestoreDb, chatStateDocPath(targetCampaignId)), {
+    campaignId: targetCampaignId,
+    lastSeq: 0,
+    lastMessageId: null
+  });
   try {
     await batch.commit();
   } catch (err) {

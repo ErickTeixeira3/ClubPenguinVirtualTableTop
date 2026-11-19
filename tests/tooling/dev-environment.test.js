@@ -122,7 +122,7 @@ describe("scripts/check-layers.mjs", () => {
     expect(has("pureza", "src/engines/diceEngine.js", "Math.random")).toBe(true);
     expect(has("sdk-fora-de-services-infra", "src/hooks/useScenes.js", "firebase/firestore")).toBe(true);
     expect(has("sdk-fora-de-services-infra", "src/hooks/useScenes.js", "../infra/firebase.js")).toBe(true);
-    expect(has("camadas", "src/components/chat/RollMessageCard.jsx", "components → services")).toBe(true);
+    expect(has("camadas", "src/components/chat/RollMessageCard.jsx", "components → services")).toBe(false);
     expect(has("fora-da-arquitetura", "src/utils/stringUtils.js", "utils/")).toBe(true);
     expect(report.violations.some((v) => v.file === "src/services/rollService.js" && v.rule !== "camadas")).toBe(false);
     expect(report.total).toBe(report.violations.length);

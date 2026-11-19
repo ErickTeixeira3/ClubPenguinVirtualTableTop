@@ -290,7 +290,7 @@ describe("desconto pelo cliente do Mestre real (VTTLayout/TurnPolicy/useTokenDra
     expect(
       sourceContains(
         VTT,
-        "const actCheck = evaluateActorAct(combatState, actor, resolvedActionKind, { isGM, isFollowUp: Boolean(rollParams.isFollowUp || rollParams.parentMessageId) });"
+        "const actCheck = turnPolicy.canActorAct(actor, resolvedActionKind, { isGM, isFollowUp: Boolean(rollParams.isFollowUp || rollParams.parentMessageId) });"
       )
     ).toBe(true);
     expect(

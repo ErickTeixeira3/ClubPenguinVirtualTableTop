@@ -1,22 +1,32 @@
 import { TRIGGER_TYPES } from "../../engines/combatEngine";
+import { buildShortcutRollParams } from "../../engines/rolls/shortcutResolver.js";
+import { adaptMessageForLegacyChat } from "../../engines/chat/messageSelector.js";
 import { renderCpFlashIcon } from "../sheets/CpFlashIcons";
-import { inferAbilityRollKind } from "../../services/rollService";
 import MessageAvatar from "./MessageAvatar";
 
 /**
  * Fase 5: card de habilidade/perícia pingada no chat, extraído de ChatSidebarPanel.jsx (JSX inalterado).
  */
 export default function SkillPingCard({
-  msg,
+  msg: rawMessage,
   campaignId,
   allCharacters,
-  activeCharacter,
+  canEditCharacter,
   onExecuteRoll
 }) {
+  const msg = adaptMessageForLegacyChat(rawMessage);
   const sk = msg.skillData;
+  if (!sk) return null;
   const isSecret = msg.visibility && msg.visibility !== "public";
   const trigMeta = TRIGGER_TYPES.find((t) => t.id === (sk.trigger || "active"));
   const borderColor = sk.elementColor || "#02529c";
+  const sourceCharacter = msg.sender?.characterId
+    ? allCharacters.find((character) => character.id === msg.sender.characterId) || null
+    : null;
+  const canRollAsSource = Boolean(
+    sourceCharacter &&
+      (typeof canEditCharacter !== "function" || canEditCharacter(sourceCharacter))
+  );
 
   return (
     <div
@@ -225,28 +235,21 @@ export default function SkillPingCard({
       {(sk.hitFormula || sk.effectFormula) && (
         <button
           type="button"
+          disabled={!canRollAsSource}
           onClick={() => {
-            const char = allCharacters.find((c) => c.id === msg.characterId) || activeCharacter;
+            if (!canRollAsSource) return;
+            const rollParams = buildShortcutRollParams(
+              {
+                ...sk,
+                color: sk.elementColor,
+                rollKind: sk.rollKind || null
+              },
+              sourceCharacter
+            );
             onExecuteRoll?.({
-              title: sk.name,
-              categoryColor: sk.elementColor || "#02529c",
-              description: sk.description || "",
-              character: char,
-              primaryFormula: sk.hitFormula || "",
-              primaryLabel: sk.hitFormula ? "Acerto" : "Efeito",
-              // Fase 3.1 (V-11): perícia => CHECK; só efeito => conforme effectType (cura => HEAL)
-              rollKind: inferAbilityRollKind({
-                hitFormula: sk.hitFormula,
-                effectFormula: sk.effectFormula,
-                effectType: sk.effectType || (sk.effectFormula ? "damage" : null),
-                isSkill: Boolean(sk.attribute)
-              }),
-              secondaryFormula: sk.effectFormula || "",
-              secondaryLabel: "Dano / Efeito",
-              cost: sk.cost,
-              effectType: sk.effectType || (sk.effectFormula ? "damage" : null),
-              savingThrow: sk.savingThrow || null,
-              icon: sk.icon || sk.name,
+              ...rollParams,
+              // FUN-05: trigger é metadado explícito e não pode se perder no card.
+              trigger: sk.trigger || "active",
               visibility: msg.visibility || "public"
             });
           }}
@@ -259,7 +262,8 @@ export default function SkillPingCard({
             color: "#001b3a",
             fontWeight: 900,
             fontSize: "11px",
-            cursor: "pointer",
+            cursor: canRollAsSource ? "pointer" : "not-allowed",
+            opacity: canRollAsSource ? 1 : 0.55,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

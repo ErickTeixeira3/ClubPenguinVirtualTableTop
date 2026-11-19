@@ -59,7 +59,7 @@ const {
   sendTextChatMessage,
   sendSkillPingChatMessage,
   executeChatRollMessage
-} = await import("../../src/services/rollService.js");
+} = await import("../../src/services/chatMessageService.js");
 const { useScenes } = await import("../../src/hooks/useScenes.js");
 const { useSceneTokens } = await import("../../src/hooks/useSceneTokens.js");
 const { useCharacters } = await import("../../src/hooks/useCharacters.js");
@@ -71,6 +71,9 @@ const flushMicrotasks = () => act(async () => {});
 
 beforeEach(() => {
   resetFakeDb();
+  fakeDb.collections.set("campaigns/camp1/state", [
+    { id: "chat", campaignId: "camp1", lastSeq: 0, lastMessageId: null }
+  ]);
   grantMediaAudienceMock.mockClear();
   uploadCompressedMediaMock.mockClear();
   setActiveSceneMock.mockClear();

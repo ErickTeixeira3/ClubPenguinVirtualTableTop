@@ -5,6 +5,7 @@ import M004CharactersV2 from "./M004-characters-v2.mjs";
 import M005Folders from "./M005-folders.mjs";
 import M006NotesV2 from "./M006-notes-v2.mjs";
 import M007RtdbV2 from "./M007-rtdb-v2.mjs";
+import M008MessagesV2 from "./M008-messages-v2.mjs";
 
 export const MIGRATIONS = [
   M001Identity,
@@ -13,5 +14,6 @@ export const MIGRATIONS = [
   M004CharactersV2,
   M005Folders,
   M006NotesV2,
-  M007RtdbV2
+  M007RtdbV2,
+  M008MessagesV2
 ];

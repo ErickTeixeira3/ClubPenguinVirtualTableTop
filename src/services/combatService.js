@@ -1,14 +1,22 @@
 import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { ID_PREFIXES } from "../domain/constants.js";
+import { AppError, ERROR_CODES } from "../domain/errors.js";
+import { computeModifiedEffectValue } from "../engines/combat/index.js";
 import { db } from "../infra/firebase.js";
+import { characterDocPath, messageDocPath } from "../infra/firestorePaths.js";
+import { createDeterministicSaveId, createId } from "../infra/ids.js";
+import {
+  applyFirestoreResourceDelta,
+  runFirestoreIdempotentTransaction
+} from "../infra/transactions.js";
 import { consumeItem } from "./characterService.js";
+import { runSagaOperation } from "./operationRunner.js";
 import {
   adjustTokenResource,
   spawnCharacterToken
 } from "./tokenService.js";
 import {
-  EFFECT_TYPES,
   advanceTurnInState,
-  computeModifiedEffectValue,
   consumeActionInState,
   consumeMovementInState,
   createCombatantEntry,
@@ -43,6 +51,7 @@ export async function deductActorResources({
   sceneId = null,
   costs = {},
   updateCharacterResource,
+  opId = null
 }) {
   if (!character) return { deducted: false };
   const template = isGmTemplateCharacter(character, campaign, actorToken);
@@ -62,9 +71,18 @@ export async function deductActorResources({
         inHiddenBucket: Boolean(actorToken.inHiddenBucket || actorToken.hidden),
         resourceKey: resKey,
         delta: -amount,
+        opId: opId ? `${opId}_${resKey}` : null,
         user: user || { uid: campaign?.gmId || "gm" }
       });
       deducted = true;
+    } else if (opId && campaignId && character.id) {
+      const result = await applyCharacterCostsIdempotently({
+        campaignId,
+        characterId: character.id,
+        costs: { [resKey]: amount },
+        opId: `${opId}_${resKey}`
+      });
+      deducted = Boolean(result?.applied || result?.duplicate);
     } else if (updateCharacterResource) {
       const currentVal = Number(character.resources?.[resKey]?.current ?? 0);
       await updateCharacterResource(character.id, resKey, Math.max(0, currentVal - amount));
@@ -73,6 +91,129 @@ export async function deductActorResources({
   }
 
   return { deducted, template };
+}
+
+/** Applies all PC resource costs in one idempotent character transaction. */
+export async function applyCharacterCostsIdempotently({
+  firestoreDb = db,
+  campaignId,
+  characterId,
+  costs = {},
+  opId
+}) {
+  const characterRef = doc(
+    firestoreDb,
+    characterDocPath(campaignId, characterId)
+  );
+  return runFirestoreIdempotentTransaction(firestoreDb, characterRef, {
+    opId,
+    mutate: (current) => {
+      const patch = {};
+      for (const key of ["hp", "mp"]) {
+        const amount = Number(costs?.[key]) || 0;
+        if (amount <= 0) continue;
+        const pool = current.resources?.[key] || { current: 0, max: 0 };
+        patch[`resources.${key}.current`] = Math.max(
+          0,
+          Number(pool.current || 0) - amount
+        );
+      }
+      return patch;
+    }
+  });
+}
+
+/**
+ * Canonical pending-message saga for rolls with costs. A crash after the
+ * authority update leaves the message pending; retry uses the same opId.
+ */
+export async function executeCostedRollSaga({
+  firestoreDb = db,
+  campaignId,
+  messagePayload,
+  character = null,
+  actorToken = null,
+  sceneId = null,
+  campaign = null,
+  user = null,
+  costs = {},
+  opId = null,
+  messageId = null,
+  onBeforeEffects = null,
+  onAfterEffects = null
+}) {
+  const resolvedOpId = opId || createId(ID_PREFIXES.OPERATION);
+  return runSagaOperation({
+    firestoreDb,
+    campaignId,
+    messageId,
+    opId: resolvedOpId,
+    messagePayload,
+    onBeforeEffects,
+    onAfterEffects,
+    executeEffects: async () => {
+      if (!character) return { applied: false };
+      if (isGmTemplateCharacter(character, campaign, actorToken)) {
+        const results = [];
+        for (const key of ["hp", "mp"]) {
+          const amount = Number(costs?.[key]) || 0;
+          if (amount <= 0) continue;
+          if (!actorToken?.id || !(actorToken.sceneId || sceneId)) {
+            throw new AppError(
+              ERROR_CODES.INVALID_REFERENCE,
+              "Token ator necessário para descontar custo de NPC."
+            );
+          }
+          results.push(
+            await adjustTokenResource({
+              campaignId,
+              sceneId: actorToken.sceneId || sceneId,
+              token: actorToken,
+              inHiddenBucket: Boolean(actorToken.inHiddenBucket || actorToken.hidden),
+              resourceKey: key,
+              delta: -amount,
+              opId: `${resolvedOpId}_${key}`,
+              user
+            })
+          );
+        }
+        return { applied: results.some((item) => item?.applied), results };
+      }
+      return applyCharacterCostsIdempotently({
+        firestoreDb,
+        campaignId,
+        characterId: character.id,
+        costs,
+        opId: resolvedOpId
+      });
+    }
+  });
+}
+
+export async function executeSavingThrowSaga({
+  saveId,
+  requestMessageId,
+  roll,
+  messagePayload = {},
+  ...sagaOptions
+}) {
+  if (!saveId || !requestMessageId) {
+    throw new AppError(
+      ERROR_CODES.MISSING_REQUIRED_FIELD,
+      "saveId e requestMessageId são obrigatórios."
+    );
+  }
+  return executeCostedRollSaga({
+    ...sagaOptions,
+    messageId: createDeterministicSaveId(saveId),
+    messagePayload: {
+      ...messagePayload,
+      roll: {
+        ...(roll || {}),
+        respondsTo: { messageId: requestMessageId, saveId }
+      }
+    }
+  });
 }
 
 /**
@@ -92,6 +233,7 @@ export async function consumeCombatCosts({
   itemsToConsume = [],
   updateCharacterResource,
   consumeCharacterItem = null,
+  opId = null
 }) {
   if (!character || !Array.isArray(itemsToConsume) || itemsToConsume.length === 0) {
     return { mpChanged: false, hpChanged: false, invChanged: false };
@@ -146,20 +288,22 @@ export async function consumeCombatCosts({
       sceneId,
       costs: { mp: mpCost, hp: hpCost },
       updateCharacterResource,
+      opId,
     });
     deductedResource = Boolean(deductRes?.deducted);
   }
   if (invChanged) {
     if (itemCountsToConsume.size > 0) {
       for (const [targetItemId, count] of itemCountsToConsume.entries()) {
-        if (consumeCharacterItem) {
+        if (consumeCharacterItem && !opId) {
           await consumeCharacterItem(character.id, targetItemId, count);
         } else {
           await consumeItem({
             campaignId: campaignId || character.campaignId,
             charId: character.id,
             itemId: targetItemId,
-            amount: count
+            amount: count,
+            opId: opId ? `${opId}_item_${targetItemId}` : null
           });
         }
       }
@@ -174,154 +318,104 @@ export async function consumeCombatCosts({
 }
 
 /**
- * Aplica efeito de dano/cura/PE no alvo respeitando sincronização Ficha↔Token:
- * - Players (PC): atualiza a ficha no Firestore; a projeção atualiza os tokens do PC (U3).
- * - Mestre / NPC (Matriz) ou token livre: ajusta `tokenSecrets` do token individual (Fase 8, T4).
+ * GM-only effect command for message v2. The target comes exclusively from
+ * the immutable message snapshot; UI selection can never redirect it.
  */
-export async function applyCombatEffectToTarget({
+export async function applyCombatEffect({
+  firestoreDb = db,
   campaignId,
-  campaign,
   user,
-  isGM,
-  msg,
+  message,
+  opId = null,
   baseValue,
   scaleMode = "full",
   customValue = null,
   effectType = "damage",
   manualModifiers = [],
-  boardTokens = [],
-  targetedToken = null,
-  selectedTokenOnBoard = null,
-  activeScene = null,
-  allCharacters = [],
-  updateCharacterResource,
-  updateMessageRollData,
+  sourceCharacter = null,
+  targetCharacter = null,
+  targetToken = null
 }) {
-  if (!isGM || !msg) return null;
-
-  const msgTarget = msg.rollData?.targetInfo || null;
-  const targetTokenId =
-    msgTarget?.tokenId || targetedToken?.id || selectedTokenOnBoard?.id || null;
-  const targetSceneId =
-    msgTarget?.sceneId ||
-    targetedToken?.sceneId ||
-    activeScene?.id ||
-    campaign?.activeSceneId ||
-    null;
-  const targetCharId =
-    msgTarget?.characterId ||
-    targetedToken?.characterId ||
-    selectedTokenOnBoard?.characterId ||
-    null;
-
-  // Fase 3.1 (V-04): o token é localizado PRIMEIRO pelo id exato. A busca por characterId só
-  // ocorre quando não há id de token, e apenas se houver um único token daquela ficha no
-  // tabuleiro — com vários inimigos idênticos, nunca se aplica o efeito "no primeiro que casar".
-  const boardList = Array.isArray(boardTokens) ? boardTokens : [];
-  let liveToken = null;
-  if (targetTokenId) {
-    liveToken =
-      boardList.find((t) => t.id === targetTokenId) ||
-      (targetedToken?.id === targetTokenId ? targetedToken : null) ||
-      (selectedTokenOnBoard?.id === targetTokenId ? selectedTokenOnBoard : null) ||
-      null;
-  } else if (targetCharId) {
-    const sameCharTokens = boardList.filter((t) => t.characterId === targetCharId);
-    liveToken = sameCharTokens.length === 1 ? sameCharTokens[0] : null;
+  if (!message?.id) {
+    throw new AppError(ERROR_CODES.MISSING_REQUIRED_FIELD, "message.id is required.");
   }
-
-  const effectiveCharId = targetCharId || liveToken?.characterId || null;
-  const targetChar = effectiveCharId
-    ? allCharacters.find((c) => c.id === effectiveCharId) || null
-    : null;
-  const sourceChar = msg.characterId
-    ? allCharacters.find((c) => c.id === msg.characterId) || null
-    : null;
-
-  if (!targetChar && !liveToken && !targetTokenId) return null;
-
+  const target = message.roll?.targets?.[0] || null;
+  if (!target?.tokenId) {
+    throw new AppError(
+      ERROR_CODES.INVALID_REFERENCE,
+      "A mensagem não contém um alvo de token."
+    );
+  }
+  if (targetToken?.id && targetToken.id !== target.tokenId) {
+    throw new AppError(ERROR_CODES.INVALID_REFERENCE, "Token alvo divergente da mensagem.");
+  }
+  const resolvedOpId = opId || createId(ID_PREFIXES.OPERATION);
   const computed = computeModifiedEffectValue({
     baseValue,
     scaleMode,
     customValue,
     effectType,
-    sourceCharacter: sourceChar,
-    targetCharacter: targetChar,
-    targetToken: liveToken,
-    manualModifiers,
+    sourceCharacter,
+    targetCharacter,
+    targetToken,
+    manualModifiers
   });
+  const resourceKey = computed.resourceKey || null;
+  let authorityResult = { applied: false };
 
-  const resKey = computed.resourceKey || "hp";
-
-  // Fase 3.1 (V-17) / Fase 8: instância de matriz/livre segue a mesma regra de syncTokenUpdatesToCharacter.
-  const isGmTemplate = Boolean(
-    isGmTemplateCharacter(targetChar, campaign, liveToken) &&
-      (liveToken || targetTokenId)
-  );
-
-  const effectiveSceneId =
-    liveToken?.sceneId ||
-    targetSceneId ||
-    activeScene?.id ||
-    campaign?.activeSceneId;
-
-  const isTokenResource = resKey === "hp" || resKey === "mp";
-
-  if (targetChar && resKey && !isGmTemplate && updateCharacterResource) {
-    const resObj = targetChar.resources?.[resKey] || { current: 20, max: 20 };
-    const maxVal = Number(resObj.max) || 9999;
-    const nextVal = Math.max(
-      0,
-      Math.min(maxVal, (Number(resObj.current) || 0) + computed.resourceDelta)
-    );
-    // Fase 3.1 (V-14) / Fase 8: a ficha é a autoridade do PC; a projeção espelha nos tokens.
-    await updateCharacterResource(targetChar.id, resKey, nextVal);
-  } else if (
-    isGmTemplate &&
-    isTokenResource &&
-    liveToken &&
-    effectiveSceneId &&
-    campaignId &&
-    computed.resourceDelta !== 0
-  ) {
-    // Fase 8 (T4): NPC/token livre ajusta `tokenSecrets` transacionalmente e projeta `bars`.
-    await adjustTokenResource({
-      campaignId,
-      sceneId: effectiveSceneId,
-      token: liveToken,
-      inHiddenBucket: Boolean(liveToken.inHiddenBucket || liveToken.hidden),
-      resourceKey: resKey,
-      delta: computed.resourceDelta,
-      user: user || { uid: campaign?.gmId || "gm" }
-    });
-  }
-
-  const effMeta =
-    EFFECT_TYPES.find((e) => e.id === computed.effectType) || EFFECT_TYPES[0];
-  const targetDisplayName =
-    targetChar?.name || liveToken?.name || msgTarget?.name || "Alvo";
-
-  const prevApplied = Array.isArray(msg.rollData?.appliedEffects)
-    ? msg.rollData.appliedEffects
-    : [];
-
-  if (updateMessageRollData) {
-    await updateMessageRollData(msg.id, {
-      appliedEffects: [
-        ...prevApplied,
+  if (resourceKey && computed.resourceDelta !== 0) {
+    if (targetCharacter?.type === "pc") {
+      authorityResult = await applyFirestoreResourceDelta(
+        firestoreDb,
+        doc(firestoreDb, characterDocPath(campaignId, targetCharacter.id)),
         {
-          effectType: computed.effectType,
-          label: effMeta.label,
-          scaleMode,
-          finalValue: computed.finalValue,
-          targetName: targetDisplayName,
-          timestampMs: Date.now(),
-        },
-      ],
-    });
+          resourceKey,
+          delta: computed.resourceDelta,
+          opId: resolvedOpId
+        }
+      );
+    } else {
+      if (!targetToken || !target.sceneId) {
+        throw new AppError(
+          ERROR_CODES.INVALID_REFERENCE,
+          "Segredo autoritativo do token alvo indisponível."
+        );
+      }
+      authorityResult = await adjustTokenResource({
+        campaignId,
+        sceneId: target.sceneId,
+        token: targetToken,
+        inHiddenBucket: Boolean(targetToken.inHiddenBucket || targetToken.hidden),
+        resourceKey,
+        delta: computed.resourceDelta,
+        opId: resolvedOpId,
+        user
+      });
+    }
   }
 
-  return computed;
+  const appliedEffect = {
+    effectType: computed.effectType,
+    scaleMode,
+    finalValue: computed.finalValue,
+    targetTokenId: target.tokenId,
+    targetLabel: target.label || targetCharacter?.name || targetToken?.label || "Alvo",
+    appliedBy: user?.uid || null,
+    at: serverTimestamp()
+  };
+  await updateDoc(
+    doc(firestoreDb, messageDocPath(campaignId, message.id)),
+    {
+      [`roll.appliedEffects.${resolvedOpId}`]: appliedEffect,
+      updatedAt: serverTimestamp()
+    }
+  );
+  return {
+    opId: resolvedOpId,
+    computed,
+    authorityResult,
+    appliedEffect
+  };
 }
 
 /**
@@ -559,204 +653,4 @@ export async function consumeCampaignTurnAction(
 ) {
   const next = consumeActionInState(currentCombatState, actorRef, actionKind);
   return persistCombatState(campaignId, next);
-}
-
-const SAVE_CLAIMS_KEY_PREFIX = "cp_vtt_save_claims_v1_";
-const OPEN_SHEETS_KEY_PREFIX = "cp_vtt_open_sheets_v1_";
-const SAVE_CLAIM_TTL_MS = 10 * 60 * 1000;
-const SAVE_SUBMITTING_TTL_MS = 30 * 1000;
-const OPEN_SHEET_TTL_MS = 30 * 60 * 1000;
-const MAX_SAVED_CLAIMS = 50;
-
-function safeLocalStorage() {
-  try {
-    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
-  } catch {
-    return null;
-  }
-}
-
-function readStorageJson(key) {
-  const storage = safeLocalStorage();
-  if (!storage) return {};
-  try {
-    const raw = storage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeStorageJson(key, map) {
-  const storage = safeLocalStorage();
-  if (!storage) return;
-  try {
-    const entries = Object.entries(map || {});
-    const trimmed =
-      entries.length > MAX_SAVED_CLAIMS
-        ? Object.fromEntries(
-            entries
-              .sort((a, b) => (Number(a[1]?.updatedAt) || 0) - (Number(b[1]?.updatedAt) || 0))
-              .slice(-MAX_SAVED_CLAIMS)
-          )
-        : map;
-    storage.setItem(key, JSON.stringify(trimmed));
-  } catch {
-    // ignora quota/bloqueio de storage
-  }
-}
-
-/** Registro leve das fichas destacadas abertas (preferência de janela no A20). */
-export function registerOpenStandaloneSheet(campaignId, sheetId, windowId) {
-  if (!campaignId || !sheetId || !windowId) return;
-  const key = `${OPEN_SHEETS_KEY_PREFIX}${campaignId}`;
-  const map = readStorageJson(key);
-  map[sheetId] = { windowId, updatedAt: Date.now() };
-  writeStorageJson(key, map);
-}
-
-export function unregisterOpenStandaloneSheet(campaignId, sheetId, windowId) {
-  if (!campaignId || !sheetId) return;
-  const key = `${OPEN_SHEETS_KEY_PREFIX}${campaignId}`;
-  const map = readStorageJson(key);
-  if (map[sheetId] && (!windowId || map[sheetId].windowId === windowId)) {
-    delete map[sheetId];
-    writeStorageJson(key, map);
-  }
-}
-
-export function hasOpenStandaloneSheet(campaignId, targetCharacterId) {
-  if (!campaignId || !targetCharacterId) return false;
-  const key = `${OPEN_SHEETS_KEY_PREFIX}${campaignId}`;
-  const map = readStorageJson(key);
-  const entry = map[targetCharacterId];
-  return Boolean(entry && Date.now() - (Number(entry.updatedAt) || 0) < OPEN_SHEET_TTL_MS);
-}
-
-export function getSavingThrowClaim(campaignId, saveId) {
-  if (!campaignId || !saveId) return null;
-  const map = readStorageJson(`${SAVE_CLAIMS_KEY_PREFIX}${campaignId}`);
-  return map[saveId] || null;
-}
-
-export function isSavingThrowAnswered(campaignId, saveId) {
-  return getSavingThrowClaim(campaignId, saveId)?.status === "answered";
-}
-
-/**
- * Fase 6.4 (A20): reivindica a exibição automática do pop-up de Teste de Resistência
- * para uma única janela. Ficha destacada do próprio personagem alvo tem prioridade (2)
- * sobre a janela principal (1); janelas já abertas ou respondidas não são sobrescritas por prioridade menor.
- */
-export function tryClaimSavingThrowModal(
-  campaignId,
-  saveId,
-  windowId,
-  { priority = 1, forceManual = false } = {}
-) {
-  if (!saveId) return { claimed: false, ownerWindowId: null };
-  const resolvedCampaign = campaignId || "default";
-  const key = `${SAVE_CLAIMS_KEY_PREFIX}${resolvedCampaign}`;
-  const map = readStorageJson(key);
-  const existing = map[saveId];
-  const now = Date.now();
-
-  if (existing?.status === "answered") {
-    return { claimed: false, ownerWindowId: existing.ownerWindowId || null, status: "answered" };
-  }
-  if (existing?.status === "submitting" && now - (Number(existing.updatedAt) || 0) < SAVE_SUBMITTING_TTL_MS) {
-    return { claimed: false, ownerWindowId: existing.ownerWindowId || null, status: "submitting" };
-  }
-  if (
-    !forceManual &&
-    existing?.status === "open" &&
-    existing.ownerWindowId !== windowId &&
-    now - (Number(existing.updatedAt) || 0) < SAVE_CLAIM_TTL_MS &&
-    (Number(existing.priority) || 1) >= priority
-  ) {
-    return {
-      claimed: false,
-      ownerWindowId: existing.ownerWindowId || null,
-      priority: Number(existing.priority) || 1,
-      status: "open",
-    };
-  }
-
-  map[saveId] = {
-    ownerWindowId: windowId,
-    priority,
-    status: "open",
-    updatedAt: now,
-  };
-  writeStorageJson(key, map);
-  const confirm = readStorageJson(key)[saveId];
-  const claimed = Boolean(confirm && confirm.ownerWindowId === windowId);
-  return {
-    claimed,
-    ownerWindowId: confirm?.ownerWindowId || windowId,
-    priority: Number(confirm?.priority) || priority,
-    status: confirm?.status || "open",
-  };
-}
-
-/**
- * Fase 6.4 (A20): trava o envio do Teste de Resistência por `saveId`, garantindo no máximo
- * uma cobrança e uma resposta mesmo se duas janelas tentarem enviar ao mesmo tempo.
- */
-export function tryBeginSavingThrowSubmission(campaignId, saveId, windowId) {
-  if (!saveId) return { allowed: false, reason: "missing_id" };
-  const resolvedCampaign = campaignId || "default";
-  const key = `${SAVE_CLAIMS_KEY_PREFIX}${resolvedCampaign}`;
-  const map = readStorageJson(key);
-  const existing = map[saveId];
-  const now = Date.now();
-
-  if (existing?.status === "answered") {
-    return { allowed: false, reason: "already_answered" };
-  }
-  if (
-    existing?.status === "submitting" &&
-    now - (Number(existing.updatedAt) || 0) < SAVE_SUBMITTING_TTL_MS
-  ) {
-    return { allowed: false, reason: "already_submitting" };
-  }
-
-  map[saveId] = {
-    ownerWindowId: windowId || existing?.ownerWindowId || null,
-    priority: Number(existing?.priority) || 1,
-    status: "submitting",
-    updatedAt: now,
-  };
-  writeStorageJson(key, map);
-  const confirm = readStorageJson(key)[saveId];
-  const allowed = Boolean(confirm && confirm.status === "submitting" && (!windowId || confirm.ownerWindowId === windowId));
-  return { allowed, reason: allowed ? null : "lost_race" };
-}
-
-export function rollbackSavingThrowSubmission(campaignId, saveId, windowId) {
-  if (!saveId) return;
-  const resolvedCampaign = campaignId || "default";
-  const key = `${SAVE_CLAIMS_KEY_PREFIX}${resolvedCampaign}`;
-  const map = readStorageJson(key);
-  const existing = map[saveId];
-  if (existing?.status === "submitting" && (!windowId || existing.ownerWindowId === windowId)) {
-    map[saveId] = { ...existing, status: "open", updatedAt: Date.now() };
-    writeStorageJson(key, map);
-  }
-}
-
-export function markSavingThrowAnswered(campaignId, saveId, windowId = null) {
-  if (!saveId) return;
-  const resolvedCampaign = campaignId || "default";
-  const key = `${SAVE_CLAIMS_KEY_PREFIX}${resolvedCampaign}`;
-  const map = readStorageJson(key);
-  if (map[saveId]?.status === "answered") return;
-  map[saveId] = {
-    ownerWindowId: windowId || map[saveId]?.ownerWindowId || null,
-    priority: Number(map[saveId]?.priority) || 1,
-    status: "answered",
-    updatedAt: Date.now(),
-  };
-  writeStorageJson(key, map);
 }

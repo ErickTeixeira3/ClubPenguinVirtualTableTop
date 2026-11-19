@@ -39,6 +39,68 @@
         { "fieldPath": "isDeleted", "order": "ASCENDING" },
         { "fieldPath": "visibleTo", "arrayConfig": "CONTAINS" }
       ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibleTo", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "isDeleted", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isDeleted", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "roll.hitEvaluation.status", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibleTo", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "sender.uid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibleTo", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "isDeleted", "order": "ASCENDING" },
+        { "fieldPath": "roll.savingThrowRequest.targetCharacterId", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isDeleted", "order": "ASCENDING" },
+        { "fieldPath": "roll.savingThrowRequest.targetCharacterId", "order": "ASCENDING" },
+        { "fieldPath": "seq", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pendingCosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "characterId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

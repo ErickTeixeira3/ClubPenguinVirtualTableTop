@@ -25,6 +25,24 @@ vi.mock("firebase/firestore", () => ({
     const prev = mockStore.get(ref.path) || {};
     mockStore.set(ref.path, { ...prev, ...structuredClone(payload) });
   },
+  runTransaction: async (_db, callback) =>
+    callback({
+      get: async (ref) => {
+        const data = mockStore.get(ref.path);
+        return {
+          id: ref.id,
+          exists: () => data !== undefined,
+          data: () => data
+        };
+      },
+      set: (ref, payload) => {
+        mockStore.set(ref.path, structuredClone(payload));
+      },
+      update: (ref, payload) => {
+        const prev = mockStore.get(ref.path) || {};
+        mockStore.set(ref.path, { ...prev, ...structuredClone(payload) });
+      }
+    }),
   getDocs: async (q) => {
     const docs = [];
     for (const [docPath, data] of mockStore.entries()) {
@@ -66,6 +84,11 @@ const {
 
 beforeEach(() => {
   mockStore.clear();
+  mockStore.set("campaigns/camp_1/state/chat", {
+    campaignId: "camp_1",
+    lastSeq: 0,
+    lastMessageId: null
+  });
   firestoreQueries.length = 0;
 });
 

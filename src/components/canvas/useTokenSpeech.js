@@ -1,29 +1,31 @@
 import { useCallback, useMemo } from "react";
+import { selectMessageView } from "../../engines/chat/messageSelector.js";
 
 /**
- * Fase 8: origem da fala/emote de uma mensagem do chat (extraído do BoardViewport).
+ * Seletor da origem de fala sobre o adaptador T5. Identidade e horário vêm do contrato v2.
  * FUN-04: identifica falas exclusivamente por `tokenId` ou `characterId` (sem casar nomes).
  */
 export function getSpeechSource(msg) {
   if (!msg || typeof msg !== "object") return null;
+  const view = selectMessageView(msg);
 
-  const icon = msg.icon || msg.rollData?.icon || null;
-  const isText = msg.type === "text" && Boolean(msg.content && msg.content.trim());
-  const isEmote = msg.type === "emote" && Boolean(icon);
-  const isAbilityWithIcon = msg.type === "ability_roll" && Boolean(icon);
+  const icon = view.emote?.icon || view.roll?.icon || null;
+  const isText = view.type === "text" && Boolean(view.content.trim());
+  const isEmote = view.type === "emote" && Boolean(icon);
+  const isAbilityWithIcon = view.type === "roll" && Boolean(icon);
 
   if (!isText && !isEmote && !isAbilityWithIcon) {
     return null;
   }
 
   return {
-    tokenId: msg.tokenId || null,
-    characterId: msg.characterId || null,
+    tokenId: msg.tokenId || msg.sender?.tokenId || null,
+    characterId: view.sender.characterId,
     speech: {
-      id: msg.id,
-      text: isEmote || isAbilityWithIcon ? null : msg.content,
+      id: view.id,
+      text: isEmote || isAbilityWithIcon ? null : view.content,
       icon: isEmote || isAbilityWithIcon ? icon : null,
-      timestampMs: msg.timestampMs || 0
+      timestampMs: view.createdAtMs
     }
   };
 }
