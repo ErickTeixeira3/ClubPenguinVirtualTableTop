@@ -1,533 +1,19 @@
-import { useMemo, useRef, useState } from "react";
-import {
-  NOTE_TYPES,
-  getNoteTypeIcon,
-  getNoteTypeMeta
-} from "../../engines/aliasEngine";
-import { useMediaUrl } from "../../hooks/useMediaUrl";
-import { canUserDeleteJournalFolder } from "../../services/journalService";
-import ConfirmDeleteModal from "../ui/ConfirmDeleteModal";
+import { useMemo, useState } from "react";
 import { Z_LAYERS } from "../../constants/zLayers";
+import { FOLDER_DOMAINS, NOTE_SCOPES } from "../../domain/constants.js";
+import { canDeleteResource, canEditResource } from "../../domain/permissions.js";
+import { validateFolderName } from "../../engines/folders/index.js";
+import { extractNoteText } from "../../engines/journal/index.js";
+import { useNotifications } from "../../hooks/useNotifications";
+import ConfirmDeleteModal from "../ui/ConfirmDeleteModal";
 import JournalGraphWebView from "./JournalGraphWebView";
+import JournalSidebar from "./JournalSidebar";
 import NoteEditorModal from "./NoteEditorModal";
-
-function normalizeFolderPath(rawPath) {
-  return String(rawPath || "")
-    .split("/")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join("/");
-}
-
-function buildFolderTree(explicitFolders = [], notes = []) {
-  const root = {
-    childrenMap: new Map(), // segmentName -> folderNode
-    notes: [] // notes directly in category root
-  };
-
-  const ensurePath = (fullPath, folderId = null) => {
-    const clean = normalizeFolderPath(fullPath);
-    if (!clean) return root;
-    const segments = clean.split("/");
-    let current = root;
-    let accum = "";
-
-    segments.forEach((seg, idx) => {
-      accum = accum ? `${accum}/${seg}` : seg;
-      if (!current.childrenMap.has(seg)) {
-        current.childrenMap.set(seg, {
-          name: seg,
-          fullPath: accum,
-          id: null,
-          childrenMap: new Map(),
-          notes: []
-        });
-      }
-      const node = current.childrenMap.get(seg);
-      if (idx === segments.length - 1 && folderId && !node.id) {
-        node.id = folderId;
-      }
-      current = node;
-    });
-
-    return current;
-  };
-
-  explicitFolders.forEach((f) => {
-    ensurePath(f.name, f.id);
-  });
-
-  notes.forEach((n) => {
-    const clean = normalizeFolderPath(n.folder);
-    if (!clean) {
-      root.notes.push(n);
-    } else {
-      const targetNode = ensurePath(clean);
-      targetNode.notes.push(n);
-    }
-  });
-
-  const countTotalNotes = (node) => {
-    let total = node.notes.length;
-    node.childrenMap.forEach((child) => {
-      total += countTotalNotes(child);
-    });
-    node.totalNotes = total;
-    return total;
-  };
-
-  root.childrenMap.forEach((child) => countTotalNotes(child));
-
-  return root;
-}
-
-function SidebarCardRow({
-  note,
-  campaignId,
-  isSelected,
-  isDragging,
-  onClick,
-  onDragStart,
-  onDragEnd
-}) {
-  const { url: imageUrl } = useMediaUrl(note.imageMediaId, null, campaignId);
-  const [imageError, setImageError] = useState(false);
-  const meta = getNoteTypeMeta(note.noteType);
-
-  return (
-    <div
-      draggable={true}
-      onDragStart={(e) => {
-        e.dataTransfer.setData(
-          "application/json",
-          JSON.stringify({
-            noteId: note.id,
-            noteType: note.noteType,
-            folder: note.folder || ""
-          })
-        );
-        e.dataTransfer.effectAllowed = "move";
-        if (onDragStart) onDragStart(note);
-      }}
-      onDragEnd={() => {
-        if (onDragEnd) onDragEnd();
-      }}
-      onClick={() => onClick(note)}
-      title={note.title}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        padding: "5px 8px",
-        borderRadius: "8px",
-        cursor: isDragging ? "grabbing" : "grab",
-        opacity: isDragging ? 0.4 : 1,
-        background: isSelected
-          ? "rgba(56, 152, 255, 0.25)"
-          : "transparent",
-        border: isSelected
-          ? "1.5px solid #3898ff"
-          : "1.5px solid transparent",
-        transition: "background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease",
-        userSelect: "none"
-      }}
-      onMouseEnter={(e) => {
-        if (!isSelected && !isDragging) {
-          e.currentTarget.style.background = "rgba(255, 255, 255, 0.08)";
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!isSelected && !isDragging) {
-          e.currentTarget.style.background = "transparent";
-        }
-      }}
-    >
-      {/* Ícone / Miniatura do Card */}
-      {imageUrl && !imageError ? (
-        <img
-          src={imageUrl}
-          alt=""
-          onError={() => setImageError(true)}
-          style={{
-            width: "22px",
-            height: "22px",
-            borderRadius: "5px",
-            objectFit: "cover",
-            border: `1.5px solid ${meta.color}`,
-            flexShrink: 0,
-            pointerEvents: "none"
-          }}
-        />
-      ) : (
-        <div
-          style={{
-            width: "22px",
-            height: "22px",
-            borderRadius: "5px",
-            background: "rgba(0, 15, 32, 0.75)",
-            border: `1.5px solid ${meta.color}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "12px",
-            flexShrink: 0,
-            pointerEvents: "none"
-          }}
-        >
-          {getNoteTypeIcon(note.noteType)}
-        </div>
-      )}
-
-      {/* Nome do Card */}
-      <span
-        style={{
-          fontSize: "12.5px",
-          fontWeight: 700,
-          color: "#e2f1ff",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          flex: 1,
-          minWidth: 0,
-          pointerEvents: "none"
-        }}
-      >
-        {note.title}
-      </span>
-    </div>
-  );
-}
-
-function FolderTreeNode({
-  folderNode,
-  typeKey,
-  campaignId,
-  collapsedFolders,
-  onToggleFolder,
-  editingNoteId,
-  onSelectNote,
-  onStartNewSubfolder,
-  newFolderTarget,
-  newFolderNameInput,
-  onChangeNewFolderName,
-  onSubmitNewFolder,
-  onCancelNewFolder,
-  onStartNewCardInFolder,
-  onDeleteFolder,
-  canDeleteFolderNode,
-  draggedNoteId,
-  dragOverTargetKey,
-  onDragOverTarget,
-  onDragLeaveTarget,
-  onDropOnFolder,
-  onDragStartNote,
-  onDragEndNote
-}) {
-  const folderKey = `${typeKey}::${folderNode.fullPath}`;
-  const isCollapsed = Boolean(collapsedFolders[folderKey]);
-  const isDragOver = dragOverTargetKey === folderKey;
-  const isCreatingSubfolderHere =
-    newFolderTarget?.typeKey === typeKey &&
-    newFolderTarget?.parentPath === folderNode.fullPath;
-
-  const subFolders = Array.from(folderNode.childrenMap.values()).sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "1px"
-      }}
-    >
-      {/* Cabeçalho da Pasta (Drop Target) */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "4px 8px",
-          borderRadius: "6px",
-          cursor: "pointer",
-          userSelect: "none",
-          color: isDragOver ? "#ffe066" : "#cbd5e1",
-          fontSize: "12px",
-          fontWeight: 700,
-          background: isDragOver
-            ? "rgba(56, 152, 255, 0.4)"
-            : "transparent",
-          border: isDragOver
-            ? "1.5px dashed #ffe066"
-            : "1.5px solid transparent",
-          boxShadow: isDragOver
-            ? "0 0 10px rgba(56, 152, 255, 0.6)"
-            : "none",
-          transition: "background 0.12s ease, border-color 0.12s ease"
-        }}
-        onClick={() => onToggleFolder(folderKey)}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          e.dataTransfer.dropEffect = "move";
-          if (dragOverTargetKey !== folderKey) {
-            onDragOverTarget(folderKey, folderNode.fullPath);
-          }
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget)) {
-            if (dragOverTargetKey === folderKey) {
-              onDragLeaveTarget(folderKey);
-            }
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onDropOnFolder(e, folderNode.fullPath, typeKey);
-        }}
-        onMouseEnter={(e) => {
-          if (!isDragOver) {
-            e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isDragOver) {
-            e.currentTarget.style.background = "transparent";
-          }
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            minWidth: 0,
-            flex: 1
-          }}
-        >
-          <span style={{ fontSize: "12px", opacity: 0.85 }}>
-            {isCollapsed ? "📁" : "📂"}
-          </span>
-          <span
-            style={{
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis"
-            }}
-          >
-            {folderNode.name}
-          </span>
-          <span style={{ fontSize: "10px", opacity: isDragOver ? 1 : 0.5 }}>
-            {isDragOver ? "↳ mover para cá" : `(${folderNode.totalNotes ?? folderNode.notes.length})`}
-          </span>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "3px",
-            flexShrink: 0
-          }}
-        >
-          {/* Botão para criar subpasta dentro desta pasta */}
-          <button
-            type="button"
-            title={`Nova subpasta dentro de "${folderNode.name}"`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartNewSubfolder(typeKey, folderNode.fullPath, folderKey);
-            }}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#a9d4ff",
-              cursor: "pointer",
-              fontSize: "10px",
-              fontWeight: 800,
-              padding: "0 3px"
-            }}
-          >
-            📁+
-          </button>
-
-          {/* Botão para criar card dentro desta pasta */}
-          <button
-            type="button"
-            title={`Novo card em "${folderNode.name}"`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartNewCardInFolder(typeKey, folderNode.fullPath);
-            }}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#ffe066",
-              cursor: "pointer",
-              fontSize: "12px",
-              fontWeight: 900,
-              padding: "0 3px"
-            }}
-          >
-            +
-          </button>
-
-          {onDeleteFolder && canDeleteFolderNode?.(folderNode) !== false && (
-            <button
-              type="button"
-              title={`Excluir pasta "${folderNode.name}"`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteFolder(
-                  folderNode.id,
-                  folderNode.fullPath,
-                  typeKey
-                );
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#ff8a80",
-                cursor: "pointer",
-                fontSize: "10px",
-                fontWeight: 900,
-                padding: "0 2px"
-              }}
-            >
-              ✕
-            </button>
-          )}
-
-          <span style={{ fontSize: "10px", opacity: 0.6 }}>
-            {isCollapsed ? "▸" : "▾"}
-          </span>
-        </div>
-      </div>
-
-      {/* Input inline para criar subpasta */}
-      {isCreatingSubfolderHere && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmitNewFolder();
-          }}
-          style={{
-            display: "flex",
-            gap: "4px",
-            padding: "4px 6px 4px 16px"
-          }}
-        >
-          <input
-            type="text"
-            className="cp-input"
-            placeholder={`Subpasta em ${folderNode.name}...`}
-            value={newFolderNameInput}
-            onChange={(e) => onChangeNewFolderName(e.target.value)}
-            autoFocus
-            style={{
-              flex: 1,
-              padding: "2px 6px",
-              fontSize: "11px",
-              height: "24px",
-              minWidth: 0
-            }}
-          />
-          <button
-            type="submit"
-            className="cp-btn cp-btn-green"
-            style={{
-              padding: "2px 6px",
-              fontSize: "10px",
-              height: "24px"
-            }}
-          >
-            OK
-          </button>
-          <button
-            type="button"
-            className="cp-btn cp-btn-orange"
-            onClick={onCancelNewFolder}
-            style={{
-              padding: "2px 6px",
-              fontSize: "10px",
-              height: "24px"
-            }}
-          >
-            ✕
-          </button>
-        </form>
-      )}
-
-      {/* Conteúdo recursivo da Pasta (Subpastas + Cards) */}
-      {!isCollapsed && (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDropOnFolder(e, folderNode.fullPath, typeKey);
-          }}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "1px",
-            paddingLeft: "12px",
-            borderLeft: "1px solid rgba(255, 255, 255, 0.12)",
-            marginLeft: "10px"
-          }}
-        >
-          {subFolders.map((sub) => (
-            <FolderTreeNode
-              key={`${typeKey}::${sub.fullPath}`}
-              folderNode={sub}
-              typeKey={typeKey}
-              campaignId={campaignId}
-              collapsedFolders={collapsedFolders}
-              onToggleFolder={onToggleFolder}
-              editingNoteId={editingNoteId}
-              onSelectNote={onSelectNote}
-              onStartNewSubfolder={onStartNewSubfolder}
-              newFolderTarget={newFolderTarget}
-              newFolderNameInput={newFolderNameInput}
-              onChangeNewFolderName={onChangeNewFolderName}
-              onSubmitNewFolder={onSubmitNewFolder}
-              onCancelNewFolder={onCancelNewFolder}
-              onStartNewCardInFolder={onStartNewCardInFolder}
-              onDeleteFolder={onDeleteFolder}
-              canDeleteFolderNode={canDeleteFolderNode}
-              draggedNoteId={draggedNoteId}
-              dragOverTargetKey={dragOverTargetKey}
-              onDragOverTarget={onDragOverTarget}
-              onDragLeaveTarget={onDragLeaveTarget}
-              onDropOnFolder={onDropOnFolder}
-              onDragStartNote={onDragStartNote}
-              onDragEndNote={onDragEndNote}
-            />
-          ))}
-
-          {folderNode.notes.map((note) => (
-            <SidebarCardRow
-              key={note.id}
-              note={note}
-              campaignId={campaignId}
-              isSelected={editingNoteId === note.id}
-              isDragging={draggedNoteId === note.id}
-              onClick={onSelectNote}
-              onDragStart={onDragStartNote}
-              onDragEnd={onDragEndNote}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+import {
+  matchesJournalScopeFilter,
+  resolveActiveJournalTarget
+} from "./journalHelpers";
+import { useJournalDragDrop } from "./useJournalDragDrop";
 
 export default function JournalWorkspace({
   campaignId,
@@ -539,61 +25,102 @@ export default function JournalWorkspace({
   accessibleFolders = [],
   onCreateNote,
   onUpdateNote,
+  onSaveNoteDraft = null,
   onUpdateNodePosition,
   onCloneNoteToTarget,
   onShareNoteWithTarget,
   onRevokeNoteAccess,
   onDeleteNote,
   onCreateFolder,
+  onRenameFolder = null,
+  onMoveFolder = null,
+  onMoveNoteToFolder = null,
   onDeleteFolder,
+  canEditNote = null,
+  canDeleteNote = null,
+  canEditFolder = null,
+  canDeleteFolder = null,
   onOpenCharacterSheet
 }) {
+  const { notifyError } = useNotifications();
   const [activeScopeTab, setActiveScopeTab] = useState(
-    isGM ? "gm" : "player"
-  ); // 'gm' | 'player' | 'party' | 'unified'
+    isGM ? NOTE_SCOPES.GM : NOTE_SCOPES.PLAYER
+  );
   const [selectedPlayerUid, setSelectedPlayerUid] = useState(currentUserId);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingNote, setEditingNote] = useState(null);
   const [creatingNote, setCreatingNote] = useState(false);
   const [defaultTypeForNewNote, setDefaultTypeForNewNote] = useState(null);
-  const [defaultFolderForNewNote, setDefaultFolderForNewNote] = useState("");
+  const [defaultFolderIdForNewNote, setDefaultFolderIdForNewNote] = useState("");
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
 
-  // Estado de recolhimento das categorias e das pastas internas
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [collapsedFolders, setCollapsedFolders] = useState({});
-  // newFolderTarget: { typeKey: string, parentPath: string } | null
   const [newFolderTarget, setNewFolderTarget] = useState(null);
   const [newFolderNameInput, setNewFolderNameInput] = useState("");
+  const [renamingFolderId, setRenamingFolderId] = useState(null);
+  const [renameFolderInput, setRenameFolderInput] = useState("");
   const [folderToDelete, setFolderToDelete] = useState(null);
 
-  // Fase 3.1 (V-22 / D-3): o botão de excluir pasta só aparece para o dono da pasta ou o Mestre.
-  // Pastas implícitas (sem documento, derivadas do caminho dos cards) não têm dono.
-  const canDeleteFolderNode = (folderNode) => {
-    if (!folderNode?.id) return true;
-    const folderDoc = (accessibleFolders || []).find((f) => f.id === folderNode.id);
-    if (!folderDoc) return Boolean(isGM);
-    return canUserDeleteJournalFolder(folderDoc, { user: { uid: currentUserId }, isGM });
+  const foldersById = useMemo(
+    () =>
+      new Map(
+        (accessibleFolders || []).map((f) => [
+          f.id,
+          { ...f, domain: f.domain || FOLDER_DOMAINS.JOURNAL }
+        ])
+      ),
+    [accessibleFolders]
+  );
+
+  const canEditFolderNode = (folder) => {
+    if (!folder?.id) return false;
+    if (typeof canEditFolder === "function") return Boolean(canEditFolder(folder));
+    return canEditResource(folder, { uid: currentUserId, isGM });
   };
 
-  const handleRequestDeleteFolder = (folderId, fullPath, typeKey) => {
-    const segs = String(fullPath || "")
-      .split("/")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const displayName = segs[segs.length - 1] || "Pasta";
+  const canDeleteFolderNode = (folder) => {
+    if (!folder?.id) return Boolean(isGM);
+    if (typeof canDeleteFolder === "function") return Boolean(canDeleteFolder(folder));
+    return canDeleteResource(folder, { uid: currentUserId, isGM });
+  };
+
+  const canMoveFolderNode = (folder) =>
+    Boolean(isGM || (currentUserId && folder?.ownerId === currentUserId));
+
+  const {
+    draggedNoteId,
+    draggedFolderId,
+    dragOverTargetKey,
+    setDraggedNoteId,
+    setDraggedFolderId,
+    handleDragEnterFolder,
+    handleDragOverTarget,
+    handleDragLeaveTarget,
+    handleDropOnFolder,
+    handleDragEndAll
+  } = useJournalDragDrop({
+    accessibleNotes,
+    foldersById,
+    currentUserId,
+    isGM,
+    canMoveFolderNode,
+    collapsedFolders,
+    setCollapsedFolders,
+    onMoveNoteToFolder,
+    onUpdateNote,
+    onMoveFolder,
+    notifyError
+  });
+
+  const handleRequestDeleteFolder = (folder, typeKey) => {
+    if (!folder) return;
     setFolderToDelete({
-      id: folderId,
-      fullPath,
+      id: folder.id,
       typeKey,
-      name: displayName
+      name: folder.name || "Pasta"
     });
   };
-
-  // Estado de Arrastar e Soltar (Drag & Drop Explorer)
-  const [draggedNoteId, setDraggedNoteId] = useState(null);
-  const [dragOverTargetKey, setDragOverTargetKey] = useState(null);
-  const autoExpandTimerRef = useRef(null);
 
   const toggleCategory = (typeKey) => {
     setCollapsedCategories((prev) => ({
@@ -609,86 +136,12 @@ export default function JournalWorkspace({
     }));
   };
 
-  const handleDragOverTarget = (targetKey, folderFullPath) => {
-    setDragOverTargetKey(targetKey);
-
-    // Se for uma pasta recolhida, expande automaticamente após 500ms
-    if (targetKey && targetKey.includes("::") && folderFullPath) {
-      if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
-      autoExpandTimerRef.current = setTimeout(() => {
-        setCollapsedFolders((prev) => ({
-          ...prev,
-          [targetKey]: false
-        }));
-      }, 550);
-    }
-  };
-
-  const handleDragLeaveTarget = (targetKey) => {
-    if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
-    if (dragOverTargetKey === targetKey) {
-      setDragOverTargetKey(null);
-    }
-  };
-
-  const handleMoveNoteToFolder = async (noteId, targetFolder, targetTypeKey) => {
-    if (!noteId) return;
-    const note = accessibleNotes.find((n) => n.id === noteId);
-    if (!note) return;
-
-    const cleanTargetFolder = normalizeFolderPath(targetFolder);
-    const currentFolder = normalizeFolderPath(note.folder);
-
-    if (
-      currentFolder === cleanTargetFolder &&
-      (!targetTypeKey || note.noteType === targetTypeKey)
-    ) {
-      return;
-    }
-
-    const updates = {
-      folder: cleanTargetFolder
-    };
-    if (targetTypeKey && targetTypeKey !== note.noteType) {
-      updates.noteType = targetTypeKey;
-    }
-
-    await onUpdateNote(noteId, updates);
-  };
-
-  const handleDropOnFolder = (e, targetFolder, targetTypeKey) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
-    setDragOverTargetKey(null);
-
-    let noteId = draggedNoteId;
-    try {
-      const raw = e.dataTransfer.getData("application/json");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.noteId) {
-          noteId = parsed.noteId;
-        }
-      }
-    } catch {
-      // fallback to draggedNoteId
-    }
-
-    if (noteId) {
-      handleMoveNoteToFolder(noteId, targetFolder, targetTypeKey);
-    }
-    setDraggedNoteId(null);
-  };
-
-  const handleDragEndNote = () => {
-    if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current);
-    setDraggedNoteId(null);
-    setDragOverTargetKey(null);
-  };
-
-  const handleStartNewSubfolder = (typeKey, parentPath, folderKeyToExpand) => {
-    setNewFolderTarget({ typeKey, parentPath: parentPath || "" });
+  const handleStartNewSubfolder = (
+    typeKey,
+    parentId = null,
+    folderKeyToExpand = null
+  ) => {
+    setNewFolderTarget({ typeKey, parentId: parentId || null });
     setNewFolderNameInput("");
     setCollapsedCategories((prev) => ({
       ...prev,
@@ -704,42 +157,67 @@ export default function JournalWorkspace({
 
   const handleSubmitNewFolder = async () => {
     if (!newFolderTarget) return;
-    const trimmed = newFolderNameInput
-      .trim()
-      .replace(/^\/+|\/+$/g, "");
-    if (!trimmed) {
-      setNewFolderTarget(null);
+    const rawName = newFolderNameInput.trim();
+    const validation = validateFolderName(rawName);
+    if (!validation.ok) {
+      notifyError(validation.errors[0]);
       return;
     }
 
-    const fullFolderName = newFolderTarget.parentPath
-      ? `${newFolderTarget.parentPath}/${trimmed}`
-      : trimmed;
+    const { scope, ownerId } = resolveActiveJournalTarget({
+      activeScopeTab,
+      isGM,
+      selectedPlayerUid,
+      currentUserId
+    });
 
-    const targetScope =
-      activeScopeTab === "unified"
-        ? "party"
-        : activeScopeTab === "gm" && isGM
-        ? "gm"
-        : activeScopeTab;
+    const parentFolder = newFolderTarget.parentId
+      ? foldersById.get(newFolderTarget.parentId) || null
+      : null;
 
-    const targetOwnerId =
-      targetScope === "player"
-        ? isGM
-          ? selectedPlayerUid
-          : currentUserId
-        : currentUserId;
+    const targetScope = parentFolder?.scope || scope;
+    const targetOwnerId = parentFolder?.ownerId || ownerId;
 
     if (onCreateFolder) {
-      await onCreateFolder({
-        name: fullFolderName,
+      const createdId = await onCreateFolder({
+        name: rawName,
         noteType: newFolderTarget.typeKey,
         scope: targetScope,
-        ownerId: targetOwnerId
+        ownerId: targetOwnerId,
+        parentId: newFolderTarget.parentId || null
       });
+      if (!createdId) {
+        return;
+      }
     }
     setNewFolderNameInput("");
     setNewFolderTarget(null);
+  };
+
+  const handleStartRenameFolder = (folder) => {
+    setRenamingFolderId(folder.id);
+    setRenameFolderInput(folder.name || "");
+  };
+
+  const handleSubmitRenameFolder = async () => {
+    if (!renamingFolderId) return;
+    const folder = foldersById.get(renamingFolderId);
+    const trimmed = renameFolderInput.trim();
+    if (folder && trimmed === (folder.name || "").trim()) {
+      setRenamingFolderId(null);
+      setRenameFolderInput("");
+      return;
+    }
+    const validation = validateFolderName(trimmed);
+    if (!validation.ok) {
+      notifyError(validation.errors[0]);
+      return;
+    }
+    const ok = await onRenameFolder?.(renamingFolderId, trimmed);
+    if (ok !== false) {
+      setRenamingFolderId(null);
+      setRenameFolderInput("");
+    }
   };
 
   const playersList = useMemo(() => {
@@ -756,88 +234,91 @@ export default function JournalWorkspace({
     return entries;
   }, [playersMap, currentUserId]);
 
+  const scopeFilterContext = useMemo(
+    () => ({ activeScopeTab, isGM, selectedPlayerUid, currentUserId }),
+    [activeScopeTab, isGM, selectedPlayerUid, currentUserId]
+  );
+
   const scopedNotes = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
     return accessibleNotes.filter((n) => {
-      if (activeScopeTab === "gm" && n.scope !== "gm") return false;
-      if (activeScopeTab === "party" && n.scope !== "party") return false;
-      if (activeScopeTab === "player") {
-        const targetOwner = isGM ? selectedPlayerUid : currentUserId;
-        if (n.scope !== "player" || n.ownerId !== targetOwner) return false;
-      }
+      if (!matchesJournalScopeFilter(n, scopeFilterContext)) return false;
 
       if (!q) return true;
       const inTitle = (n.title || "").toLowerCase().includes(q);
-      const inContent = (n.content || "").toLowerCase().includes(q);
+      const inSections = extractNoteText(n).toLowerCase().includes(q);
       const inAliases = (n.aliases || []).some((a) =>
         a.toLowerCase().includes(q)
       );
-      return inTitle || inContent || inAliases;
+      return inTitle || inSections || inAliases;
     });
-  }, [
-    accessibleNotes,
-    activeScopeTab,
-    isGM,
-    selectedPlayerUid,
-    currentUserId,
-    searchQuery
-  ]);
+  }, [accessibleNotes, scopeFilterContext, searchQuery]);
 
   const handleSaveNote = async (formData) => {
-    const normalizedFolder = normalizeFolderPath(formData.folder);
+    const target = resolveActiveJournalTarget({
+      activeScopeTab,
+      isGM,
+      selectedPlayerUid,
+      currentUserId
+    });
+
+    if (onSaveNoteDraft) {
+      return await onSaveNoteDraft(
+        {
+          ...formData,
+          scope: formData.id ? formData.scope : target.scope,
+          ownerId: formData.id ? formData.ownerId : target.ownerId
+        },
+        formData.file
+      );
+    }
+
     if (formData.id) {
       return await onUpdateNote(
         formData.id,
         {
           title: formData.title,
           noteType: formData.noteType,
-          folder: normalizedFolder,
-          linkedCharacterSheetId: formData.linkedCharacterSheetId,
+          folderId: formData.folderId || null,
+          linkedCharacterId: formData.linkedCharacterId ?? null,
           aliases: formData.aliases,
           ignoredAliases: formData.ignoredAliases,
-          content: formData.content,
           sections: formData.sections,
-          relatedNoteIds: formData.relatedNoteIds
+          relatedNoteIds: formData.relatedNoteIds,
+          targetAliasAdditions: formData.targetAliasAdditions
         },
         formData.file
       );
-    } else {
-      const targetScope =
-        activeScopeTab === "unified"
-          ? "party"
-          : activeScopeTab === "gm" && isGM
-          ? "gm"
-          : activeScopeTab;
-
-      const targetOwnerId =
-        targetScope === "player"
-          ? isGM
-            ? selectedPlayerUid
-            : currentUserId
-          : currentUserId;
-
-      return await onCreateNote({
-        scope: targetScope,
-        ownerId: targetOwnerId,
-        noteType: formData.noteType,
-        folder: normalizedFolder,
-        title: formData.title,
-        aliases: formData.aliases,
-        ignoredAliases: formData.ignoredAliases,
-        content: formData.content,
-        sections: formData.sections,
-        relatedNoteIds: formData.relatedNoteIds,
-        linkedCharacterSheetId: formData.linkedCharacterSheetId,
-        file: formData.file
-      });
     }
+
+    return await onCreateNote({
+      scope: target.scope,
+      ownerId: target.ownerId,
+      noteType: formData.noteType,
+      folderId: formData.folderId || null,
+      title: formData.title,
+      aliases: formData.aliases,
+      ignoredAliases: formData.ignoredAliases,
+      sections: formData.sections,
+      relatedNoteIds: formData.relatedNoteIds,
+      linkedCharacterId: formData.linkedCharacterId ?? null,
+      targetAliasAdditions: formData.targetAliasAdditions,
+      file: formData.file
+    });
   };
 
   const currentModalNote = useMemo(() => {
     if (!editingNote?.id) return editingNote;
     return accessibleNotes.find((n) => n.id === editingNote.id) || editingNote;
   }, [editingNote, accessibleNotes]);
+
+  const modalDefaultTarget = resolveActiveJournalTarget({
+    activeScopeTab,
+    isGM,
+    selectedPlayerUid,
+    currentUserId
+  });
 
   return (
     <div
@@ -850,504 +331,69 @@ export default function JournalWorkspace({
         zIndex: Z_LAYERS.workspaceJournal
       }}
     >
-      {/* Menu Esquerdo de Documentos e Pastas (Estilo vvd.world) */}
-      <aside
-        style={{
-          width: leftPanelCollapsed ? "0px" : "290px",
-          minWidth: leftPanelCollapsed ? "0px" : "290px",
-          height: "100%",
-          background: "linear-gradient(180deg, #0b1d33 0%, #071322 100%)",
-          borderRight: leftPanelCollapsed
-            ? "none"
-            : "3px solid var(--cp-blue-border)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          transition: "width 0.2s ease, min-width 0.2s ease",
-          zIndex: 15,
-          paddingBottom: "74px"
+      <JournalSidebar
+        leftPanelCollapsed={leftPanelCollapsed}
+        searchQuery={searchQuery}
+        onChangeSearchQuery={setSearchQuery}
+        onStartNewCard={() => {
+          setDefaultTypeForNewNote(null);
+          setDefaultFolderIdForNewNote("");
+          setCreatingNote(true);
         }}
-      >
-        {/* Topo do Menu: Busca + Ações Rápidas */}
-        <div
-          style={{
-            padding: "10px 10px 8px 10px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "8px",
-            borderBottom: "2px solid rgba(56, 152, 255, 0.2)"
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                background: "rgba(255, 255, 255, 0.08)",
-                border: "1.5px solid rgba(56, 152, 255, 0.35)",
-                borderRadius: "8px",
-                padding: "4px 8px"
-              }}
-            >
-              <span style={{ fontSize: "12px", opacity: 0.7 }}>🔍</span>
-              <input
-                type="text"
-                placeholder="Pesquisar cards..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  color: "#ffffff",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  minWidth: 0
-                }}
-              />
-            </div>
+        onCollapsePanel={() => setLeftPanelCollapsed(true)}
+        isGM={isGM}
+        activeScopeTab={activeScopeTab}
+        totalNotesCount={accessibleNotes.length}
+        selectedPlayerUid={selectedPlayerUid}
+        playersList={playersList}
+        onChangeScopeTab={setActiveScopeTab}
+        onChangeSelectedPlayerUid={setSelectedPlayerUid}
+        scopedNotes={scopedNotes}
+        accessibleFolders={accessibleFolders}
+        scopeFilterContext={scopeFilterContext}
+        campaignId={campaignId}
+        collapsedCategories={collapsedCategories}
+        onToggleCategory={toggleCategory}
+        collapsedFolders={collapsedFolders}
+        onToggleFolder={toggleFolder}
+        editingNoteId={editingNote?.id}
+        onSelectNote={(n) => setEditingNote(n)}
+        newFolderTarget={newFolderTarget}
+        newFolderNameInput={newFolderNameInput}
+        onChangeNewFolderName={setNewFolderNameInput}
+        onSubmitNewFolder={handleSubmitNewFolder}
+        onCancelNewFolder={() => setNewFolderTarget(null)}
+        onStartNewSubfolder={handleStartNewSubfolder}
+        renamingFolderId={renamingFolderId}
+        renameFolderInput={renameFolderInput}
+        onStartRenameFolder={handleStartRenameFolder}
+        onChangeRenameFolder={setRenameFolderInput}
+        onSubmitRenameFolder={handleSubmitRenameFolder}
+        onCancelRenameFolder={() => {
+          setRenamingFolderId(null);
+          setRenameFolderInput("");
+        }}
+        onStartNewCardInFolder={(tKey, folderId) => {
+          setDefaultTypeForNewNote(tKey);
+          setDefaultFolderIdForNewNote(folderId || "");
+          setCreatingNote(true);
+        }}
+        onDeleteFolder={handleRequestDeleteFolder}
+        canEditFolderNode={canEditFolderNode}
+        canDeleteFolderNode={canDeleteFolderNode}
+        canMoveFolderNode={canMoveFolderNode}
+        draggedNoteId={draggedNoteId}
+        draggedFolderId={draggedFolderId}
+        dragOverTargetKey={dragOverTargetKey}
+        onDragEnterFolder={handleDragEnterFolder}
+        onDragOverTarget={handleDragOverTarget}
+        onDragLeaveTarget={handleDragLeaveTarget}
+        onDropOnFolder={handleDropOnFolder}
+        onDragStartNote={(n) => setDraggedNoteId(n.id)}
+        onDragStartFolder={(f) => setDraggedFolderId(f.id)}
+        onDragEndAll={handleDragEndAll}
+      />
 
-            <button
-              type="button"
-              className="cp-btn cp-btn-gold"
-              style={{
-                padding: "4px 8px",
-                fontSize: "11px",
-                height: "28px",
-                display: "inline-flex",
-                alignItems: "center"
-              }}
-              title="Criar Novo Card"
-              onClick={() => {
-                setDefaultTypeForNewNote(null);
-                setDefaultFolderForNewNote("");
-                setCreatingNote(true);
-              }}
-            >
-              + Card
-            </button>
-
-            <button
-              type="button"
-              className="cp-btn"
-              style={{
-                padding: "4px 7px",
-                fontSize: "11px",
-                height: "28px",
-                display: "inline-flex",
-                alignItems: "center"
-              }}
-              title="Recolher menu"
-              onClick={() => setLeftPanelCollapsed(true)}
-            >
-              ◀
-            </button>
-          </div>
-
-          {/* Seletor de Diário (Mestre / Player / Grupo / Todos) */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isGM ? "1fr 1fr" : "1fr 1fr 1fr",
-              gap: "4px"
-            }}
-          >
-            {isGM && (
-              <button
-                type="button"
-                className={`cp-btn ${activeScopeTab === "gm" ? "cp-btn-gold" : ""}`}
-                style={{ padding: "3px 6px", fontSize: "10px" }}
-                onClick={() => setActiveScopeTab("gm")}
-              >
-                Mestre
-              </button>
-            )}
-
-            <button
-              type="button"
-              className={`cp-btn ${activeScopeTab === "player" ? "cp-btn-gold" : ""}`}
-              style={{ padding: "3px 6px", fontSize: "10px" }}
-              onClick={() => setActiveScopeTab("player")}
-            >
-              {isGM ? "Player" : "Meu Diário"}
-            </button>
-
-            <button
-              type="button"
-              className={`cp-btn ${activeScopeTab === "party" ? "cp-btn-gold" : ""}`}
-              style={{ padding: "3px 6px", fontSize: "10px" }}
-              onClick={() => setActiveScopeTab("party")}
-            >
-              Grupo
-            </button>
-
-            <button
-              type="button"
-              className={`cp-btn ${activeScopeTab === "unified" ? "cp-btn-gold" : ""}`}
-              style={{ padding: "3px 6px", fontSize: "10px" }}
-              onClick={() => setActiveScopeTab("unified")}
-            >
-              Todos ({accessibleNotes.length})
-            </button>
-          </div>
-
-          {isGM && activeScopeTab === "player" && (
-            <select
-              className="cp-input"
-              style={{ width: "100%", padding: "3px 8px", fontSize: "11px", height: "26px" }}
-              value={selectedPlayerUid}
-              onChange={(e) => setSelectedPlayerUid(e.target.value)}
-            >
-              {playersList.map((p) => (
-                <option key={p.uid} value={p.uid}>
-                  Diário de: {p.displayName}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {/* Árvore de Categorias -> Pastas / Subpastas -> Cards (Ícone + Nome) */}
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: "auto",
-            padding: "8px 6px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "4px"
-          }}
-        >
-          {NOTE_TYPES.map((typeMeta) => {
-            const colNotes = scopedNotes.filter(
-              (n) => (n.noteType || "lore") === typeMeta.key
-            );
-
-            const explicitFoldersForType = (accessibleFolders || []).filter(
-              (f) => {
-                if (f.noteType !== typeMeta.key) return false;
-                if (activeScopeTab === "gm" && f.scope !== "gm") return false;
-                if (activeScopeTab === "party" && f.scope !== "party") return false;
-                if (activeScopeTab === "player") {
-                  const targetOwner = isGM ? selectedPlayerUid : currentUserId;
-                  if (f.scope !== "player" || f.ownerId !== targetOwner) return false;
-                }
-                return true;
-              }
-            );
-
-            const treeRoot = buildFolderTree(explicitFoldersForType, colNotes);
-            const topLevelFolders = Array.from(
-              treeRoot.childrenMap.values()
-            ).sort((a, b) => a.name.localeCompare(b.name));
-
-            const isCatCollapsed = Boolean(collapsedCategories[typeMeta.key]);
-            const isCreatingRootFolderHere =
-              newFolderTarget?.typeKey === typeMeta.key &&
-              !newFolderTarget?.parentPath;
-
-            const catTargetKey = `cat::${typeMeta.key}`;
-            const isCatDragOver = dragOverTargetKey === catTargetKey;
-            const rootTargetKey = `root::${typeMeta.key}`;
-            const isRootDragOver = dragOverTargetKey === rootTargetKey;
-
-            return (
-              <div
-                key={typeMeta.key}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "2px"
-                }}
-              >
-                {/* Linha da Categoria Principal (Drop Target para Raiz da Categoria) */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "6px 8px",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    userSelect: "none",
-                    color: isCatDragOver ? "#ffe066" : "#a9d4ff",
-                    fontWeight: 800,
-                    fontSize: "12.5px",
-                    background: isCatDragOver
-                      ? "rgba(255, 224, 102, 0.25)"
-                      : "transparent",
-                    border: isCatDragOver
-                      ? "1.5px dashed #ffe066"
-                      : "1.5px solid transparent",
-                    transition: "background 0.12s ease, border-color 0.12s ease"
-                  }}
-                  onClick={() => toggleCategory(typeMeta.key)}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.dataTransfer.dropEffect = "move";
-                    if (dragOverTargetKey !== catTargetKey) {
-                      handleDragOverTarget(catTargetKey, "");
-                    }
-                  }}
-                  onDragLeave={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget)) {
-                      handleDragLeaveTarget(catTargetKey);
-                    }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleDropOnFolder(e, "", typeMeta.key);
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isCatDragOver) {
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isCatDragOver) {
-                      e.currentTarget.style.background = "transparent";
-                    }
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span
-                      style={{
-                        width: "10px",
-                        height: "10px",
-                        borderRadius: "3px",
-                        background: typeMeta.color,
-                        display: "inline-block"
-                      }}
-                    />
-                    <span>{typeMeta.label}</span>
-                    <span style={{ fontSize: "10px", opacity: isCatDragOver ? 1 : 0.6 }}>
-                      {isCatDragOver ? "↳ mover para raiz" : `(${colNotes.length})`}
-                    </span>
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <button
-                      type="button"
-                      title={`Criar pasta em ${typeMeta.label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStartNewSubfolder(typeMeta.key, "", null);
-                      }}
-                      style={{
-                        background: "rgba(255, 255, 255, 0.1)",
-                        border: "1px solid rgba(255, 255, 255, 0.25)",
-                        borderRadius: "5px",
-                        color: "#e2f1ff",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                        padding: "1px 5px",
-                        fontWeight: 800
-                      }}
-                    >
-                      📁+
-                    </button>
-
-                    <button
-                      type="button"
-                      title={`Novo card em ${typeMeta.label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDefaultTypeForNewNote(typeMeta.key);
-                        setDefaultFolderForNewNote("");
-                        setCreatingNote(true);
-                      }}
-                      style={{
-                        background: "rgba(255, 255, 255, 0.1)",
-                        border: "1px solid rgba(255, 255, 255, 0.25)",
-                        borderRadius: "5px",
-                        color: "#ffe066",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                        padding: "1px 5px",
-                        fontWeight: 900
-                      }}
-                    >
-                      +
-                    </button>
-
-                    <span style={{ fontSize: "10px", opacity: 0.7 }}>
-                      {isCatCollapsed ? "▸" : "▾"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Formulário inline para criar pasta raiz na categoria */}
-                {isCreatingRootFolderHere && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      handleSubmitNewFolder();
-                    }}
-                    style={{
-                      display: "flex",
-                      gap: "4px",
-                      padding: "4px 8px 4px 18px"
-                    }}
-                  >
-                    <input
-                      type="text"
-                      className="cp-input"
-                      placeholder="Nome da pasta..."
-                      value={newFolderNameInput}
-                      onChange={(e) => setNewFolderNameInput(e.target.value)}
-                      autoFocus
-                      style={{
-                        flex: 1,
-                        padding: "2px 6px",
-                        fontSize: "11px",
-                        height: "24px",
-                        minWidth: 0
-                      }}
-                    />
-                    <button
-                      type="submit"
-                      className="cp-btn cp-btn-green"
-                      style={{
-                        padding: "2px 6px",
-                        fontSize: "10px",
-                        height: "24px"
-                      }}
-                    >
-                      OK
-                    </button>
-                    <button
-                      type="button"
-                      className="cp-btn cp-btn-orange"
-                      onClick={() => setNewFolderTarget(null)}
-                      style={{
-                        padding: "2px 6px",
-                        fontSize: "10px",
-                        height: "24px"
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </form>
-                )}
-
-                {/* Itens dentro da Categoria */}
-                {!isCatCollapsed && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "2px",
-                      paddingLeft: "12px"
-                    }}
-                  >
-                    {/* Árvore Recursiva de Pastas e Subpastas */}
-                    {topLevelFolders.map((folderNode) => (
-                      <FolderTreeNode
-                        key={`${typeMeta.key}::${folderNode.fullPath}`}
-                        folderNode={folderNode}
-                        typeKey={typeMeta.key}
-                        campaignId={campaignId}
-                        collapsedFolders={collapsedFolders}
-                        onToggleFolder={toggleFolder}
-                        editingNoteId={editingNote?.id}
-                        onSelectNote={(n) => setEditingNote(n)}
-                        onStartNewSubfolder={handleStartNewSubfolder}
-                        newFolderTarget={newFolderTarget}
-                        newFolderNameInput={newFolderNameInput}
-                        onChangeNewFolderName={setNewFolderNameInput}
-                        onSubmitNewFolder={handleSubmitNewFolder}
-                        onCancelNewFolder={() => setNewFolderTarget(null)}
-                        onStartNewCardInFolder={(tKey, fullPath) => {
-                          setDefaultTypeForNewNote(tKey);
-                          setDefaultFolderForNewNote(fullPath);
-                          setCreatingNote(true);
-                        }}
-                        onDeleteFolder={handleRequestDeleteFolder}
-                        canDeleteFolderNode={canDeleteFolderNode}
-                        draggedNoteId={draggedNoteId}
-                        dragOverTargetKey={dragOverTargetKey}
-                        onDragOverTarget={handleDragOverTarget}
-                        onDragLeaveTarget={handleDragLeaveTarget}
-                        onDropOnFolder={handleDropOnFolder}
-                        onDragStartNote={(n) => setDraggedNoteId(n.id)}
-                        onDragEndNote={handleDragEndNote}
-                      />
-                    ))}
-
-                    {/* Cards soltos direto na categoria */}
-                    {treeRoot.notes.map((note) => (
-                      <SidebarCardRow
-                        key={note.id}
-                        note={note}
-                        campaignId={campaignId}
-                        isSelected={editingNote?.id === note.id}
-                        isDragging={draggedNoteId === note.id}
-                        onClick={(n) => setEditingNote(n)}
-                        onDragStart={(n) => setDraggedNoteId(n.id)}
-                        onDragEnd={handleDragEndNote}
-                      />
-                    ))}
-
-                    {/* Zona explícita para soltar na raiz da categoria durante o arraste */}
-                    {draggedNoteId && (
-                      <div
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          e.dataTransfer.dropEffect = "move";
-                          if (dragOverTargetKey !== rootTargetKey) {
-                            handleDragOverTarget(rootTargetKey, "");
-                          }
-                        }}
-                        onDragLeave={(e) => {
-                          if (!e.currentTarget.contains(e.relatedTarget)) {
-                            handleDragLeaveTarget(rootTargetKey);
-                          }
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDropOnFolder(e, "", typeMeta.key);
-                        }}
-                        style={{
-                          padding: "5px 8px",
-                          borderRadius: "6px",
-                          border: isRootDragOver
-                            ? "2px dashed #ffe066"
-                            : "1.5px dashed rgba(255, 255, 255, 0.2)",
-                          background: isRootDragOver
-                            ? "rgba(255, 224, 102, 0.25)"
-                            : "rgba(255, 255, 255, 0.04)",
-                          color: isRootDragOver ? "#ffe066" : "#94a3b8",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          textAlign: "center",
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                          marginTop: "3px",
-                          userSelect: "none"
-                        }}
-                      >
-                        {isRootDragOver
-                          ? `↳ Soltar na raiz de ${typeMeta.label}`
-                          : `Mover para raiz de ${typeMeta.label}`}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* Botão para reabrir o menu esquerdo quando recolhido */}
       {leftPanelCollapsed && (
         <button
           type="button"
@@ -1367,7 +413,6 @@ export default function JournalWorkspace({
         </button>
       )}
 
-      {/* Área Principal Direita/Centro: Visão de Teia */}
       <div
         style={{
           flex: 1,
@@ -1380,52 +425,42 @@ export default function JournalWorkspace({
       >
         <JournalGraphWebView
           notes={scopedNotes}
+          currentUserId={currentUserId}
+          isGM={isGM}
+          canEditNote={canEditNote}
           onSelectNoteToEdit={(n) => setEditingNote(n)}
           onOpenCharacterSheet={onOpenCharacterSheet}
           onUpdateNodePosition={onUpdateNodePosition}
         />
       </div>
 
-      {/* Modal do Card com todas as opções (Clonar, Acesso, Vínculos, Edição) */}
       {(creatingNote || editingNote) && (
         <NoteEditorModal
           key={editingNote?.id || "new_note"}
           note={
             currentModalNote ||
-            (defaultTypeForNewNote || defaultFolderForNewNote
+            (defaultTypeForNewNote || defaultFolderIdForNewNote
               ? {
                   noteType: defaultTypeForNewNote || "lore",
-                  folder: defaultFolderForNewNote || ""
+                  folderId: defaultFolderIdForNewNote || null
                 }
               : null)
           }
-          defaultScope={
-            activeScopeTab === "unified"
-              ? "party"
-              : activeScopeTab === "gm" && isGM
-              ? "gm"
-              : activeScopeTab
-          }
-          defaultOwnerId={
-            activeScopeTab === "player" && isGM
-              ? selectedPlayerUid
-              : currentUserId
-          }
+          defaultScope={modalDefaultTarget.scope}
+          defaultOwnerId={modalDefaultTarget.ownerId}
           isGM={isGM}
           currentUserId={currentUserId}
           playersList={playersList}
           accessibleNotes={accessibleNotes}
           accessibleFolders={accessibleFolders}
           characters={characters}
+          canDeleteNote={canDeleteNote}
           onSave={handleSaveNote}
           onDelete={onDeleteNote}
           onOpenNote={(targetNote) => {
             setCreatingNote(false);
             setEditingNote(targetNote);
           }}
-          onUpdateTargetNote={(targetId, updates) =>
-            onUpdateNote(targetId, updates)
-          }
           onCloneToTarget={onCloneNoteToTarget}
           onShareNoteWithTarget={onShareNoteWithTarget}
           onRevokeNoteAccess={onRevokeNoteAccess}
@@ -1434,14 +469,12 @@ export default function JournalWorkspace({
             setCreatingNote(false);
             setEditingNote(null);
             setDefaultTypeForNewNote(null);
-            setDefaultFolderForNewNote("");
+            setDefaultFolderIdForNewNote("");
           }}
         />
       )}
 
-      {/* Modal de Confirmação de Exclusão de Pasta do Diário */}
       {folderToDelete && (
-        // Fase 4: ConfirmDeleteModal (era overlay inline com zIndex 2500, contexto local do workspace)
         <ConfirmDeleteModal
           title={`Excluir Pasta "${folderToDelete.name}"`}
           question="Deseja excluir também os cards desta pasta?"
@@ -1455,26 +488,18 @@ export default function JournalWorkspace({
           onMove={async () => {
             const target = folderToDelete;
             setFolderToDelete(null);
-            if (onDeleteFolder) {
-              await onDeleteFolder(
-                target.id,
-                target.fullPath,
-                target.typeKey,
-                { deleteContents: false }
-              );
-            }
+            await onDeleteFolder?.(target.id, {
+              mode: "moveToParent",
+              deleteContents: false
+            });
           }}
           onDelete={async () => {
             const target = folderToDelete;
             setFolderToDelete(null);
-            if (onDeleteFolder) {
-              await onDeleteFolder(
-                target.id,
-                target.fullPath,
-                target.typeKey,
-                { deleteContents: true }
-              );
-            }
+            await onDeleteFolder?.(target.id, {
+              mode: "deleteAll",
+              deleteContents: true
+            });
           }}
         />
       )}

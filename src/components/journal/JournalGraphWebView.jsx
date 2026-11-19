@@ -1,12 +1,13 @@
-import { useMemo, useRef, useState } from "react";
-import {
-  NOTE_TYPES,
-  buildGraphData,
-  getNoteTypeMeta
-} from "../../engines/aliasEngine";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { canEditResource } from "../../domain/permissions.js";
+import { buildGraphForReader, extractNoteText } from "../../engines/journal/index.js";
+import { JOURNAL_NOTE_TYPES, getNoteTypeMeta } from "./noteTypesUi";
 
 export default function JournalGraphWebView({
   notes = [],
+  currentUserId = null,
+  isGM = false,
+  canEditNote = null,
   onSelectNoteToEdit,
   onOpenCharacterSheet,
   onUpdateNodePosition
@@ -24,15 +25,54 @@ export default function JournalGraphWebView({
   // Estado de câmera (Pan & Zoom) da Teia
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
+  const screenRef = useRef(null);
   const panStartRef = useRef({ x: 0, y: 0, camX: 0, camY: 0 });
 
   // Arraste individual de nós
   const [draggingNode, setDraggingNode] = useState(null); // { id, x, y }
 
-  const baseGraph = useMemo(
-    () => buildGraphData(notes, enabledTypes),
-    [notes, enabledTypes]
+  const viewer = useMemo(
+    () =>
+      currentUserId
+        ? { uid: currentUserId, isGM: Boolean(isGM) }
+        : { uid: "__viewer__", isGM: true },
+    [currentUserId, isGM]
   );
+
+  const baseGraph = useMemo(() => {
+    const graph = buildGraphForReader({ notes, viewer, enabledTypes });
+    return {
+      nodes: graph.nodes.map((node) => {
+        const meta = getNoteTypeMeta(node.noteType);
+        return {
+          ...node,
+          color: meta.color,
+          typeLabel: meta.singular,
+          rawNote: node.note
+        };
+      }),
+      edges: graph.edges
+    };
+  }, [notes, viewer, enabledTypes]);
+
+  useEffect(() => {
+    const el = screenRef.current;
+    if (!el) return undefined;
+
+    const handleWheel = (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      setCamera((prev) => ({
+        ...prev,
+        scale: Math.min(2.4, Math.max(0.35, Number((prev.scale * factor).toFixed(2))))
+      }));
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
 
   // Conjunto de nós conectados ao nó selecionado
   const connectedIdsSet = useMemo(() => {
@@ -74,19 +114,24 @@ export default function JournalGraphWebView({
     return visibleNodeMap.get(selectedNodeId) || null;
   }, [selectedNodeId, visibleNodeMap]);
 
+  const canDragNode = (rawNote) => {
+    if (!rawNote) return false;
+    if (typeof canEditNote === "function") {
+      return Boolean(canEditNote(rawNote));
+    }
+    if (currentUserId) {
+      return canEditResource(rawNote, {
+        uid: currentUserId,
+        isGM: Boolean(isGM)
+      });
+    }
+    return false;
+  };
+
   const toggleType = (key) => {
     setEnabledTypes((prev) => ({
       ...prev,
       [key]: !prev[key]
-    }));
-  };
-
-  const handleWheel = (e) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    setCamera((prev) => ({
-      ...prev,
-      scale: Math.min(2.4, Math.max(0.35, Number((prev.scale * factor).toFixed(2))))
     }));
   };
 
@@ -141,6 +186,14 @@ export default function JournalGraphWebView({
     setIsPanning(false);
   };
 
+  const selectedLinkedCharacterId =
+    selectedNode?.linkedCharacterId ??
+    selectedNode?.rawNote?.linkedCharacterId ??
+    null;
+  const selectedPreviewText = selectedNode?.rawNote
+    ? extractNoteText(selectedNode.rawNote)
+    : "";
+
   return (
     <div
       className="epf-visor"
@@ -164,7 +217,7 @@ export default function JournalGraphWebView({
         }}
       >
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-          {NOTE_TYPES.map((t) => {
+          {JOURNAL_NOTE_TYPES.map((t) => {
             const active = enabledTypes[t.key] !== false;
             return (
               <button
@@ -241,8 +294,8 @@ export default function JournalGraphWebView({
 
       {/* Tela Tática Interativa da Teia */}
       <div
+        ref={screenRef}
         className="epf-screen"
-        onWheel={handleWheel}
         onMouseDown={handleSurfaceMouseDown}
         onMouseMove={handleSurfaceMouseMove}
         onMouseUp={handleSurfaceMouseUp}
@@ -313,6 +366,7 @@ export default function JournalGraphWebView({
             const isSelected = node.id === selectedNodeId;
             const isDimmed =
               connectedIdsSet && !connectedIdsSet.has(node.id);
+            const nodeEditable = canDragNode(node.rawNote);
 
             return (
               <div
@@ -321,6 +375,7 @@ export default function JournalGraphWebView({
                 onMouseDown={(e) => {
                   e.stopPropagation();
                   setSelectedNodeId(node.id);
+                  if (!nodeEditable) return;
                   setDraggingNode({
                     id: node.id,
                     x: node.x,
@@ -465,21 +520,18 @@ export default function JournalGraphWebView({
                 {getNoteTypeMeta(selectedNode.noteType).singular.toUpperCase()}
               </span>
               <div style={{ display: "flex", gap: "4px" }}>
-                {selectedNode.rawNote?.linkedCharacterSheetId &&
-                  onOpenCharacterSheet && (
-                    <button
-                      type="button"
-                      className="cp-btn cp-btn-gold"
-                      style={{ padding: "3px 8px", fontSize: "11px" }}
-                      onClick={() =>
-                        onOpenCharacterSheet(
-                          selectedNode.rawNote.linkedCharacterSheetId
-                        )
-                      }
-                    >
-                      Abrir Ficha
-                    </button>
-                  )}
+                {selectedLinkedCharacterId && onOpenCharacterSheet && (
+                  <button
+                    type="button"
+                    className="cp-btn cp-btn-gold"
+                    style={{ padding: "3px 8px", fontSize: "11px" }}
+                    onClick={() =>
+                      onOpenCharacterSheet(selectedLinkedCharacterId)
+                    }
+                  >
+                    Abrir Ficha
+                  </button>
+                )}
                 {onSelectNoteToEdit && (
                   <button
                     type="button"
@@ -517,7 +569,7 @@ export default function JournalGraphWebView({
               </div>
             )}
 
-            {selectedNode.rawNote?.content && (
+            {selectedPreviewText && (
               <div
                 style={{
                   fontSize: "12px",
@@ -527,7 +579,7 @@ export default function JournalGraphWebView({
                   marginTop: "4px"
                 }}
               >
-                {selectedNode.rawNote.content}
+                {selectedPreviewText}
               </div>
             )}
           </div>
@@ -536,4 +588,3 @@ export default function JournalGraphWebView({
     </div>
   );
 }
-

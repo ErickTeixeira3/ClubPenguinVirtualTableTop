@@ -2548,3 +2548,46 @@ Nenhuma dependência existente mudou de versão no lockfile (conferido pacote a 
 
 **Aceite da Fase 6:** todos os critérios atendidos (`npm run check` verde sobre a base de código; regras `/folders` e `/characters.folderId`, lote **D-2**/**D-3**, reprodução de ciclos, `M005-folders` + auditoria `folder-v2`/`character-v2` com `0` violações sobre fixture e snapshot real de produção e suíte completa de UI/serviços aprovadas). **Gate G6:** informativo.
 
+## Fase 7 — Diário (2026-11-19)
+
+### Instruções do usuário para esta fase
+- **Gate G7 (apenas informativo):** sem commits (`git commit`), sem deploy (`firebase deploy`) e sem tocar em dados de produção sem autorização explícita.
+- **UI sem textos explicativos:** sem incluir textos explicativos em subtítulos, antes de botões ou locais similares.
+
+### O que foi feito
+- **Domínio e Security Rules (`src/domain/models/note.js`, `src/domain/models/index.js`, `firestore.rules`):**
+  - Exportado `LEGACY_NOTE_KEYS` congelado (`content`, `aliasesNormalized`, `mentionedNoteIds`, `folder`, `graphNode`, `imageMediaId`, `linkedCharacterSheetId`, `updatedAtMs`, `sharedWithPlayerIds`, `isFolder`, `migratedToFoldersCollection`, `visibleToPlayers`) em `src/domain/models/note.js` e reexportado em `src/domain/models/index.js`.
+  - Removida `parseContentToSections` do runtime em `note.js` (movida exclusivamente para `M006-notes-v2.mjs`) e simplificada `fromDoc` para o schema v2 puro (`folderId`, `fromImageRefDoc(src.image)`).
+  - Endurecida `firestore.rules` em `/campaigns/{campaignId}/notes/{noteId}` com `isValidNoteV2Fields(data)` rejeitando os 12 campos legados e validando `image` via `isValidImageRef(data.image)` em `allow create` e `allow update`.
+- **Engines e metadados de UI (`src/engines/journal/`, `src/components/journal/noteTypesUi.js`):**
+  - Criado `src/components/journal/noteTypesUi.js` (`JOURNAL_NOTE_TYPES`, `getNoteTypeMeta`, `getNoteTypeIcon`) encapsulando metadados visuais (incluindo `badgeTextColor: "#001b3a"` para `quest` sem `if (noteType === "quest")`).
+  - Removido o adaptador de transição `T-ENG-2` (`src/engines/aliasEngine.js`) após migrar todos os consumidores (`JournalGraphWebView.jsx`, `VTTLayout.jsx` e suítes de caracterização) para `src/engines/journal/` + `noteTypesUi.js`.
+- **Serviço e Hook v2 (`src/services/journalService.js`, `src/hooks/useJournalNotes.js`):**
+  - Reescrito `src/services/journalService.js` para schema v2 com `assertClientUpToDate()`, `subscribeNotes`, gravação apenas de campos v2 (`sections`, `image`, `graphPosition`, `linkedCharacterId`, audiência via `computeAudience`), `saveNoteDraft` em `writeBatch` atômico (atualizando card + `aliases` + `rev` dos cards-alvo somente quando editáveis pelo usuário, abortando sem escritas em erro de permissão), `updateJournalNodePosition` (`graphPosition`), `cloneJournalNoteToTarget` sem herdar campos derivados/legados e `softDeleteJournalNote` (**D-3**).
+  - Refatorado `src/hooks/useJournalNotes.js` para eliminar importações diretas de SDK (`firebase/firestore` e `infra/firebase.js`), assinar via `journalService.subscribeNotes`, expor `canEditNote`, `canDeleteNote` e `saveNoteDraft`, e reportar erros por `notifyError`.
+- **Rascunho e Decomposição de UI (`src/components/journal/`, `src/components/layout/VTTLayout.jsx`):**
+  - Criados `useNoteDraft.js` (`useReducer` com staging em rascunho de vínculos/negações até o save e `applyPendingAliasesToNotes`), `LinkedCardSpan.jsx`, `NoteInteractiveView.jsx`, `NoteSectionsEditor.jsx`, `NoteMetaFields.jsx`, `NoteSharePanel.jsx`, `NoteCloneSelect.jsx` e `LinkCardDialog.jsx`, reescrevendo `NoteEditorModal.jsx` com **D-DER-6** (`ConfirmDialog` de 3 opções *Salvar / Descartar / Cancelar* ao navegar com rascunho sujo), **FUN-11** / **U6** (`"Excluir"` restrito a `canDeleteNote`/dono/GM com `ConfirmDialog`, controles de revogação disponíveis para dono e GM) e `registerUnsavedGuard`.
+  - Decomposto `JournalWorkspace.jsx` em `journalHelpers.js`, `ScopeTabs.jsx`, `useJournalDragDrop.js`, `FolderTree.jsx` (`SidebarCardRow` usando `note.image`, `FolderTreeNode`) e `JournalSidebar.jsx`, usando `extractNoteText` na busca.
+  - Atualizado `JournalGraphWebView.jsx` para `buildGraphForReader` (respeitando `ignoredAliases`, resolvendo **INT-09**), `extractNoteText`, `noteTypesUi.js`, listener `wheel` não-passivo via `screenRef` e drag bloqueado quando `!canEditNote`; atualizado `VTTLayout.jsx` para repassar `saveNoteDraft`, `canEditNote` e `canDeleteNote`.
+- **Migração `M006-notes-v2` e Auditoria v2 (`scripts/migrations/`):**
+  - Criada `scripts/migrations/M006-notes-v2.mjs` (registrada em `scripts/migrations/registry.mjs`): converte notas v1 (`content` markdown via `parseContentToSections`, `graphNode`, `imageMediaId`, `linkedCharacterSheetId`, `sharedWithPlayerIds`, `visibleToPlayers`, `folderId`) para v2 canônico, recalculando `visibleTo`/`editableBy` via `computeAudience`, preservando timestamps e apagando `LEGACY_NOTE_KEYS` de forma idempotente.
+  - Registrado `noteV2Validator` (`id: "note-v2"`) em `scripts/migrations/lib/auditValidators.mjs` validando `LEGACY_NOTE_KEYS`, compatibilidade de `folderId` e `validateNote`.
+- **Testes adicionados/atualizados:**
+  - Atualizados `tests/characterization/aliases.test.js` (`src/engines/journal/` + ordenação por aparição), `tests/unit/domain/models/folderNote.test.js` (contrato v2 + `LEGACY_NOTE_KEYS` + `parseContentToSections` via `M006`), `tests/emulator/phase5-characters-m004.test.js` e `tests/emulator/phase6-folders-m005.test.js`.
+  - Criados `tests/unit/services/phase7JournalService.test.js` (`7` testes), `tests/unit/components/phase7-journal-ui.test.jsx` (`8` testes) e `tests/emulator/phase7-journal-m006.test.js` (`4` testes).
+
+### Verificações executadas
+| Check | Resultado observado |
+| :--- | :--- |
+| `oxlint` | `0` erros, `9` avisos pré-existentes (`330` arquivos) |
+| `lint:layers` | `215` arquivos analisados; `54` violações totais (`57 → 54`: eliminadas as 2 importações de SDK em `useJournalNotes.js` e 1 violação `engines -> utils` com a remoção de `aliasEngine.js`) |
+| `npm run test` | `79` arquivos, `592` testes aprovados |
+| `npm run test:rules` | `10` arquivos, `71` testes aprovados (inclui `/notes` v2 + `saveNoteDraft` em `writeBatch`, `M006-notes-v2` em fixture e cadeia `M001 → M006` no snapshot local de produção com `0` violações e re-execução idempotente) |
+| Cobertura módulos puros (`--coverage`) | `98.66%` statements, `94.93%` branches (`>= 90%`), `100%` funções (`domain/models/note.js`: `90%` branch; `engines/journal/`: `97.54%` branch) |
+| `npm run build` | `vite build` ok (`233` módulos transformados) |
+
+### IDs do catálogo resolvidos na fase
+- **INT-09 / INT-10 (`M006`) / SEG-11 / MOD-06 / MOD-07 / MOD-14 / FUN-11 / FUN-12 / FUN-28 / FUN-19 / EST-04 / EST-03:** migração completa do Diário para schema v2 e `src/engines/journal/` sem `aliasEngine.js`, normalização de busca/aliases em pass único (`extractNoteText` + `normalizeAliasText`), `ignoredAliases` respeitado na teia e nas seções, staging em rascunho até `saveNoteDraft` em `writeBatch` atômico, diálogo **D-DER-6** para alterações não salvas, trava de exclusão **FUN-11**/**U6** para dono/GM com `ConfirmDialog`, listener `wheel` não-passivo e endurecimento de `/notes` nas rules + `M006-notes-v2` + `note-v2`.
+
+**Aceite da Fase 7:** todos os critérios atendidos (`npm run check` verde após a edição final, regras `/notes` v2 e `writeBatch` em emulador real, `M006-notes-v2` + auditoria `note-v2` com `0` violações em fixture e snapshot de produção, remoção de `T-ENG-2`, cobertura de branches `>= 90%` e suítes unitárias/UI aprovadas). **Gate G7:** informativo.
+
