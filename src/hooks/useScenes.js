@@ -6,9 +6,10 @@ import {
   updateDoc,
   serverTimestamp
 } from "firebase/firestore";
+import { computeAudience } from "../domain/audience.js";
 import { isReleasedToPlayers, subscribeVisibleCollection } from "../services/visibilityService";
-import { db } from "../services/firebase";
-import { uploadCompressedMedia } from "../services/mediaService";
+import { db } from "../infra/firebase.js";
+import { grantMediaAudience, uploadCompressedMedia } from "../services/mediaService";
 import { useAuth } from "../contexts/AuthContext";
 import { useCampaign } from "../contexts/CampaignContext";
 
@@ -44,13 +45,10 @@ export function useScenes() {
     if (!listenerUid || !campaignId || !campaignReady) return;
 
     const scenesCol = collection(db, "campaigns", campaignId, "scenes");
-    // Se não for o Mestre real no banco, consulta apenas cenas liberadas (visibleTo ou visibleToPlayers; exigido pelo firestore.rules)
-    // Fase 6.2 (A5/A6: cenas liberadas por visibleToPlayers chegam mesmo com visibleTo defasado).
     const unsubscribe = subscribeVisibleCollection({
       colRef: scenesCol,
       isRealGM,
       uid: listenerUid,
-      includePublicFlag: true,
       onNext: (snapshot) => {
         setScenesError("");
         const list = snapshot.docs
@@ -93,17 +91,27 @@ export function useScenes() {
     externalUrl = "",
     widthPx = 1920,
     heightPx = 1080,
-    visibleToPlayers = true,
+    isPublic = true,
+    visibleTo = null,
     grid = DEFAULT_GRID_CONFIG
   }) => {
     if (!isRealGM || !user) return null;
+
+    const gmUid = campaign?.gmId || user.uid;
+    const canonicalVisibleTo = Array.isArray(visibleTo)
+      ? computeAudience({
+          visibleTo: visibleTo.includes("ALL") ? ["ALL"] : [gmUid, ...visibleTo]
+        }).visibleTo
+      : isPublic
+      ? ["ALL"]
+      : [gmUid];
 
     let mediaInfo = {
       mediaId: null,
       externalUrl: externalUrl?.trim() || null,
       widthPx: Number(widthPx) || 1920,
       heightPx: Number(heightPx) || 1080,
-      sizeBytes: 0
+      byteLength: 0
     };
 
     if (file) {
@@ -111,28 +119,26 @@ export function useScenes() {
         file,
         category: "scene",
         campaignId,
-        uploadedBy: user.uid
+        uploadedBy: user.uid,
+        visibleTo: canonicalVisibleTo
       });
       mediaInfo = {
         mediaId: uploaded.mediaId,
         externalUrl: null,
         widthPx: uploaded.widthPx,
         heightPx: uploaded.heightPx,
-        sizeBytes: uploaded.sizeBytes
+        byteLength: uploaded.byteLength
       };
     }
 
     const sceneId = `scene_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
 
-    const gmUid = campaign?.gmId || user.uid;
-    const isVisible = Boolean(visibleToPlayers);
     const newScene = {
       id: sceneId,
       campaignId,
       name: name?.trim() || "Novo Mapa",
-      visibleToPlayers: isVisible,
-      visibleTo: isVisible ? ["ALL"] : [gmUid],
+      visibleTo: canonicalVisibleTo,
       isDeleted: false,
       mapImage: mediaInfo,
       grid: {
@@ -165,23 +171,41 @@ export function useScenes() {
     const existing = rawScenes.find((s) => s.id === sceneId);
     if (!existing) return;
 
+    const gmUid = campaign?.gmId || user.uid;
+    const {
+      isPublic: nextIsPublic,
+      visibleToPlayers: _legacyVisibleFlag,
+      ...cleanUpdates
+    } = updates;
+
     const nextPayload = {
-      ...updates,
+      ...cleanUpdates,
       campaignId,
       updatedAt: serverTimestamp()
     };
 
-    if (updates.visibleToPlayers !== undefined) {
-      const gmUid = campaign?.gmId || user.uid;
-      nextPayload.visibleTo = updates.visibleToPlayers ? ["ALL"] : [gmUid];
+    if (nextIsPublic !== undefined) {
+      nextPayload.visibleTo = nextIsPublic ? ["ALL"] : [gmUid];
+    } else if (Array.isArray(cleanUpdates.visibleTo)) {
+      nextPayload.visibleTo = cleanUpdates.visibleTo.includes("ALL")
+        ? ["ALL"]
+        : computeAudience({ visibleTo: [gmUid, ...cleanUpdates.visibleTo] }).visibleTo;
     }
+
+    const effectiveVisibleTo =
+      nextPayload.visibleTo !== undefined
+        ? nextPayload.visibleTo
+        : Array.isArray(existing.visibleTo)
+        ? existing.visibleTo
+        : [gmUid];
 
     if (newImageFile) {
       const uploaded = await uploadCompressedMedia({
         file: newImageFile,
         category: "scene",
         campaignId,
-        uploadedBy: user.uid
+        uploadedBy: user.uid,
+        visibleTo: effectiveVisibleTo
       });
 
       nextPayload.mapImage = {
@@ -189,20 +213,52 @@ export function useScenes() {
         externalUrl: null,
         widthPx: uploaded.widthPx,
         heightPx: uploaded.heightPx,
-        sizeBytes: uploaded.sizeBytes
+        byteLength: uploaded.byteLength
       };
     } else if (
-      updates.externalUrl !== undefined &&
-      updates.externalUrl?.trim()
+      cleanUpdates.externalUrl !== undefined &&
+      cleanUpdates.externalUrl?.trim()
     ) {
       nextPayload.mapImage = {
         mediaId: null,
-        externalUrl: updates.externalUrl.trim(),
+        externalUrl: cleanUpdates.externalUrl.trim(),
         widthPx: existing.mapImage?.widthPx || 1920,
         heightPx: existing.mapImage?.heightPx || 1080,
-        sizeBytes: 0
+        byteLength: 0
       };
       delete nextPayload.externalUrl;
+    } else {
+      const nextMapMediaId =
+        nextPayload.mapImage !== undefined
+          ? nextPayload.mapImage?.mediaId
+          : existing.mapImage?.mediaId;
+      const mapMediaChanged =
+        nextPayload.mapImage !== undefined &&
+        Boolean(nextMapMediaId) &&
+        nextMapMediaId !== existing.mapImage?.mediaId;
+      if (nextMapMediaId && (nextPayload.visibleTo !== undefined || mapMediaChanged)) {
+        await grantMediaAudience({
+          campaignId,
+          mediaId: nextMapMediaId,
+          visibleTo: effectiveVisibleTo
+        });
+      }
+
+      const nextAudioMediaId =
+        nextPayload.ambientAudio !== undefined
+          ? nextPayload.ambientAudio?.mediaId
+          : existing.ambientAudio?.mediaId;
+      const audioMediaChanged =
+        nextPayload.ambientAudio !== undefined &&
+        Boolean(nextAudioMediaId) &&
+        nextAudioMediaId !== existing.ambientAudio?.mediaId;
+      if (nextAudioMediaId && (nextPayload.visibleTo !== undefined || audioMediaChanged)) {
+        await grantMediaAudience({
+          campaignId,
+          mediaId: nextAudioMediaId,
+          visibleTo: effectiveVisibleTo
+        });
+      }
     }
 
     const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
@@ -229,10 +285,23 @@ export function useScenes() {
 
     if (sceneId) {
       const target = rawScenes.find((s) => s.id === sceneId);
-      if (target && !target.visibleToPlayers) {
+      if (target && !isReleasedToPlayers(target)) {
+        if (target.mapImage?.mediaId) {
+          await grantMediaAudience({
+            campaignId,
+            mediaId: target.mapImage.mediaId,
+            visibleTo: ["ALL"]
+          });
+        }
+        if (target.ambientAudio?.mediaId) {
+          await grantMediaAudience({
+            campaignId,
+            mediaId: target.ambientAudio.mediaId,
+            visibleTo: ["ALL"]
+          });
+        }
         const sceneRef = doc(db, "campaigns", campaignId, "scenes", sceneId);
         await updateDoc(sceneRef, {
-          visibleToPlayers: true,
           visibleTo: ["ALL"],
           updatedAt: serverTimestamp()
         });

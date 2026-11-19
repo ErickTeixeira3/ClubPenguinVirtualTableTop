@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+// TRANSITION(T-INFRA-3): remover na Fase 12 (import direto de infra em componente v1)
 import {
   compressImageToWebP,
   formatBytes
-} from "../../engines/imageCompressor";
+} from "../../infra/imageCompression.js";
 import { DEFAULT_GRID_CONFIG } from "../../hooks/useScenes";
 import { useMediaUrl } from "../../hooks/useMediaUrl";
+import { isReleasedToPlayers } from "../../domain/permissions.js";
 import { Z_LAYERS } from "../../constants/zLayers";
 
 function SceneThumbnail({ scene, campaignId }) {
@@ -80,7 +82,7 @@ export default function ScenesManagerModal({
   const [externalUrl, setExternalUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewInfo, setPreviewInfo] = useState(null);
-  const [visibleToPlayers, setVisibleToPlayers] = useState(true);
+  const [isPublic, setIsPublic] = useState(true);
   const [grid, setGrid] = useState(DEFAULT_GRID_CONFIG);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -91,7 +93,7 @@ export default function ScenesManagerModal({
     setExternalUrl("");
     setSelectedFile(null);
     setPreviewInfo(null);
-    setVisibleToPlayers(true);
+    setIsPublic(true);
     setGrid(DEFAULT_GRID_CONFIG);
     setErrorMsg("");
   };
@@ -102,7 +104,7 @@ export default function ScenesManagerModal({
     setExternalUrl(scene.mapImage?.externalUrl || "");
     setSelectedFile(null);
     setPreviewInfo(null);
-    setVisibleToPlayers(Boolean(scene.visibleToPlayers));
+    setIsPublic(isReleasedToPlayers(scene));
     setGrid({
       ...DEFAULT_GRID_CONFIG,
       ...(scene.grid || {})
@@ -114,16 +116,18 @@ export default function ScenesManagerModal({
     const file = e.target.files?.[0];
     if (!file) return;
     setErrorMsg("");
-    setSelectedFile(file);
 
     try {
       const compressed = await compressImageToWebP(file, "scene");
+      setSelectedFile(compressed);
       setPreviewInfo(compressed);
       if (!name.trim()) {
         const cleanName = file.name.replace(/\.[^/.]+$/, "");
         setName(cleanName);
       }
     } catch (err) {
+      setSelectedFile(null);
+      setPreviewInfo(null);
       setErrorMsg(err?.message || "Falha ao processar imagem.");
     }
   };
@@ -135,24 +139,25 @@ export default function ScenesManagerModal({
     setSubmitting(true);
     setErrorMsg("");
 
+    const uploadPayload = previewInfo || selectedFile;
     try {
       if (editingSceneId) {
         await onUpdateScene(
           editingSceneId,
           {
             name: name.trim(),
-            visibleToPlayers,
+            isPublic,
             grid,
             ...(externalUrl.trim() ? { externalUrl: externalUrl.trim() } : {})
           },
-          selectedFile
+          uploadPayload
         );
       } else {
         const createdId = await onCreateScene({
           name: name.trim(),
-          file: selectedFile,
+          file: uploadPayload,
           externalUrl: externalUrl.trim(),
-          visibleToPlayers,
+          isPublic,
           grid
         });
         if (createdId && !activeSceneId) {
@@ -169,7 +174,7 @@ export default function ScenesManagerModal({
 
   const handleToggleVisibility = async (scene) => {
     await onUpdateScene(scene.id, {
-      visibleToPlayers: !scene.visibleToPlayers
+      isPublic: !isReleasedToPlayers(scene)
     });
   };
 
@@ -621,8 +626,8 @@ export default function ScenesManagerModal({
             >
               <input
                 type="checkbox"
-                checked={visibleToPlayers}
-                onChange={(e) => setVisibleToPlayers(e.target.checked)}
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
               />
               Liberado para Players
             </label>
@@ -733,7 +738,7 @@ export default function ScenesManagerModal({
                           </span>
                         )}
                         <span className="cp-badge cp-badge-player">
-                          {scene.visibleToPlayers ? "VISÍVEL" : "OCULTO"}
+                          {isReleasedToPlayers(scene) ? "VISÍVEL" : "OCULTO"}
                         </span>
                       </div>
 
@@ -747,8 +752,8 @@ export default function ScenesManagerModal({
                         {scene.mapImage?.widthPx || 1920}x
                         {scene.mapImage?.heightPx || 1080}px • Grid{" "}
                         {scene.grid?.cellSizePx || 64}px
-                        {scene.mapImage?.sizeBytes
-                          ? ` • ${formatBytes(scene.mapImage.sizeBytes)}`
+                        {(scene.mapImage?.byteLength || scene.mapImage?.sizeBytes)
+                          ? ` • ${formatBytes(scene.mapImage?.byteLength || scene.mapImage?.sizeBytes)}`
                           : ""}
                       </div>
                     </div>
@@ -792,7 +797,7 @@ export default function ScenesManagerModal({
                       style={{ padding: "5px 10px", fontSize: "11px" }}
                       onClick={() => handleToggleVisibility(scene)}
                     >
-                      {scene.visibleToPlayers ? "Ocultar" : "Liberar"}
+                      {isReleasedToPlayers(scene) ? "Ocultar" : "Liberar"}
                     </button>
 
                     <button
