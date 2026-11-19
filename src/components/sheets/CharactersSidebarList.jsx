@@ -1,457 +1,29 @@
 import { useMemo, useState } from "react";
-import { useMediaUrl } from "../../hooks/useMediaUrl";
-import WindowModal from "../ui/WindowModal";
+import { FOLDER_DOMAINS } from "../../domain/constants.js";
+import { AppError, ERROR_CODES } from "../../domain/errors.js";
+import {
+  collectDescendantFolderIds,
+  validateFolderMove
+} from "../../engines/folders/index.js";
+import { useNotifications } from "../../hooks/useNotifications";
 import ConfirmDeleteModal from "../ui/ConfirmDeleteModal";
+import ConfirmDialog from "../ui/ConfirmDialog";
+import CharacterTreeView from "./CharacterTreeView";
+import CreateEntryModal from "./CreateEntryModal";
+import MoveCharacterModal from "./MoveCharacterModal";
+import SpawnTokenModal from "./SpawnTokenModal";
+import { useCharacterTree } from "./useCharacterTree";
 
-function CharacterRow({
-  character,
-  campaignId,
-  isGM,
-  canEdit,
-  currentUserId = null,
-  onlineUsers = {},
-  onOpenSheet,
-  onOpenSpawnModal,
-  onDeleteCharacter,
-  onOpenMoveModal
-}) {
-  // Fase 3.1 (V-16 / D-3): excluir, mover e arrastar a ficha são exclusivos do dono ou do Mestre
-  // (mesma regra de deleteCharacter/moveCharacterToFolder). `editableBy` concede apenas edição.
-  const canManage = Boolean(isGM || (currentUserId && character.ownerId === currentUserId));
-
-  const { url: avatarUrl } = useMediaUrl(
-    character.avatarMediaId || character.defaultToken?.mediaId,
-    character.avatarExternalUrl || character.defaultToken?.externalUrl,
-    campaignId
-  );
-
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleOpenNewWindow = (e) => {
-    e.stopPropagation();
-    const cid = campaignId || character?.campaignId || "main-table";
-    const url = `${window.location.origin}${window.location.pathname}?campaignId=${encodeURIComponent(cid)}&sheetId=${encodeURIComponent(character.id)}`;
-    window.open(
-      url,
-      `cpvtt_sheet_${character.id}`,
-      "width=1080,height=760,menubar=no,toolbar=no,location=no,status=no"
-    );
-  };
-
-  const isOnline = Boolean(
-    character.ownerId && onlineUsers[character.ownerId]
-  );
-
+function resolveOwnerName(ownerId, gmId, playersMap = {}, currentUserId = null) {
+  if (!ownerId) return "Sem Dono";
+  if (gmId && ownerId === gmId) return "Mestre";
+  if (currentUserId && ownerId === currentUserId) return "Você";
+  const player = playersMap?.[ownerId];
   return (
-    <div
-      draggable={canManage}
-      onDragStart={(e) => {
-        if (!canManage) return;
-        e.dataTransfer.setData("text/character-id", character.id);
-      }}
-      onClick={() => onOpenSheet(character.id)}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "6px 8px",
-        borderBottom: "1px solid #edf2f7",
-        background: isHovered ? "#f7fafc" : "#ffffff",
-        cursor: "pointer",
-        transition: "background 0.15s ease",
-        gap: "8px"
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
-        {/* Avatar circular estilo Club Penguin / VTT */}
-        <div
-          style={{
-            width: "36px",
-            height: "36px",
-            borderRadius: "50%",
-            background: "#1a202c",
-            border: `2px solid ${character.cardColor || "#2b6cb0"}`,
-            overflow: "hidden",
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
-          }}
-        >
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt={character.name}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : (
-            <span style={{ color: "#ffffff", fontSize: "12px", fontWeight: 800 }}>
-              {(character.name || "P").slice(0, 2).toUpperCase()}
-            </span>
-          )}
-        </div>
-
-        {/* Nome do personagem */}
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "13px",
-              color: "#1e293b",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis"
-            }}
-          >
-            {character.name}
-          </div>
-          {character.resources?.hp && (
-            <div style={{ fontSize: "10px", fontWeight: 700, color: "#64748b" }}>
-              HP {character.resources.hp.current}/{character.resources.hp.max}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div
-        style={{ display: "flex", alignItems: "center", gap: "5px", flexShrink: 0 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Ações em hover */}
-        {isHovered && (
-          <>
-            {onOpenSpawnModal && (isGM || canEdit) && (
-              <button
-                type="button"
-                className="cp-btn cp-btn-green"
-                style={{ padding: "2px 6px", fontSize: "10px" }}
-                onClick={() => onOpenSpawnModal(character)}
-                title="Colocar Token no Mapa"
-              >
-                +Mapa
-              </button>
-            )}
-
-            <button
-              type="button"
-              className="cp-btn cp-btn-gold"
-              style={{ padding: "2px 6px", fontSize: "10px" }}
-              onClick={handleOpenNewWindow}
-              title="Abrir em Nova Janela"
-            >
-              ↗
-            </button>
-
-            {onOpenMoveModal && canManage && (
-              <button
-                type="button"
-                className="cp-btn"
-                style={{ padding: "2px 6px", fontSize: "10px" }}
-                onClick={() => onOpenMoveModal(character)}
-                title="Mover para pasta..."
-              >
-                📁
-              </button>
-            )}
-
-            {canManage && (
-              <button
-                type="button"
-                className="cp-btn cp-btn-orange"
-                style={{ padding: "2px 5px", fontSize: "10px" }}
-                onClick={() => onDeleteCharacter(character.id)}
-                title="Excluir Personagem"
-              >
-                ✕
-              </button>
-            )}
-          </>
-        )}
-
-        {/* Ponto de status laranja / verde na direita como na referência */}
-        <div
-          title={isOnline ? "Online" : "Personagem Ativo"}
-          style={{
-            width: "8px",
-            height: "8px",
-            borderRadius: "50%",
-            background: isOnline ? "#22c55e" : "#f59e0b",
-            boxShadow: "0 0 4px rgba(245, 158, 11, 0.5)",
-            flexShrink: 0
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function FolderItem({
-  folder,
-  allFolders,
-  allCharacters,
-  campaignId,
-  isGM,
-  canEdit,
-  canEditCharacter,
-  canEditFolder = null,
-  currentUserId,
-  onlineUsers,
-  collapsedMap,
-  onToggleCollapse,
-  onOpenSheet,
-  onOpenSpawnModal,
-  onDeleteCharacter,
-  onOpenMoveModal,
-  onStartCreateInFolder,
-  onRenameFolder,
-  onDeleteFolder,
-  onMoveCharacterToFolder,
-  onMoveFolder
-}) {
-  const [isOver, setIsOver] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-  const [tempName, setTempName] = useState(folder.name);
-
-  const isCollapsed = Boolean(collapsedMap[folder.id]);
-  // Fase 3.1 (V-16 / D-3): arrastar e excluir a pasta são exclusivos do dono ou do Mestre
-  // (mesma regra de deleteFolder/moveFolder); criar dentro e renomear seguem canEdit.
-  const canManageFolder = Boolean(isGM || (currentUserId && folder.ownerId === currentUserId));
-
-  const subfolders = useMemo(
-    () => allFolders.filter((f) => f.parentId === folder.id),
-    [allFolders, folder.id]
-  );
-
-  const folderChars = useMemo(
-    () => allCharacters.filter((c) => c.folderId === folder.id),
-    [allCharacters, folder.id]
-  );
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsOver(false);
-
-    const charId = e.dataTransfer.getData("text/character-id");
-    if (charId) {
-      onMoveCharacterToFolder(charId, folder.id, folder.ownerId);
-      return;
-    }
-
-    const draggedFolderId = e.dataTransfer.getData("text/folder-id");
-    if (draggedFolderId && draggedFolderId !== folder.id) {
-      onMoveFolder(draggedFolderId, folder.id, folder.ownerId);
-    }
-  };
-
-  const handleSaveRename = (e) => {
-    e.preventDefault();
-    if (tempName.trim()) {
-      onRenameFolder(folder.id, tempName.trim());
-    }
-    setEditingName(false);
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      {/* Cabeçalho da Pasta */}
-      <div
-        draggable={canManageFolder}
-        onDragStart={(e) => {
-          if (!canManageFolder) return;
-          e.dataTransfer.setData("text/folder-id", folder.id);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsOver(true);
-        }}
-        onDragLeave={() => setIsOver(false)}
-        onDrop={handleDrop}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "5px 6px",
-          borderBottom: "1px solid #edf2f7",
-          background: isOver ? "#e0f2fe" : "#ffffff",
-          cursor: "pointer",
-          fontWeight: 700,
-          userSelect: "none"
-        }}
-      >
-        <div
-          onClick={() => onToggleCollapse(folder.id)}
-          style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 }}
-        >
-          {/* Botão + / - no estilo da imagem anexada */}
-          <span
-            style={{
-              width: "16px",
-              textAlign: "center",
-              fontSize: "14px",
-              fontWeight: 900,
-              color: "#334155"
-            }}
-          >
-            {isCollapsed ? "+" : "-"}
-          </span>
-
-          {editingName ? (
-            <form onSubmit={handleSaveRename} onClick={(e) => e.stopPropagation()}>
-              <input
-                type="text"
-                className="cp-input"
-                value={tempName}
-                autoFocus
-                onChange={(e) => setTempName(e.target.value)}
-                onBlur={handleSaveRename}
-                style={{ fontSize: "12px", padding: "2px 5px", width: "120px" }}
-              />
-            </form>
-          ) : (
-            <span
-              style={{
-                fontSize: "13px",
-                color: folder.parentId ? "#0284c7" : "#1e293b",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis"
-              }}
-            >
-              {folder.name}
-            </span>
-          )}
-
-          <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600 }}>
-            ({folderChars.length + subfolders.length})
-          </span>
-        </div>
-
-        {/* Ações da Pasta */}
-        {(isGM || canEdit) && (
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }} onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="cp-btn"
-              style={{ padding: "1px 5px", fontSize: "10px" }}
-              onClick={() => onStartCreateInFolder(folder, "character")}
-              title="Novo Personagem nesta Pasta"
-            >
-              +👤
-            </button>
-            <button
-              type="button"
-              className="cp-btn"
-              style={{ padding: "1px 5px", fontSize: "10px" }}
-              onClick={() => onStartCreateInFolder(folder, "folder")}
-              title="Nova Subpasta nesta Pasta"
-            >
-              +📁
-            </button>
-            <button
-              type="button"
-              className="cp-btn"
-              style={{ padding: "1px 5px", fontSize: "10px" }}
-              onClick={() => setEditingName((prev) => !prev)}
-              title="Renomear Pasta"
-            >
-              ✏️
-            </button>
-            {canManageFolder && (
-              <button
-                type="button"
-                className="cp-btn cp-btn-orange"
-                style={{ padding: "1px 5px", fontSize: "10px" }}
-                onClick={() => onDeleteFolder(folder.id)}
-                title="Excluir Pasta"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Conteúdo Expandido com indentação clássica */}
-      {!isCollapsed && (
-        <div
-          style={{
-            paddingLeft: "18px",
-            borderLeft: "2px solid #e2e8f0",
-            marginLeft: "8px"
-          }}
-        >
-          {/* Subpastas recursivas */}
-          {subfolders.map((sub) => (
-            <FolderItem
-              key={sub.id}
-              folder={sub}
-              allFolders={allFolders}
-              allCharacters={allCharacters}
-              campaignId={campaignId}
-              isGM={isGM}
-              canEdit={
-                isGM ||
-                (canEditFolder ? canEditFolder(sub) : sub.ownerId === currentUserId)
-              }
-              canEditCharacter={canEditCharacter}
-              canEditFolder={canEditFolder}
-              currentUserId={currentUserId}
-              onlineUsers={onlineUsers}
-              collapsedMap={collapsedMap}
-              onToggleCollapse={onToggleCollapse}
-              onOpenSheet={onOpenSheet}
-              onOpenSpawnModal={onOpenSpawnModal}
-              onDeleteCharacter={onDeleteCharacter}
-              onOpenMoveModal={onOpenMoveModal}
-              onStartCreateInFolder={onStartCreateInFolder}
-              onRenameFolder={onRenameFolder}
-              onDeleteFolder={onDeleteFolder}
-              onMoveCharacterToFolder={onMoveCharacterToFolder}
-              onMoveFolder={onMoveFolder}
-            />
-          ))}
-
-          {/* Personagens dentro da pasta */}
-          {folderChars.map((char) => (
-            <CharacterRow
-              key={char.id}
-              character={char}
-              campaignId={campaignId}
-              isGM={isGM}
-              canEdit={
-                isGM ||
-                (canEditCharacter
-                  ? canEditCharacter(char)
-                  : char.ownerId === currentUserId)
-              }
-              currentUserId={currentUserId}
-              onlineUsers={onlineUsers}
-              onOpenSheet={onOpenSheet}
-              onOpenSpawnModal={onOpenSpawnModal}
-              onDeleteCharacter={onDeleteCharacter}
-              onOpenMoveModal={onOpenMoveModal}
-            />
-          ))}
-
-          {subfolders.length === 0 && folderChars.length === 0 && (
-            <div
-              style={{
-                fontSize: "11px",
-                color: "#94a3b8",
-                padding: "6px 8px",
-                fontStyle: "italic"
-              }}
-            >
-              (Pasta vazia - arraste itens para cá)
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    player?.displayName ||
+    player?.name ||
+    player?.email?.split("@")[0] ||
+    ownerId
   );
 }
 
@@ -461,7 +33,9 @@ export default function CharactersSidebarList({
   campaignId,
   isGM,
   canEditCharacter = null,
+  canDeleteCharacter = null,
   canEditFolder = null,
+  canDeleteFolder = null,
   currentUser,
   playersMap = {},
   gmId,
@@ -471,43 +45,36 @@ export default function CharactersSidebarList({
   onSpawnToken,
   onDeleteCharacter,
   onCreateFolder,
-  onUpdateFolder,
+  onRenameFolder = null,
+  onUpdateFolder = null,
   onDeleteFolder,
   onMoveCharacterToFolder,
-  onMoveFolder
+  onMoveFolder,
+  onTransferFolderOwnership = null
 }) {
-  // Estado de colapso de seções e pastas
+  const { notifyError } = useNotifications();
   const [collapsedMap, setCollapsedMap] = useState({});
-
-  // Diálogo para criação rápida de Personagem ou Pasta
-  const [createModal, setCreateModal] = useState(null); // { type: 'character' | 'folder', folderId, ownerId }
-  const [modalName, setModalName] = useState("");
-  const [modalCharType, setModalCharType] = useState("pc");
-  const [modalOwnerId, setModalOwnerId] = useState("");
-  const [modalFolderId, setModalFolderId] = useState("");
-
-  // Diálogo para mover personagem
+  const [createConfig, setCreateConfig] = useState(null);
   const [movingChar, setMovingChar] = useState(null);
-  const [targetMoveFolder, setTargetMoveFolder] = useState("");
-
-  // Diálogo para confirmar exclusão de pasta
   const [folderToDelete, setFolderToDelete] = useState(null);
-
-  const handleRequestDeleteFolder = (folderId) => {
-    const found = folders.find((f) => f.id === folderId);
-    setFolderToDelete(found || { id: folderId, name: "Pasta" });
-  };
-
-  // Diálogo para colocar token no mapa (definir se exibe nome e visibilidade)
+  const [characterToDelete, setCharacterToDelete] = useState(null);
   const [spawnModalChar, setSpawnModalChar] = useState(null);
-  const [spawnShowName, setSpawnShowName] = useState(true);
-  const [spawnVisibleToPlayers, setSpawnVisibleToPlayers] = useState(true);
+  const [transferConfirmation, setTransferConfirmation] = useState(null);
 
-  const handleOpenSpawnModal = (char) => {
-    setSpawnModalChar(char);
-    setSpawnShowName(char.defaultToken?.showName !== false);
-    setSpawnVisibleToPlayers(char.type !== "npc" || isGM);
-  };
+  const { playerList, sections } = useCharacterTree({
+    characters,
+    folders,
+    currentUserUid: currentUser?.uid || null,
+    isGM: Boolean(isGM),
+    gmId: gmId || null,
+    playersMap,
+    canEditFolder
+  });
+
+  const foldersById = useMemo(
+    () => new Map(folders.map((f) => [f.id, f])),
+    [folders]
+  );
 
   const toggleCollapse = (id) => {
     setCollapsedMap((prev) => ({
@@ -516,86 +83,236 @@ export default function CharactersSidebarList({
     }));
   };
 
-  // Separação de Players registrados (excluindo o GM)
-  const playerList = useMemo(() => {
-    const list = Object.entries(playersMap)
-      .filter(([uid]) => uid !== gmId)
-      .map(([uid, p]) => ({
-        uid,
-        displayName: p.displayName || p.name || p.email?.split("@")[0] || "Jogador",
-        photoURL: p.photoURL || null
-      }));
-    return list;
-  }, [playersMap, gmId]);
+  const handleRenameFolder = async (folderId, nextName) => {
+    if (onRenameFolder) {
+      return onRenameFolder(folderId, nextName);
+    }
+    if (onUpdateFolder) {
+      return onUpdateFolder(folderId, { name: nextName });
+    }
+    return false;
+  };
 
-  // Abre modal de criação de personagem
   const handleOpenCreateCharacter = (targetFolder = null, targetOwnerId = null) => {
-    setModalName("");
-    setModalCharType("pc");
-    setModalFolderId(targetFolder?.id || "");
-    setModalOwnerId(targetOwnerId || targetFolder?.ownerId || (isGM ? (gmId || currentUser?.uid) : currentUser?.uid));
-    setCreateModal({ type: "character" });
+    setCreateConfig({
+      type: "character",
+      folderId: targetFolder?.id || "",
+      ownerId:
+        targetOwnerId ||
+        targetFolder?.ownerId ||
+        (isGM ? gmId || currentUser?.uid : currentUser?.uid)
+    });
   };
 
-  // Abre modal de criação de pasta
   const handleOpenCreateFolder = (parentFolder = null, targetOwnerId = null) => {
-    setModalName("");
-    setModalFolderId(parentFolder?.id || "");
-    setModalOwnerId(targetOwnerId || parentFolder?.ownerId || (isGM ? (gmId || currentUser?.uid) : currentUser?.uid));
-    setCreateModal({ type: "folder" });
+    setCreateConfig({
+      type: "folder",
+      folderId: parentFolder?.id || "",
+      ownerId:
+        targetOwnerId ||
+        parentFolder?.ownerId ||
+        (isGM ? gmId || currentUser?.uid : currentUser?.uid)
+    });
   };
 
-  const handleConfirmCreate = async (e) => {
-    e.preventDefault();
-    if (!modalName.trim()) return;
-
-    if (createModal.type === "character") {
-      const charId = await onCreateCharacter({
-        name: modalName.trim(),
-        type: modalCharType,
-        folderId: modalFolderId || null,
-        ownerId: modalOwnerId || currentUser?.uid,
-        visibleToAll: modalCharType === "pc"
-      });
-      if (charId) {
-        onOpenSheet(charId);
+  const handleConfirmCreate = async ({
+    type,
+    name,
+    charType,
+    folderId,
+    ownerId
+  }) => {
+    try {
+      if (type === "character") {
+        const charId = await onCreateCharacter?.({
+          name,
+          type: charType,
+          folderId: folderId || null,
+          ownerId: ownerId || currentUser?.uid,
+          visibleToAll: charType === "pc"
+        });
+        if (charId) {
+          onOpenSheet?.(charId);
+        }
+        setCreateConfig(null);
+      } else {
+        const createdId = await onCreateFolder?.({
+          name,
+          parentId: folderId || null,
+          ownerId: ownerId || currentUser?.uid
+        });
+        if (createdId !== null && createdId !== false) {
+          setCreateConfig(null);
+        }
       }
-    } else {
-      await onCreateFolder({
-        name: modalName.trim(),
-        parentId: modalFolderId || null,
-        ownerId: modalOwnerId || currentUser?.uid
-      });
+    } catch (err) {
+      notifyError(err);
+    }
+  };
+
+  const handleConfirmMoveCharModal = async (
+    charId,
+    targetFolderId,
+    targetOwnerId
+  ) => {
+    try {
+      const ok = await onMoveCharacterToFolder?.(
+        charId,
+        targetFolderId || null,
+        targetOwnerId || null
+      );
+      if (ok !== false) {
+        setMovingChar(null);
+      }
+    } catch (err) {
+      notifyError(err);
+    }
+  };
+
+  const handleDropCharacter = async (charId, targetFolderId, targetOwnerId) => {
+    const char = characters.find((c) => c.id === charId);
+    if (!char) return;
+    if (!isGM && char.ownerId !== currentUser?.uid) {
+      notifyError("Você não tem permissão para mover esta ficha.");
+      return;
     }
 
-    setCreateModal(null);
+    const nextOwnerId = isGM
+      ? targetOwnerId || char.ownerId || gmId || currentUser?.uid
+      : char.ownerId;
+
+    if (
+      (char.folderId || null) === (targetFolderId || null) &&
+      (char.ownerId || null) === (nextOwnerId || null)
+    ) {
+      return;
+    }
+
+    if (isGM && nextOwnerId && char.ownerId && nextOwnerId !== char.ownerId) {
+      const targetLabel = resolveOwnerName(
+        nextOwnerId,
+        gmId,
+        playersMap,
+        currentUser?.uid
+      );
+      setTransferConfirmation({
+        kind: "character",
+        title: "Transferir Ficha?",
+        question: `Mover "${char.name}" e transferir a posse para ${targetLabel}?`,
+        onExecute: () =>
+          onMoveCharacterToFolder?.(
+            char.id,
+            targetFolderId || null,
+            nextOwnerId
+          )
+      });
+      return;
+    }
+
+    try {
+      await onMoveCharacterToFolder?.(
+        char.id,
+        targetFolderId || null,
+        char.ownerId || nextOwnerId || null
+      );
+    } catch (err) {
+      notifyError(err);
+    }
   };
 
-  const handleConfirmMove = async (e) => {
-    e.preventDefault();
-    if (!movingChar) return;
-    await onMoveCharacterToFolder(
-      movingChar.id,
-      targetMoveFolder || null,
-      isGM ? modalOwnerId || null : null
+  const handleDropFolder = async (folderId, targetParentId, targetOwnerId) => {
+    const folder = foldersById.get(folderId);
+    if (!folder) return;
+
+    if (!isGM && folder.ownerId !== currentUser?.uid) {
+      notifyError("Você não tem permissão para mover esta pasta.");
+      return;
+    }
+
+    const cleanTargetParentId = targetParentId || null;
+    if (cleanTargetParentId === folder.id) {
+      notifyError(
+        new AppError(
+          ERROR_CODES.CYCLE_DETECTED,
+          "Não é possível mover uma pasta para dentro dela mesma."
+        )
+      );
+      return;
+    }
+
+    const descendants = collectDescendantFolderIds(folder.id, folders, {
+      includeSelf: true
+    });
+    if (cleanTargetParentId && descendants.includes(cleanTargetParentId)) {
+      notifyError(
+        new AppError(
+          ERROR_CODES.CYCLE_DETECTED,
+          "Não é possível mover uma pasta para dentro de suas próprias subpastas."
+        )
+      );
+      return;
+    }
+
+    const nextOwnerId = isGM
+      ? targetOwnerId || folder.ownerId || gmId || currentUser?.uid
+      : folder.ownerId;
+
+    const isCrossOwner = Boolean(
+      isGM && nextOwnerId && folder.ownerId && nextOwnerId !== folder.ownerId
     );
-    setMovingChar(null);
+
+    const validation = validateFolderMove({
+      folder: isCrossOwner
+        ? { ...folder, domain: folder.domain || FOLDER_DOMAINS.CHARACTER, ownerId: nextOwnerId }
+        : { ...folder, domain: folder.domain || FOLDER_DOMAINS.CHARACTER },
+      targetParentId: cleanTargetParentId,
+      foldersById
+    });
+    if (!validation.ok) {
+      notifyError(validation.errors[0]);
+      return;
+    }
+
+    if (
+      (folder.parentId || null) === cleanTargetParentId &&
+      (folder.ownerId || null) === (nextOwnerId || null)
+    ) {
+      return;
+    }
+
+    if (isCrossOwner) {
+      const targetLabel = resolveOwnerName(
+        nextOwnerId,
+        gmId,
+        playersMap,
+        currentUser?.uid
+      );
+      setTransferConfirmation({
+        kind: "folder",
+        title: "Transferir Pasta?",
+        question: `Transferir "${folder.name}", suas subpastas e fichas para ${targetLabel}?`,
+        onExecute: () =>
+          onMoveFolder
+            ? onMoveFolder(folder.id, cleanTargetParentId, nextOwnerId)
+            : onTransferFolderOwnership?.(
+                folder.id,
+                nextOwnerId,
+                cleanTargetParentId
+              )
+      });
+      return;
+    }
+
+    try {
+      await onMoveFolder?.(
+        folder.id,
+        cleanTargetParentId,
+        folder.ownerId || nextOwnerId || null
+      );
+    } catch (err) {
+      notifyError(err);
+    }
   };
-
-  // Lista de GM (Fora de qualquer seção de player)
-  const gmRootChars = useMemo(() => {
-    return characters.filter((c) => {
-      const isPlayerChar = playerList.some((p) => p.uid === c.ownerId);
-      return !isPlayerChar && !c.folderId;
-    });
-  }, [characters, playerList]);
-
-  const gmRootFolders = useMemo(() => {
-    return folders.filter((f) => {
-      const isPlayerFolder = playerList.some((p) => p.uid === f.ownerId);
-      return !isPlayerFolder && !f.parentId;
-    });
-  }, [folders, playerList]);
 
   return (
     <div
@@ -608,7 +325,6 @@ export default function CharactersSidebarList({
         overflow: "hidden"
       }}
     >
-      {/* Botões do Topo: + Personagem e + Pasta (conforme a imagem) */}
       <div
         style={{
           display: "flex",
@@ -654,7 +370,6 @@ export default function CharactersSidebarList({
         </button>
       </div>
 
-      {/* Árvore estruturada de Personagens e Pastas */}
       <div
         style={{
           flex: 1,
@@ -665,536 +380,143 @@ export default function CharactersSidebarList({
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
+          const defaultRootOwner = isGM ? gmId || currentUser?.uid : currentUser?.uid;
           const charId = e.dataTransfer.getData("text/character-id");
           if (charId) {
-            onMoveCharacterToFolder(charId, null, isGM ? gmId : currentUser?.uid);
+            handleDropCharacter(charId, null, defaultRootOwner);
+            return;
+          }
+          const folderId = e.dataTransfer.getData("text/folder-id");
+          if (folderId) {
+            handleDropFolder(folderId, null, defaultRootOwner);
           }
         }}
       >
-        {/* =========================================================================
-            VISÃO DO MESTRE: ITENS DO PRÓPRIO MESTRE ("FORA DE QUALQUER SEÇÃO")
-           ========================================================================= */}
-        {isGM && (
-          <div style={{ marginBottom: "12px" }}>
-            {/* Personagens na raiz do Mestre (ex: Yema Kr'wov, Ejoesha Loemea) */}
-            {gmRootChars.map((char) => (
-              <CharacterRow
-                key={char.id}
-                character={char}
-                campaignId={campaignId}
-                isGM={isGM}
-                canEdit={true}
-                currentUserId={currentUser?.uid}
-                onlineUsers={onlineUsers}
-                onOpenSheet={onOpenSheet}
-                onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                onDeleteCharacter={onDeleteCharacter}
-                onOpenMoveModal={(c) => {
-                  setMovingChar(c);
-                  setTargetMoveFolder(c.folderId || "");
-                }}
-              />
-            ))}
-
-            {/* Pastas na raiz do Mestre (ex: + NPC's, + Inimigos) */}
-            {gmRootFolders.map((folder) => (
-              <FolderItem
-                key={folder.id}
-                folder={folder}
-                allFolders={folders}
-                allCharacters={characters}
-                campaignId={campaignId}
-                isGM={isGM}
-                canEdit={true}
-                canEditCharacter={canEditCharacter}
-                canEditFolder={canEditFolder}
-                currentUserId={currentUser?.uid}
-                onlineUsers={onlineUsers}
-                collapsedMap={collapsedMap}
-                onToggleCollapse={toggleCollapse}
-                onOpenSheet={onOpenSheet}
-                onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                onDeleteCharacter={onDeleteCharacter}
-                onOpenMoveModal={(c) => {
-                  setMovingChar(c);
-                  setTargetMoveFolder(c.folderId || "");
-                }}
-                onStartCreateInFolder={(fld, type) => {
-                  if (type === "character") handleOpenCreateCharacter(fld, fld.ownerId);
-                  else handleOpenCreateFolder(fld, fld.ownerId);
-                }}
-                onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                onDeleteFolder={handleRequestDeleteFolder}
-                onMoveCharacterToFolder={onMoveCharacterToFolder}
-                onMoveFolder={onMoveFolder}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* =========================================================================
-            SEÇÕES DOS JOGADORES (- Jogador 1, - Jogador 2, - Jogador 3...)
-           ========================================================================= */}
-        {isGM && playerList.map((player) => {
-          const isPlayerCollapsed = Boolean(collapsedMap[`player_${player.uid}`]);
-          const playerChars = characters.filter((c) => c.ownerId === player.uid && !c.folderId);
-          const playerFolders = folders.filter((f) => f.ownerId === player.uid && !f.parentId);
-          const totalPlayerCount =
-            characters.filter((c) => c.ownerId === player.uid).length +
-            folders.filter((f) => f.ownerId === player.uid).length;
-
-          return (
-            <div
-              key={player.uid}
-              style={{
-                borderTop: "1.5px solid #e2e8f0",
-                marginTop: "4px"
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const charId = e.dataTransfer.getData("text/character-id");
-                if (charId) {
-                  onMoveCharacterToFolder(charId, null, player.uid);
-                }
-              }}
-            >
-              {/* Cabeçalho da Seção do Jogador (ex: - Jogador 1) */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "7px 10px",
-                  background: "#f8fafc",
-                  cursor: "pointer",
-                  userSelect: "none"
-                }}
-              >
-                <div
-                  onClick={() => toggleCollapse(`player_${player.uid}`)}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 }}
-                >
-                  <span style={{ fontSize: "14px", fontWeight: 900, color: "#334155" }}>
-                    {isPlayerCollapsed ? "+" : "-"}
-                  </span>
-                  <span style={{ fontSize: "13px", fontWeight: 800, color: "#1e293b" }}>
-                    {player.displayName}
-                  </span>
-                  <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 700 }}>
-                    ({totalPlayerCount})
-                  </span>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  <button
-                    type="button"
-                    className="cp-btn"
-                    style={{ padding: "1px 6px", fontSize: "10px" }}
-                    onClick={() => handleOpenCreateCharacter(null, player.uid)}
-                    title="Criar personagem para este jogador"
-                  >
-                    +👤
-                  </button>
-                  <button
-                    type="button"
-                    className="cp-btn"
-                    style={{ padding: "1px 6px", fontSize: "10px" }}
-                    onClick={() => handleOpenCreateFolder(null, player.uid)}
-                    title="Criar pasta para este jogador"
-                  >
-                    +📁
-                  </button>
-                </div>
-              </div>
-
-              {/* Itens do Jogador */}
-              {!isPlayerCollapsed && (
-                <div style={{ paddingLeft: "10px" }}>
-                  {/* Personagens na raiz deste Jogador */}
-                  {playerChars.map((char) => (
-                    <CharacterRow
-                      key={char.id}
-                      character={char}
-                      campaignId={campaignId}
-                      isGM={isGM}
-                      canEdit={true}
-                      currentUserId={currentUser?.uid}
-                      onlineUsers={onlineUsers}
-                      onOpenSheet={onOpenSheet}
-                      onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                      onDeleteCharacter={onDeleteCharacter}
-                      onOpenMoveModal={(c) => {
-                        setMovingChar(c);
-                        setTargetMoveFolder(c.folderId || "");
-                      }}
-                    />
-                  ))}
-
-                  {/* Pastas deste Jogador (ex: Transformações, npcs da minha historia, Aliados) */}
-                  {playerFolders.map((folder) => (
-                    <FolderItem
-                      key={folder.id}
-                      folder={folder}
-                      allFolders={folders}
-                      allCharacters={characters}
-                      campaignId={campaignId}
-                      isGM={isGM}
-                      canEdit={true}
-                      canEditCharacter={canEditCharacter}
-                      canEditFolder={canEditFolder}
-                      currentUserId={currentUser?.uid}
-                      onlineUsers={onlineUsers}
-                      collapsedMap={collapsedMap}
-                      onToggleCollapse={toggleCollapse}
-                      onOpenSheet={onOpenSheet}
-                      onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                      onDeleteCharacter={onDeleteCharacter}
-                      onOpenMoveModal={(c) => {
-                        setMovingChar(c);
-                        setTargetMoveFolder(c.folderId || "");
-                      }}
-                      onStartCreateInFolder={(fld, type) => {
-                        if (type === "character") handleOpenCreateCharacter(fld, player.uid);
-                        else handleOpenCreateFolder(fld, player.uid);
-                      }}
-                      onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                      onDeleteFolder={handleRequestDeleteFolder}
-                      onMoveCharacterToFolder={onMoveCharacterToFolder}
-                      onMoveFolder={onMoveFolder}
-                    />
-                  ))}
-
-                  {playerChars.length === 0 && playerFolders.length === 0 && (
-                    <div
-                      style={{
-                        padding: "8px 12px",
-                        fontSize: "11px",
-                        color: "#94a3b8",
-                        fontStyle: "italic"
-                      }}
-                    >
-                      (Nenhum personagem ou pasta para este jogador)
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* =========================================================================
-            VISÃO DO JOGADOR: PERSONAGENS E PASTAS PRÓPRIOS OU COMPARTILHADOS
-           ========================================================================= */}
-        {!isGM && (
-          <div>
-            {/* Personagens do jogador (ou compartilhados fora de pastas visíveis) */}
-            {/* Fase 6.2 (A11): como no commit 711451e, o jogador lista só as próprias fichas, agora
-                somadas às compartilhadas com ele individualmente (uid em visibleTo/editableBy).
-                Fichas apenas "Visíveis a Todos" (["ALL"]) não entram na lista. */}
-            {characters
-              .filter((c) => {
-                const uid = currentUser?.uid;
-                if (!uid) return false;
-                const sharedWithMe =
-                  (Array.isArray(c.visibleTo) && c.visibleTo.includes(uid)) ||
-                  (Array.isArray(c.editableBy) && c.editableBy.includes(uid));
-                return c.ownerId === uid || sharedWithMe;
-              })
-              .filter(
-                (c) =>
-                  !c.folderId ||
-                  !folders.some(
-                    (f) => f.id === c.folderId && f.ownerId === currentUser?.uid
-                  )
+        {sections.map((section) => (
+          <CharacterTreeView
+            key={section.id}
+            section={section}
+            campaignId={campaignId}
+            isGM={Boolean(isGM)}
+            canEditCharacter={canEditCharacter}
+            canDeleteCharacter={canDeleteCharacter}
+            canEditFolder={canEditFolder}
+            canDeleteFolder={canDeleteFolder}
+            currentUserId={currentUser?.uid || null}
+            onlineUsers={onlineUsers}
+            collapsedMap={collapsedMap}
+            onToggleCollapse={toggleCollapse}
+            onOpenSheet={onOpenSheet}
+            onOpenSpawnModal={onSpawnToken ? setSpawnModalChar : null}
+            onDeleteCharacter={(charId) => {
+              const found = characters.find((c) => c.id === charId);
+              setCharacterToDelete(found || { id: charId, name: "Personagem" });
+            }}
+            onOpenMoveModal={setMovingChar}
+            onOpenCreateCharacter={handleOpenCreateCharacter}
+            onOpenCreateFolder={handleOpenCreateFolder}
+            onStartCreateInFolder={(fld, entryType) => {
+              if (entryType === "character") {
+                handleOpenCreateCharacter(fld, fld.ownerId);
+              } else {
+                handleOpenCreateFolder(fld, fld.ownerId);
+              }
+            }}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={(folderId) => {
+              const found = foldersById.get(folderId);
+              setFolderToDelete(found || { id: folderId, name: "Pasta" });
+            }}
+            onDropCharacterOnFolder={(charId, targetFolder) =>
+              handleDropCharacter(charId, targetFolder.id, targetFolder.ownerId)
+            }
+            onDropFolderOnFolder={(draggedFolderId, targetFolder) =>
+              handleDropFolder(
+                draggedFolderId,
+                targetFolder.id,
+                targetFolder.ownerId
               )
-              .map((char) => (
-                <CharacterRow
-                  key={char.id}
-                  character={char}
-                  campaignId={campaignId}
-                  isGM={false}
-                  canEdit={
-                    canEditCharacter
-                      ? canEditCharacter(char)
-                      : char.ownerId === currentUser?.uid
-                  }
-                  currentUserId={currentUser?.uid}
-                  onlineUsers={onlineUsers}
-                  onOpenSheet={onOpenSheet}
-                  onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                  onDeleteCharacter={onDeleteCharacter}
-                  onOpenMoveModal={(c) => {
-                    setMovingChar(c);
-                    setTargetMoveFolder(c.folderId || "");
-                  }}
-                />
-              ))}
-
-            {/* Pastas do jogador */}
-            {folders
-              .filter((f) => f.ownerId === currentUser?.uid && !f.parentId)
-              .map((folder) => (
-                <FolderItem
-                  key={folder.id}
-                  folder={folder}
-                  allFolders={folders}
-                  allCharacters={characters}
-                  campaignId={campaignId}
-                  isGM={false}
-                  canEdit={
-                    canEditFolder
-                      ? canEditFolder(folder)
-                      : folder.ownerId === currentUser?.uid
-                  }
-                  canEditCharacter={canEditCharacter}
-                  canEditFolder={canEditFolder}
-                  currentUserId={currentUser?.uid}
-                  onlineUsers={onlineUsers}
-                  collapsedMap={collapsedMap}
-                  onToggleCollapse={toggleCollapse}
-                  onOpenSheet={onOpenSheet}
-                  onOpenSpawnModal={onSpawnToken ? handleOpenSpawnModal : null}
-                  onDeleteCharacter={onDeleteCharacter}
-                  onOpenMoveModal={(c) => {
-                    setMovingChar(c);
-                    setTargetMoveFolder(c.folderId || "");
-                  }}
-                  onStartCreateInFolder={(fld, type) => {
-                    if (type === "character") handleOpenCreateCharacter(fld, currentUser?.uid);
-                    else handleOpenCreateFolder(fld, currentUser?.uid);
-                  }}
-                  onRenameFolder={(fid, nextName) => onUpdateFolder(fid, { name: nextName })}
-                  onDeleteFolder={handleRequestDeleteFolder}
-                  onMoveCharacterToFolder={onMoveCharacterToFolder}
-                  onMoveFolder={onMoveFolder}
-                />
-              ))}
-          </div>
-        )}
+            }
+            onDropCharacterOnSectionRoot={(charId, targetSection) =>
+              handleDropCharacter(charId, null, targetSection.ownerId)
+            }
+            onDropFolderOnSectionRoot={(draggedFolderId, targetSection) =>
+              handleDropFolder(draggedFolderId, null, targetSection.ownerId)
+            }
+            onInvalidFolderName={notifyError}
+          />
+        ))}
       </div>
 
-      {/* Modal de Criação (Personagem ou Pasta) */}
-      {createModal && (
-        <WindowModal onClose={() => setCreateModal(null)} maxWidth="340px">
-            <div style={{ fontSize: "15px", fontWeight: 800, color: "#003264" }}>
-              {createModal.type === "character" ? "Novo Personagem" : "Nova Pasta"}
-            </div>
-
-            <form onSubmit={handleConfirmCreate} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <input
-                type="text"
-                className="cp-input"
-                placeholder={createModal.type === "character" ? "Nome do Personagem..." : "Nome da Pasta..."}
-                value={modalName}
-                onChange={(e) => setModalName(e.target.value)}
-                autoFocus
-                required
-                style={{ fontSize: "13px", padding: "6px 10px" }}
-              />
-
-              {/* Se for Personagem e for GM: tipo PC ou NPC */}
-              {createModal.type === "character" && isGM && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>Tipo</label>
-                  <select
-                    className="cp-input"
-                    value={modalCharType}
-                    onChange={(e) => setModalCharType(e.target.value)}
-                    style={{ fontSize: "12px", padding: "5px" }}
-                  >
-                    <option value="pc">Personagem de Jogador (PC)</option>
-                    <option value="npc">Personagem do Mestre (NPC)</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Destino da Pasta */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                <label style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
-                  {createModal.type === "character" ? "Pasta de Destino" : "Pasta Mãe (Opcional)"}
-                </label>
-                <select
-                  className="cp-input"
-                  value={modalFolderId}
-                  onChange={(e) => setModalFolderId(e.target.value)}
-                  style={{ fontSize: "12px", padding: "5px" }}
-                >
-                  <option value="">Raiz / Fora de qualquer pasta</option>
-                  {folders.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      📁 {f.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Se for GM: Atribuição de Dono / Seção */}
-              {isGM && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <label style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
-                    Dono / Seção
-                  </label>
-                  <select
-                    className="cp-input"
-                    value={modalOwnerId}
-                    onChange={(e) => setModalOwnerId(e.target.value)}
-                    style={{ fontSize: "12px", padding: "5px" }}
-                  >
-                    <option value={gmId || currentUser?.uid}>Mestre (Minhas Fichas)</option>
-                    {playerList.map((p) => (
-                      <option key={p.uid} value={p.uid}>
-                        👤 {p.displayName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end", marginTop: "4px" }}>
-                <button
-                  type="button"
-                  className="cp-btn cp-btn-orange"
-                  style={{ padding: "5px 12px", fontSize: "12px" }}
-                  onClick={() => setCreateModal(null)}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="cp-btn cp-btn-green"
-                  style={{ padding: "5px 16px", fontSize: "12px" }}
-                >
-                  Criar
-                </button>
-              </div>
-            </form>
-        </WindowModal>
+      {createConfig && (
+        <CreateEntryModal
+          initialConfig={createConfig}
+          folders={folders}
+          isGM={Boolean(isGM)}
+          gmId={gmId || null}
+          currentUserId={currentUser?.uid || null}
+          playerList={playerList}
+          onConfirm={handleConfirmCreate}
+          onClose={() => setCreateConfig(null)}
+          onValidationError={notifyError}
+        />
       )}
 
-      {/* Modal para mover personagem para outra pasta */}
       {movingChar && (
-        <WindowModal onClose={() => setMovingChar(null)} maxWidth="320px">
-            <div style={{ fontSize: "14px", fontWeight: 800, color: "#003264" }}>
-              Mover &quot;{movingChar.name}&quot;
-            </div>
-
-            <form onSubmit={handleConfirmMove} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <select
-                className="cp-input"
-                value={targetMoveFolder}
-                onChange={(e) => setTargetMoveFolder(e.target.value)}
-                style={{ fontSize: "12px", padding: "6px" }}
-              >
-                <option value="">Raiz / Fora de qualquer pasta</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    📁 {f.name}
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  className="cp-btn cp-btn-orange"
-                  style={{ padding: "4px 10px", fontSize: "11px" }}
-                  onClick={() => setMovingChar(null)}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="cp-btn cp-btn-green"
-                  style={{ padding: "4px 14px", fontSize: "11px" }}
-                >
-                  Salvar
-                </button>
-              </div>
-            </form>
-        </WindowModal>
+        <MoveCharacterModal
+          character={movingChar}
+          folders={folders}
+          onConfirm={handleConfirmMoveCharModal}
+          onClose={() => setMovingChar(null)}
+        />
       )}
 
-      {/* Modal para Colocar Token no Mapa com opção de exibir nome */}
       {spawnModalChar && (
-        <WindowModal onClose={() => setSpawnModalChar(null)} maxWidth="320px">
-            <div style={{ fontSize: "14px", fontWeight: 800, color: "#003264" }}>
-              Colocar Token no Mapa
-            </div>
-
-            <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>
-              {spawnModalChar.name}
-            </div>
-
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontSize: "12px",
-                fontWeight: 700,
-                color: "#1e293b",
-                cursor: "pointer"
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={spawnShowName}
-                onChange={(e) => setSpawnShowName(e.target.checked)}
-              />
-              Exibir nome no token
-            </label>
-
-            {isGM && (
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  color: "#1e293b",
-                  cursor: "pointer"
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={spawnVisibleToPlayers}
-                  onChange={(e) => setSpawnVisibleToPlayers(e.target.checked)}
-                />
-                Visível para jogadores
-              </label>
-            )}
-
-            <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end", marginTop: "4px" }}>
-              <button
-                type="button"
-                className="cp-btn cp-btn-orange"
-                style={{ padding: "4px 10px", fontSize: "11px" }}
-                onClick={() => setSpawnModalChar(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="cp-btn cp-btn-green"
-                style={{ padding: "4px 14px", fontSize: "11px" }}
-                onClick={() => {
-                  onSpawnToken(spawnModalChar, {
-                    showName: spawnShowName,
-                    visibleToPlayers: spawnVisibleToPlayers
-                  });
-                  setSpawnModalChar(null);
-                }}
-              >
-                + No Mapa
-              </button>
-            </div>
-        </WindowModal>
+        <SpawnTokenModal
+          character={spawnModalChar}
+          isGM={Boolean(isGM)}
+          onConfirm={onSpawnToken}
+          onClose={() => setSpawnModalChar(null)}
+        />
       )}
 
-      {/* Modal de Confirmação de Exclusão de Pasta */}
+      {transferConfirmation && (
+        <ConfirmDialog
+          title={transferConfirmation.title}
+          question={transferConfirmation.question}
+          confirmLabel="Transferir"
+          confirmVariant="green"
+          onCancel={() => setTransferConfirmation(null)}
+          onConfirm={async () => {
+            const exec = transferConfirmation.onExecute;
+            setTransferConfirmation(null);
+            try {
+              await exec?.();
+            } catch (err) {
+              notifyError(err);
+            }
+          }}
+        />
+      )}
+
+      {characterToDelete && (
+        <ConfirmDialog
+          title="Excluir ficha?"
+          question={`Remover "${characterToDelete.name}"?`}
+          confirmLabel="Excluir"
+          onCancel={() => setCharacterToDelete(null)}
+          onConfirm={async () => {
+            const cid = characterToDelete.id;
+            setCharacterToDelete(null);
+            try {
+              await onDeleteCharacter?.(cid);
+            } catch (err) {
+              notifyError(err);
+            }
+          }}
+        />
+      )}
+
       {folderToDelete && (
         <ConfirmDeleteModal
           title={`Excluir Pasta "${folderToDelete.name}"`}
@@ -1205,12 +527,18 @@ export default function CharactersSidebarList({
           onMove={async () => {
             const fid = folderToDelete.id;
             setFolderToDelete(null);
-            await onDeleteFolder(fid, { deleteContents: false });
+            await onDeleteFolder?.(fid, {
+              mode: "moveToParent",
+              deleteContents: false
+            });
           }}
           onDelete={async () => {
             const fid = folderToDelete.id;
             setFolderToDelete(null);
-            await onDeleteFolder(fid, { deleteContents: true });
+            await onDeleteFolder?.(fid, {
+              mode: "deleteAll",
+              deleteContents: true
+            });
           }}
         />
       )}
